@@ -31,6 +31,12 @@
       "expo-font"
     ],
     "scheme": "zeitmit",
-    "backgroundColor": "#FFE94D"
+    "backgroundColor": "#FFE94D",
+    "owner": "akulav97",
+    "extra": {
+      "eas": {
+        "projectId": "d533e166-c6d9-4927-bf05-0cf884d22f35"
+      }
+    }
   }
 }
