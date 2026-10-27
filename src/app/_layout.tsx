@@ -1,0 +1,52 @@
+import { useEffect } from 'react';
+import { View } from 'react-native';
+import { Stack, usePathname } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useFonts } from 'expo-font';
+import { DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
+import { BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold } from '@expo-google-fonts/bricolage-grotesque';
+import { colors } from '../theme';
+import { useStore } from '../store';
+import { Toast, useNavBottom } from '../ui/chrome';
+import { SheetHost } from '../sheets/SheetHost';
+
+const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
+
+export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold,
+    BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold,
+  });
+
+  // Mock "featured" fetch, as in the prototype.
+  useEffect(() => {
+    const t = setTimeout(() => useStore.setState({ loading: false }), 1200);
+    return () => clearTimeout(t);
+  }, []);
+
+  const path = usePathname();
+  const checkin = useStore((s) => !!s.checkin);
+  const navBottom = useNavBottom();
+  const onTabs = TAB_PATHS.includes(path) || path.startsWith('/companion');
+  const toastBottom = onTabs ? navBottom + (checkin && path !== '/notifications' ? 158 : 82) : navBottom + 98;
+
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: colors.sun }} />;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.sun }}>
+      <StatusBar style="dark" />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.sun }, animation: 'fade' }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="companion" />
+        <Stack.Screen name="profile/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
+        <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.cream } }} />
+        <Stack.Screen name="notifications" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
+        <Stack.Screen name="book/[cid]" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="become" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
+      </Stack>
+      <SheetHost />
+      <Toast bottom={toastBottom} />
+    </View>
+  );
+}

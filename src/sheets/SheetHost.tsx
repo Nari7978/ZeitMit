@@ -1,0 +1,575 @@
+// Bottom sheets (filters, sort, gift, safety, meet code, …) rendered above every screen.
+import { useEffect, useRef, type ReactNode } from 'react';
+import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
+import Slider from '@react-native-community/slider';
+import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors, font } from '../theme';
+import { A, ageStr, CM, eur, LANGS, PREF, SORT, WHEN } from '../data';
+import { filtered, priceOf, toggleIn, useStore, type SheetKind } from '../store';
+import { openProfile } from '../nav';
+import { Icon } from '../ui/Icon';
+import { Box, Chip, Enter, H, PressBox, Row, Stripes, Toggle, Txt } from '../ui/primitives';
+import { CircleButton, PrimaryButton, SecondaryButton, TextButton } from '../ui/common';
+
+export function SheetHost() {
+  const sheet = useStore((s) => s.sheet);
+  const close = useStore((s) => s.closeSheet);
+  const { height } = useWindowDimensions();
+  const y = useRef(new Animated.Value(height)).current;
+
+  useEffect(() => {
+    if (!sheet) return;
+    y.setValue(height);
+    Animated.timing(y, { toValue: 0, duration: 320, easing: Easing.bezier(0.2, 0.8, 0.2, 1), useNativeDriver: true }).start();
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { close(); return true; });
+    return () => sub.remove();
+  }, [sheet, y, height, close]);
+
+  if (!sheet) return null;
+  const tall = sheet === 'filter';
+  return (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 80 }}>
+      <Enter style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} duration={200}>
+        <Pressable accessibilityLabel="Close sheet" onPress={close} style={{ flex: 1, backgroundColor: colors.scrim }} />
+      </Enter>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 0, justifyContent: 'flex-end' }} pointerEvents="box-none">
+        <Animated.View
+          accessibilityViewIsModal
+          style={{
+            height: tall ? '92%' : undefined, maxHeight: '92%', backgroundColor: colors.white, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+            transform: [{ translateY: y }], shadowColor: 'rgb(18,14,38)', shadowOpacity: 0.15, shadowRadius: 20, shadowOffset: { width: 0, height: -10 }, elevation: 20,
+          }}
+        >
+          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+            <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: colors.gray300 }} />
+          </View>
+          <SheetBody kind={sheet} />
+        </Animated.View>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+function SheetBody({ kind }: { kind: SheetKind }) {
+  switch (kind) {
+    case 'filter': return <FilterSheet />;
+    case 'sort': return <SortSheet />;
+    case 'city': return <CitySheet />;
+    case 'chatmenu': return <ChatMenuSheet />;
+    case 'report': return <ReportSheet />;
+    case 'review': return <ReviewSheet />;
+    case 'edit': return <EditSheet />;
+    case 'saved': return <SavedSheet />;
+    case 'gift': return <GiftSheet />;
+    case 'safety': return <SafetySheet />;
+    case 'sos': return <SosSheet />;
+    case 'otp': return <OtpSheet />;
+    case 'otpin': return <OtpInSheet />;
+    case 'delete': return <DeleteSheet />;
+  }
+}
+
+function Pad({ children, scroll }: { children: ReactNode; scroll?: boolean }) {
+  const insets = useSafeAreaInsets();
+  const style = { paddingTop: 8, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8) };
+  if (scroll) return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={style}>{children}</ScrollView>;
+  return <View style={style}>{children}</View>;
+}
+
+const SheetTitle = ({ children, style }: { children: ReactNode; style?: object }) => <Txt size={17} weight={700} style={[{ marginTop: 6, marginBottom: 10 }, style]}>{children}</Txt>;
+const BigTitle = ({ children }: { children: ReactNode }) => <H size={24} ls={-0.03} style={{ marginTop: 6, marginBottom: 4 }}>{children}</H>;
+
+function OptionRow({ label, on, onPress, color = colors.ink, note, last, height = 54, size = 15 }: { label: string; on: boolean; onPress: () => void; color?: string; note?: string; last?: boolean; height?: number; size?: number }) {
+  return (
+    <Pressable accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, height, borderBottomWidth: last ? 0 : 1, borderBottomColor: colors.hairline }}>
+      <Txt size={size} color={color} style={{ flex: 1 }}>{label}</Txt>
+      {note ? <Txt size={12} color={colors.gray600}>{note}</Txt> : null}
+      <Icon name={on ? 'circle-check' : 'circle'} size={20} color={on ? colors.ink : colors.gray400} />
+    </Pressable>
+  );
+}
+
+const input = { borderRadius: 14, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 14, fontSize: 16, color: colors.ink, backgroundColor: colors.white, outlineStyle: 'none' } as object;
+
+// ---------- Search ----------
+
+function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <Row style={{ justifyContent: 'space-between', marginTop: 24, marginBottom: 10 }}>
+        <Txt size={15} weight={700}>{title}</Txt>
+        {right}
+      </Row>
+      {children}
+    </>
+  );
+}
+const Grid = ({ children, cols = 2 }: { children: ReactNode; cols?: number }) => (
+  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{Array.isArray(children) ? children.map((c, i) => <View key={i} style={{ width: cols === 2 ? '48.5%' : '31.5%', flexGrow: 1 }}>{c}</View>) : children}</View>
+);
+const Opt = ({ label, on, onPress, h = 42 }: { label: string; on: boolean; onPress: () => void; h?: number }) => <Chip label={label} on={on} onPress={onPress} height={h} radius={12} weight={600} />;
+
+function FilterSheet() {
+  const { f, setF, clearAll, query, sort, closeSheet } = useStore();
+  const n = filtered(query, f, sort).length;
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1 }}>
+      <Row style={{ justifyContent: 'space-between', paddingTop: 6, paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 2, borderBottomColor: colors.ink }}>
+        <CircleButton icon="x" label="Close" size={36} iconSize={17} border={0} bg={colors.butter} onPress={closeSheet} />
+        <Txt size={16} weight={700}>Filters</Txt>
+        <TextButton label="Clear all" onPress={clearAll} />
+      </Row>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 6 - 8, paddingHorizontal: 20, paddingBottom: 20 }}>
+        <Section title="Type of company">
+          <Grid>{[['all', 'Everyone'], ['date', 'Date-style only']].map(([k, l]) => <Opt key={k} label={l} on={f.type === k} onPress={() => setF({ type: k as 'all' | 'date' })} />)}</Grid>
+        </Section>
+        <Section title="Activity">
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {A.map((a) => <Chip key={a.id} label={a.label} icon={a.icon} padL={11} padR={13} on={f.acts.includes(a.id)} onPress={() => setF({ acts: toggleIn(useStore.getState().f.acts, a.id) })} />)}
+          </View>
+        </Section>
+        <Section title="When">
+          <Grid>{(Object.keys(WHEN) as (keyof typeof WHEN)[]).map((k) => <Opt key={k} label={WHEN[k]} on={f.when === k} onPress={() => setF({ when: k })} />)}</Grid>
+        </Section>
+        <Section title="Hourly rate" right={<Txt size={13} weight={600}>{f.max >= 60 ? 'Any price' : 'Up to ' + eur(f.max) + ' / hour'}</Txt>}>
+          <Slider
+            accessibilityLabel="Maximum hourly rate"
+            minimumValue={15}
+            maximumValue={60}
+            step={1}
+            value={f.max}
+            onValueChange={(v) => setF({ max: Math.round(v) })}
+            minimumTrackTintColor={colors.ink}
+            maximumTrackTintColor={colors.gray300}
+            thumbTintColor={colors.ink}
+          />
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Txt size={12} color={colors.gray600}>€15</Txt>
+            <Txt size={12} color={colors.gray600}>€60+</Txt>
+          </Row>
+        </Section>
+        <Section title="Languages">
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {LANGS.map((l) => <Chip key={l} label={l} on={f.langs.includes(l)} onPress={() => setF({ langs: toggleIn(useStore.getState().f.langs, l) })} />)}
+          </View>
+        </Section>
+        <Section title="Rating">
+          <Grid cols={3}>{([[0, 'Any'], [4.5, '4.5+'], [4.8, '4.8+']] as const).map(([v, l]) => <Opt key={l} label={l} on={f.rating === v} onPress={() => setF({ rating: v })} />)}</Grid>
+        </Section>
+        <View style={{ marginTop: 28, padding: 16, borderRadius: 18, backgroundColor: colors.sun, borderWidth: 2, borderColor: colors.ink }}>
+          <Row style={{ gap: 8 }}>
+            <Icon name="lock" size={15} color={colors.gray600} />
+            <Txt size={15} weight={700}>Companion preferences <Txt size={13} color={colors.gray600}>optional</Txt></Txt>
+          </Row>
+          <Txt size={12} lh={1.5} color={colors.gray600} style={{ marginTop: 6, marginBottom: 12 }}>Private to you. Used only to filter your results, never shown on your profile.</Txt>
+          <Grid>{(Object.keys(PREF) as (keyof typeof PREF)[]).map((k) => <Opt key={k} h={40} label={PREF[k]} on={f.pref === k} onPress={() => setF({ pref: k })} />)}</Grid>
+          <Row style={{ gap: 12, marginTop: 16, paddingTop: 14, borderTopWidth: 2, borderTopColor: colors.ink }}>
+            <View style={{ flex: 1 }}>
+              <Txt size={14} weight={600}>LGBTQ+-friendly only</Txt>
+              <Txt size={12} lh={1.4} color={colors.gray600} style={{ marginTop: 2 }}>Shows companions who opted in to this label themselves.</Txt>
+            </View>
+            <Toggle on={f.lgbtq} label="LGBTQ+-friendly only" onPress={() => setF({ lgbtq: !f.lgbtq })} />
+          </Row>
+        </View>
+      </ScrollView>
+      <View style={{ paddingTop: 12, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8), borderTopWidth: 2, borderTopColor: colors.ink }}>
+        <PrimaryButton label={'Show ' + n + (n === 1 ? ' companion' : ' companions')} onPress={closeSheet} />
+      </View>
+    </View>
+  );
+}
+
+function SortSheet() {
+  const sort = useStore((s) => s.sort);
+  return (
+    <Pad>
+      <SheetTitle>Sort by</SheetTitle>
+      {(Object.keys(SORT) as (keyof typeof SORT)[]).map((k, i, arr) => (
+        <OptionRow key={k} label={SORT[k]} on={sort === k} last={i === arr.length - 1} onPress={() => useStore.setState({ sort: k, sheet: null })} />
+      ))}
+    </Pad>
+  );
+}
+
+function CitySheet() {
+  const city = useStore((s) => s.city);
+  return (
+    <Pad>
+      <SheetTitle>City</SheetTitle>
+      {([['Berlin', true], ['Hamburg', false], ['Munich', false], ['Cologne', false]] as const).map(([n, live]) => (
+        <OptionRow
+          key={n}
+          label={n}
+          note={live ? 'Live' : 'Coming soon'}
+          color={live ? colors.ink : colors.gray400}
+          on={n === city}
+          onPress={() => (live ? useStore.setState({ city: n, sheet: null }) : useStore.getState().showToast(n + ' is coming soon'))}
+        />
+      ))}
+      <Txt size={12} color={colors.gray600} style={{ marginTop: 12 }}>We show approximate areas only, never exact locations.</Txt>
+    </Pad>
+  );
+}
+
+// ---------- Chat & safety reporting ----------
+
+function MenuRow({ icon, label, onPress, color = colors.ink, last }: { icon: string; label: string; onPress: () => void; color?: string; last?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, height: 56, borderBottomWidth: last ? 0 : 1, borderBottomColor: colors.hairline }}>
+      <Icon name={icon} size={19} color={color} />
+      <Txt size={15} color={color}>{label}</Txt>
+    </Pressable>
+  );
+}
+
+function ChatMenuSheet() {
+  const key = useStore((s) => s.sheetChat);
+  const convo = useStore((s) => (key ? s.convos[key] : null));
+  const { showToast, closeSheet, openSheet } = useStore.getState();
+  return (
+    <Pad>
+      <MenuRow icon="user-round" label="View profile" onPress={() => {
+        closeSheet();
+        if (convo?.cid) { router.back(); openProfile(convo.cid); }
+      }} />
+      <MenuRow icon="flag" label="Report" onPress={() => openSheet('report', { reportReason: null })} />
+      <MenuRow icon="ban" label="Block" color={colors.red} last onPress={() => { closeSheet(); router.back(); showToast('Blocked. They can’t message or book you.'); }} />
+    </Pad>
+  );
+}
+
+const REASONS = ['Asked for something sexual', 'Asked to pay or talk off ZeitMit', 'Harassment or hate', 'Fake profile or impersonation', 'Something else'];
+
+function ReportSheet() {
+  const reason = useStore((s) => s.reportReason);
+  return (
+    <Pad>
+      <SheetTitle style={{ marginBottom: 4 }}>What’s wrong?</SheetTitle>
+      <Txt size={13} color={colors.gray600} style={{ marginBottom: 8 }}>Reports are confidential. The other person isn’t told who reported them.</Txt>
+      {REASONS.map((r) => <OptionRow key={r} label={r} size={14.5} height={52} on={reason === r} onPress={() => useStore.setState({ reportReason: r })} />)}
+      <PrimaryButton
+        label="Send report"
+        bg={colors.red}
+        shadowColor="transparent"
+        dim={!reason}
+        style={{ marginTop: 16 }}
+        onPress={() => { useStore.setState({ sheet: null }); useStore.getState().showToast('Report sent. Our safety team reviews it within 24 hours.'); }}
+      />
+    </Pad>
+  );
+}
+
+// ---------- Account ----------
+
+function ReviewSheet() {
+  const review = useStore((s) => s.review);
+  const name = useStore((s) => {
+    const b = s.bookings.find((x) => x.id === s.review.bid);
+    return b ? CM[b.cid].name : '';
+  });
+  const set = (o: Partial<typeof review>) => useStore.setState({ review: { ...review, ...o } });
+  return (
+    <Pad>
+      <SheetTitle style={{ marginBottom: 4 }}>How was your time with {name}?</SheetTitle>
+      <Txt size={13} color={colors.gray600} style={{ marginBottom: 14 }}>Reviews are public and linked to a completed booking.</Txt>
+      <Row style={{ gap: 6, justifyContent: 'center', marginBottom: 16 }}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Pressable key={n} accessibilityRole="button" accessibilityLabel={`${n} stars`} onPress={() => set({ stars: n })} style={{ padding: 2 }}>
+            <Txt size={36} lh={40} color={n <= review.stars ? colors.amber : colors.gray300}>★</Txt>
+          </Pressable>
+        ))}
+      </Row>
+      <TextInput value={review.text} onChangeText={(t) => set({ text: t.slice(0, 300) })} accessibilityLabel="Review" placeholder="What made it a good time?" placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 110, padding: 14, fontSize: 15, lineHeight: 22 }]} />
+      <PrimaryButton label="Post review" style={{ marginTop: 14 }} onPress={() => useStore.getState().submitReview()} />
+    </Pad>
+  );
+}
+
+function EditSheet() {
+  const edit = useStore((s) => s.edit ?? s.user);
+  const set = (o: Partial<typeof edit>) => useStore.setState({ edit: { ...edit, ...o } });
+  const save = () => {
+    if (!edit.name.trim()) return useStore.getState().showToast('Name can’t be empty');
+    useStore.setState({ user: { ...edit, first: edit.name.trim().split(' ')[0] }, sheet: null });
+    useStore.getState().showToast('Profile updated');
+  };
+  return (
+    <Pad>
+      <SheetTitle style={{ marginBottom: 14 }}>Personal details</SheetTitle>
+      <Txt size={13} weight={600} style={{ marginBottom: 6 }}>Name</Txt>
+      <TextInput value={edit.name} onChangeText={(t) => set({ name: t })} accessibilityLabel="Name" style={[font('body'), input, { height: 50 }]} />
+      <Txt size={13} weight={600} style={{ marginTop: 14, marginBottom: 6 }}>About</Txt>
+      <TextInput value={edit.bio} onChangeText={(t) => set({ bio: t })} accessibilityLabel="About" multiline textAlignVertical="top" style={[font('body'), input, { height: 96, padding: 14, fontSize: 15, lineHeight: 22 }]} />
+      <Txt size={12} color={colors.gray600} style={{ marginTop: 8 }}>Email, phone and date of birth are private and never shown to companions.</Txt>
+      <PrimaryButton label="Save" style={{ marginTop: 14 }} onPress={save} />
+    </Pad>
+  );
+}
+
+function SavedSheet() {
+  const saved = useStore((s) => s.saved);
+  return (
+    <Pad scroll>
+      <SheetTitle>Saved companions</SheetTitle>
+      {saved.map((k) => {
+        const c = CM[k];
+        return (
+          <Pressable key={k} accessibilityRole="button" onPress={() => openProfile(k)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.hairline }}>
+            <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+            <View style={{ flex: 1 }}>
+              <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
+              <Txt size={13} color={colors.gray600}>{c.area} · {eur(c.rate)}/h</Txt>
+            </View>
+            <Icon name="chevron-right" size={18} color={colors.gray400} />
+          </Pressable>
+        );
+      })}
+      {!saved.length ? <Txt size={14} color={colors.gray600}>Tap the heart on any profile to save it here.</Txt> : null}
+    </Pad>
+  );
+}
+
+function DeleteSheet() {
+  const { closeSheet, showToast } = useStore.getState();
+  return (
+    <Pad>
+      <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.redSoft, alignItems: 'center', justifyContent: 'center', marginTop: 8, marginBottom: 14 }}>
+        <Icon name="triangle-alert" size={22} color={colors.red} />
+      </View>
+      <Txt size={19} weight={700} style={{ marginBottom: 6 }}>Delete your account?</Txt>
+      <Txt size={14} lh={1.55} color={colors.gray800}>Your profile, messages and booking history are permanently removed after 30 days. Active bookings need to be completed or cancelled first.</Txt>
+      <Row style={{ gap: 8, marginTop: 20 }}>
+        <SecondaryButton label="Keep account" height={50} size={15} style={{ flex: 1 }} onPress={closeSheet} />
+        <PrimaryButton label="Delete" height={50} radius={14} bg={colors.red} shadowColor="transparent" style={{ flex: 1 }} onPress={() => { closeSheet(); showToast('Deletion requested. You’ll get a confirmation email (prototype).'); }} />
+      </Row>
+    </Pad>
+  );
+}
+
+// ---------- Gift a date ----------
+
+function GiftSheet() {
+  const gift = useStore((s) => s.gift);
+  const set = (o: Partial<typeof gift>) => useStore.setState({ gift: { ...gift, ...o } });
+  const to = gift.to.trim() || 'a friend';
+  const amt = eur(gift.amt);
+  if (gift.done) {
+    return (
+      <Pad>
+        <View style={{ alignItems: 'center', gap: 10, paddingTop: 16, paddingBottom: 4 }}>
+          <Enter kind="pop">
+            <Box shadow={4} style={{ width: 84, height: 84, borderRadius: 26, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.violet, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="gift" size={36} color={colors.white} />
+            </Box>
+          </Enter>
+          <H size={26} ls={-0.03} align="center">Gift sent to {to}</H>
+          <Txt size={14} color={colors.gray600} align="center">{amt} credit is on its way. They’ll get a link to pick a companion.</Txt>
+          <PrimaryButton label="Done" weight={700} style={{ marginTop: 10, alignSelf: 'stretch' }} onPress={() => useStore.getState().closeSheet()} />
+        </View>
+      </Pad>
+    );
+  }
+  return (
+    <Pad scroll>
+      <BigTitle>Gift a date</BigTitle>
+      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginBottom: 16 }}>Send credit a friend can spend on any booking. Valid for 12 months.</Txt>
+      <Box shadow={4} style={{ height: 150, borderRadius: 24, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.pink, padding: 18, justifyContent: 'space-between', transform: [{ rotate: '-1.5deg' }] }}>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <H size={20} ls={-0.03} color={colors.white}>zeitmit<H size={20} color={colors.sun}>!</H> gift</H>
+          <Icon name="gift" size={24} color={colors.white} />
+        </Row>
+        <View>
+          <H size={44} lh={44} ls={-0.04} color={colors.white}>{amt}</H>
+          <Txt size={13} weight={600} color={colors.white} style={{ marginTop: 4 }}>For {to}</Txt>
+        </View>
+      </Box>
+      <Row style={{ gap: 8, marginTop: 20 }}>
+        {[50, 100, 150].map((a) => <Chip key={a} label={eur(a)} on={gift.amt === a} height={46} radius={14} size={15} weight={700} style={{ flex: 1, borderWidth: 2 }} onPress={() => set({ amt: a })} />)}
+      </Row>
+      <TextInput value={gift.to} onChangeText={(t) => set({ to: t })} accessibilityLabel="Recipient" placeholder="Friend’s name or email" placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 50, marginTop: 12 }]} />
+      <TextInput value={gift.msg} onChangeText={(t) => set({ msg: t.slice(0, 140) })} accessibilityLabel="Message" placeholder="Add a message (optional)" placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 76, marginTop: 10, paddingTop: 12, fontSize: 15 }]} />
+      <PrimaryButton label={'Send gift · ' + amt} weight={700} dim={!gift.to.trim()} style={{ marginTop: 14 }} onPress={() => set({ done: true })} />
+    </Pad>
+  );
+}
+
+// ---------- Safety check-in ----------
+
+function SafetySheet() {
+  const safety = useStore((s) => s.safety);
+  const name = useStore((s) => {
+    const b = s.bookings.find((x) => x.id === s.safety.bid);
+    return b ? CM[b.cid].name : 'your companion';
+  });
+  const set = (o: Partial<typeof safety>) => useStore.setState({ safety: { ...safety, ...o } });
+  return (
+    <Pad scroll>
+      <Row style={{ gap: 10, marginTop: 6, marginBottom: 4 }}>
+        <View style={{ width: 40, height: 40, borderRadius: 12, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="shield-check" size={20} />
+        </View>
+        <H size={24} ls={-0.03}>Safety check-in</H>
+      </Row>
+      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginTop: 8, marginBottom: 16 }}>We’ll ask if you’re OK during your time with {name}. Miss a check-in and your trusted contact gets your booking details and location.</Txt>
+      <Row style={{ gap: 12, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
+        <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.blush, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+          <Txt size={15} weight={800}>A</Txt>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Txt size={15} weight={700}>Anna (sister)</Txt>
+          <Txt size={12} color={colors.gray600}>Trusted contact · +49 ··· 18</Txt>
+        </View>
+        <TextButton label="Change" size={13} weight={700} underline onPress={() => useStore.getState().showToast('Safety centre opens here (prototype)')} />
+      </Row>
+      <Row style={{ gap: 12, marginTop: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
+        <View style={{ flex: 1 }}>
+          <Txt size={15} weight={700}>Share live location</Txt>
+          <Txt size={12} color={colors.gray600}>Only with Anna, only during the booking.</Txt>
+        </View>
+        <Toggle bordered on={safety.share} label="Share live location" onPress={() => set({ share: !safety.share })} />
+      </Row>
+      <Txt size={14} weight={700} style={{ marginTop: 18, marginBottom: 8 }}>Check in</Txt>
+      <Row style={{ gap: 8 }}>
+        {([[30, 'Every 30 min'], [60, 'Every hour'], [0, 'Start & end']] as const).map(([v, l]) => (
+          <Chip key={v} label={l} on={safety.every === v} height={44} radius={12} size={12.5} weight={700} padL={4} padR={4} style={{ flex: 1, borderWidth: 2 }} onPress={() => set({ every: v })} />
+        ))}
+      </Row>
+      <PrimaryButton label="Start check-in" weight={700} shadowColor={colors.mint} style={{ marginTop: 18 }} onPress={() => useStore.getState().startCheckin()} />
+      <Txt size={12} color={colors.gray600} align="center" style={{ marginTop: 12 }}>In an emergency, always call 112.</Txt>
+    </Pad>
+  );
+}
+
+function SosSheet() {
+  const { showToast } = useStore.getState();
+  return (
+    <Pad>
+      <View style={{ gap: 10 }}>
+        <BigTitle>Need help?</BigTitle>
+        <PressBox shadow={4} fx="push" accessibilityLabel="Call 112" onPress={() => Linking.openURL('tel:112')} style={{ height: 56, borderRadius: 16, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.rose, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Icon name="phone" size={18} color={colors.white} />
+          <Txt size={16} weight={800} color={colors.white}>Call 112</Txt>
+        </PressBox>
+        <SecondaryButton label="Alert Anna now" height={52} radius={16} size={15} weight={700} shadow={4} border={2.5} onPress={() => { useStore.setState({ sheet: null }); showToast('Anna has your location and booking details (prototype).'); }} />
+        <View style={{ alignItems: 'center' }}>
+          <TextButton label="I’m fine, end check-in" size={15} weight={700} style={{ paddingVertical: 12 }} onPress={() => { useStore.setState({ sheet: null, checkin: null }); showToast('Check-in ended. Hope it was a good time!'); }} />
+        </View>
+      </View>
+    </Pad>
+  );
+}
+
+// ---------- Meet code (escrow release) ----------
+
+function OtpSheet() {
+  const ob = useStore((s) => s.bookings.find((x) => x.id === s.otpFor));
+  if (!ob) return <Pad><View /></Pad>;
+  const c = CM[ob.cid];
+  const rel = ob.pay === 'released';
+  const amt = eur(priceOf(ob));
+  const steps: [string, string, boolean][] = [
+    ['credit-card', 'You paid ' + amt, true],
+    ['lock', 'ZeitMit holds the money', true],
+    ['key-round', 'Meet ' + c.name + ' and share this code', rel],
+    ['wallet', 'Money released to ' + c.name, rel],
+  ];
+  return (
+    <Pad scroll>
+      <BigTitle>Your meet code</BigTitle>
+      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginBottom: 16 }}>Only share it with {c.name} in person, once you’ve met. Entering it releases the {amt} from ZeitMit to {c.name}.</Txt>
+      <Row style={{ gap: 10 }} >
+        {(ob.otp || '0000').split('').map((d, i) => (
+          <Box key={i} shadow={4} style={{ flex: 1, height: 76, borderRadius: 18, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center' }}>
+            <H size={40}>{d}</H>
+          </Box>
+        ))}
+      </Row>
+      <View style={{ marginTop: 22 }}>
+        {steps.map(([icon, t, done], i) => (
+          <Row key={t} style={{ gap: 12, alignItems: 'flex-start' }}>
+            <View style={{ alignItems: 'center' }}>
+              <View style={{ width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: done ? colors.mint : colors.white, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name={icon} size={15} />
+              </View>
+              {i < 3 ? <View style={{ width: 2, height: 14, backgroundColor: colors.ink }} /> : null}
+            </View>
+            <Txt size={14} weight={600} style={{ paddingTop: 6, flex: 1 }}>{t}</Txt>
+          </Row>
+        ))}
+      </View>
+      <Row style={{ marginTop: 14, gap: 8, alignItems: 'flex-start' }}>
+        <Icon name="shield-alert" size={15} color={colors.gray600} />
+        <Txt size={12} lh={1.5} color={colors.gray600} style={{ flex: 1 }}>Never share the code before meeting, by chat or by phone. ZeitMit staff will never ask for it.</Txt>
+      </Row>
+      {!rel ? (
+        <Pressable accessibilityRole="button" onPress={() => useStore.getState().simulateRelease(ob.id)} style={{ marginTop: 16, height: 48, borderRadius: 14, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+          <Txt size={14} weight={700}>Demo: {c.name} enters the code</Txt>
+        </Pressable>
+      ) : null}
+    </Pad>
+  );
+}
+
+function OtpInSheet() {
+  const otpIn = useStore((s) => s.otpIn);
+  const cRate = useStore((s) => s.cRate);
+  const u = useStore((s) => s.cUpcoming.find((x) => x.id === s.otpIn.uid) || s.cDone.find((x) => x.id === s.otpIn.uid));
+  const ref = useRef<TextInputInstance>(null);
+  if (!u) return <Pad><View /></Pad>;
+  const amt = eur(cRate * u.dur);
+  const v = otpIn.val;
+
+  if (otpIn.done) {
+    return (
+      <Pad>
+        <View style={{ alignItems: 'center', gap: 10, paddingTop: 16, paddingBottom: 4 }}>
+          <Enter kind="pop">
+            <Box shadow={4} style={{ width: 88, height: 88, borderRadius: 28, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="wallet" size={38} />
+            </Box>
+          </Enter>
+          <H size={30} ls={-0.03}>{amt} released</H>
+          <Txt size={14} lh={1.5} color={colors.gray600} align="center">Code confirmed. The money is in your ZeitMit balance and goes out with this week’s payout. Have a good time with {u.who}!</Txt>
+          <PrimaryButton label="Done" weight={700} style={{ marginTop: 10, alignSelf: 'stretch' }} onPress={() => useStore.getState().closeSheet()} />
+        </View>
+      </Pad>
+    );
+  }
+  return (
+    <Pad>
+      <BigTitle>Enter {u.who}’s code</BigTitle>
+      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginBottom: 18 }}>Ask {u.who} for their 4-digit meet code when you meet. {amt} is released to you as soon as it matches.</Txt>
+      <Pressable accessibilityLabel="Meet code" onPress={() => ref.current?.focus()}>
+        <Row style={{ gap: 10 }}>
+          {[0, 1, 2, 3].map((i) => (
+            <Box key={i} shadow={4} style={{ flex: 1, height: 72, borderRadius: 18, borderWidth: 2.5, borderColor: otpIn.err ? colors.rose : i === v.length ? colors.violet : colors.ink, backgroundColor: v[i] ? colors.butter : colors.white, alignItems: 'center', justifyContent: 'center' }}>
+              <H size={36}>{v[i] || ''}</H>
+            </Box>
+          ))}
+        </Row>
+        <TextInput
+          ref={ref}
+          value={v}
+          onChangeText={(t) => useStore.setState({ otpIn: { ...otpIn, val: t.replace(/\D/g, '').slice(0, 4), err: false } })}
+          keyboardType="number-pad"
+          autoComplete="one-time-code"
+          textContentType="oneTimeCode"
+          autoFocus
+          caretHidden
+          accessibilityLabel="Meet code"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0, fontSize: 16 }}
+        />
+      </Pressable>
+      {otpIn.err ? (
+        <Row style={{ gap: 6, marginTop: 12 }}>
+          <Icon name="circle-alert" size={15} color={colors.roseDeep} />
+          <Txt size={13} weight={600} color={colors.roseDeep}>That code doesn’t match. Check with {u.who} and try again.</Txt>
+        </Row>
+      ) : null}
+      <Txt size={12} color={colors.gray600} style={{ marginTop: 14 }}>Demo: {u.who}’s code is <Txt size={12} weight={700}>{u.code}</Txt></Txt>
+      <PrimaryButton label="Confirm & release payment" weight={700} shadowColor={colors.mint} dim={v.length < 4} style={{ marginTop: 16 }} onPress={() => useStore.getState().verifyOtp()} />
+    </Pad>
+  );
+}
