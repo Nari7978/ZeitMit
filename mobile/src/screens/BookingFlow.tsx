@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { AM, BSTEPS, CM, DAYS, dayOpen, eur, hours, isOpen, NO, ROM, TIMES, type ActId } from '../data';
+import { AM, BSTEPS, eur, hours, NO, ROM, slotDay, type ActId } from '../data';
+import { api } from '../api';
+
+const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
 import { useStore } from '../store';
 import { toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -14,7 +17,12 @@ type Draft = { act: ActId | null; day: number | null; time: string | null; dur: 
 
 export default function BookingFlow() {
   const params = useLocalSearchParams<{ cid: string; day?: string }>();
-  const c = CM[params.cid];
+  const c = useStore((s) => s.byId[params.cid]);
+  const [slots, setSlots] = useState<{ date: string; times: string[] }[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api<{ date: string; times: string[] }[]>('GET', `/companions/${params.cid}/slots`).then(setSlots).catch((e) => useStore.getState().showToast(e.message));
+  }, [params.cid]);
   const top = useTopPad();
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState(1);
@@ -33,12 +41,20 @@ export default function BookingFlow() {
     if (!valid) return;
     if (step === 4 && !b.place.trim()) return upd({ placeErr: true });
     if (step < 6) return setStep(step + 1);
-    useStore.getState().addBooking({ cid: c.id, act: b.act!, day: b.day!, time: b.time!, dur: b.dur!, place: b.place });
-    setDone(true);
+    if (busy) return;
+    setBusy(true);
+    void useStore.getState()
+      .addBooking({ cid: c.id, act: b.act!, date: slots[b.day!].date, time: b.time!, dur: b.dur!, place: b.place, note: b.note, boundariesAgreed: b.agree })
+      .then((bk) => {
+        setBusy(false);
+        if (bk) setDone(true);
+        else api<{ date: string; times: string[] }[]>('GET', `/companions/${c.id}/slots`).then(setSlots).catch(() => {});
+      });
   };
   const back = () => (step > 1 ? setStep(step - 1) : router.back());
   const close = () => router.back();
-  const dayLabel = b.day != null ? DAYS[b.day].full : '—';
+  const days = slots.map((s, i) => slotDay(s.date, i));
+  const dayLabel = b.day != null && days[b.day] ? days[b.day].full : '—';
   const durLabel = b.dur ? hours(b.dur) : '—';
   const actLabel = b.act ? AM[b.act].label : '—';
 
@@ -117,11 +133,11 @@ export default function BookingFlow() {
           <>
             <StepTitle title="Pick a day and time" sub="Times are in Berlin time." />
             <Row style={{ gap: 6 }}>
-              {DAYS.map((d) => {
-                const open = dayOpen(c.id, d.i);
-                const on = b.day === d.i;
+              {days.map((d, i) => {
+                const open = slots[i].times.length > 0;
+                const on = b.day === i;
                 return (
-                  <Pressable key={d.i} accessibilityRole="button" accessibilityLabel={d.full} accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ day: d.i, time: null })} style={{ flex: 1, alignItems: 'center', gap: 4, paddingTop: 10, paddingBottom: 8, borderRadius: 14, borderWidth: 1, borderColor: colors.ink, backgroundColor: on ? colors.ink : open ? colors.white : 'transparent' }}>
+                  <Pressable key={d.date} accessibilityRole="button" accessibilityLabel={d.full} accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ day: i, time: null })} style={{ flex: 1, alignItems: 'center', gap: 4, paddingTop: 10, paddingBottom: 8, borderRadius: 14, borderWidth: 1, borderColor: colors.ink, backgroundColor: on ? colors.ink : open ? colors.white : 'transparent' }}>
                     <Txt size={11} weight={500} color={on ? colors.white : open ? colors.ink : colors.gray400} numberOfLines={1}>{d.label}</Txt>
                     <Txt size={18} weight={700} color={on ? colors.white : open ? colors.ink : colors.gray400}>{d.n}</Txt>
                     <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: open ? (on ? colors.sun : colors.green) : 'transparent' }} />
@@ -129,12 +145,14 @@ export default function BookingFlow() {
                 );
               })}
             </Row>
-            {b.day != null ? (
+            {!slots.length ? (
+              <Txt size={14} color={colors.gray600} style={{ marginTop: 24 }}>Loading availability…</Txt>
+            ) : b.day != null ? (
               <>
                 <Txt size={14} weight={600} style={{ marginTop: 24, marginBottom: 10 }}>Available times</Txt>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {TIMES.map((t, ti) => {
-                    const open = isOpen(c.id, b.day!, ti);
+                  {TIMES.map((t) => {
+                    const open = !!slots[b.day!]?.times.includes(t);
                     const on = b.time === t;
                     return (
                       <Pressable key={t} accessibilityRole="button" accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ time: t })} style={{ width: '22.5%', flexGrow: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: on || open ? colors.ink : colors.butter, backgroundColor: on ? colors.ink : open ? colors.white : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
@@ -282,7 +300,7 @@ export default function BookingFlow() {
           <Txt size={12} color={colors.gray600}>{b.dur ? 'Total incl. fees' : 'Select a duration'}</Txt>
           <H size={21} ls={-0.02}>{total}</H>
         </View>
-        <PrimaryButton label={step === 6 ? 'Pay & send request' : 'Continue'} dim={!valid} onPress={next} style={{ paddingHorizontal: 24 }} />
+        <PrimaryButton label={step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
       </Row>
     </KeyboardAvoidingView>
   );

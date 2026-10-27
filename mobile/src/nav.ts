@@ -26,9 +26,9 @@ export function openChat(key: string) {
 }
 
 /** Message a companion, creating an empty conversation if needed. */
-export function messageCompanion(cid: string) {
-  useStore.getState().ensureConvo(cid);
-  router.push({ pathname: '/chat/[id]', params: { id: cid } });
+export async function messageCompanion(cid: string) {
+  const id = await useStore.getState().openConversation(cid);
+  if (id) openChat(id);
 }
 
 /** Jump to Search with filters applied (Discover shortcuts). */

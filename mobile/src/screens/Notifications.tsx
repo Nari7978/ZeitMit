@@ -2,7 +2,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { TONE, type BTab } from '../data';
+import { notifWhen, TONE, type BTab } from '../data';
 import { useStore, type Notif } from '../store';
 import { openChat, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -11,16 +11,19 @@ import { CircleButton, StatusCover, TextButton } from '../ui/common';
 
 export default function Notifications() {
   const insets = useSafeAreaInsets();
-  const notifs = useStore((s) => s.notifs);
+  const notifs = useStore((s) => s.notifs).map((n) => ({ ...n, ...notifWhen(n.created_at) }));
   const hasUnread = notifs.some((n) => !n.read);
 
-  const fire = (n: Notif) => {
+  const fire = (n: Notif & { g: string; time: string }) => {
     useStore.getState().readNotif(n.id);
     if (n.go.startsWith('chat:')) {
       router.dismissTo('/messages');
       openChat(n.go.slice(5));
     } else if (n.go.startsWith('tab:')) {
       toBookings(n.go.slice(4) as BTab);
+    } else if (n.go.startsWith('comp:')) {
+      const tab = n.go.slice(5);
+      router.dismissTo(tab === 'overview' ? '/companion' : (`/companion/${tab}` as '/companion'));
     }
   };
 

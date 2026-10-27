@@ -5,7 +5,7 @@ import Slider from '@react-native-community/slider';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, ageStr, CM, eur, LANGS, PREF, SORT, WHEN } from '../data';
+import { A, ageStr, eur, LANGS, PREF, SORT, WHEN } from '../data';
 import { filtered, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -111,8 +111,8 @@ const Grid = ({ children, cols = 2 }: { children: ReactNode; cols?: number }) =>
 const Opt = ({ label, on, onPress, h = 42 }: { label: string; on: boolean; onPress: () => void; h?: number }) => <Chip label={label} on={on} onPress={onPress} height={h} radius={12} weight={600} />;
 
 function FilterSheet() {
-  const { f, setF, clearAll, query, sort, closeSheet } = useStore();
-  const n = filtered(query, f, sort).length;
+  const { f, setF, clearAll, query, sort, closeSheet, companions } = useStore();
+  const n = filtered(companions, query, f, sort).length;
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1 }}>
@@ -226,16 +226,25 @@ function MenuRow({ icon, label, onPress, color = colors.ink, last }: { icon: str
 
 function ChatMenuSheet() {
   const key = useStore((s) => s.sheetChat);
-  const convo = useStore((s) => (key ? s.convos[key] : null));
-  const { showToast, closeSheet, openSheet } = useStore.getState();
+  const cust = useStore((s) => s.convos.find((c) => c.id === key));
+  const comp = useStore((s) => s.compConvos.find((c) => c.id === key));
+  const { closeSheet, openSheet, block } = useStore.getState();
+  // From the customer side the other person is the companion; from companion mode, the customer.
+  const other = cust ? cust.cid : comp?.customerId;
   return (
     <Pad>
-      <MenuRow icon="user-round" label="View profile" onPress={() => {
-        closeSheet();
-        if (convo?.cid) { router.back(); openProfile(convo.cid); }
+      {cust ? (
+        <MenuRow icon="user-round" label="View profile" onPress={() => {
+          closeSheet();
+          router.back();
+          openProfile(cust.cid);
+        }} />
+      ) : null}
+      <MenuRow icon="flag" label="Report" onPress={() => openSheet('report', { reportReason: null, reportTarget: other ?? null })} />
+      <MenuRow icon="ban" label="Block" color={colors.red} last onPress={() => {
+        if (!other) return;
+        void block(other).then((ok) => { if (ok) { closeSheet(); router.back(); } });
       }} />
-      <MenuRow icon="flag" label="Report" onPress={() => openSheet('report', { reportReason: null })} />
-      <MenuRow icon="ban" label="Block" color={colors.red} last onPress={() => { closeSheet(); router.back(); showToast('Blocked. They can’t message or book you.'); }} />
     </Pad>
   );
 }
@@ -255,7 +264,7 @@ function ReportSheet() {
         shadowColor="transparent"
         dim={!reason}
         style={{ marginTop: 16 }}
-        onPress={() => { useStore.setState({ sheet: null }); useStore.getState().showToast('Report sent. Our safety team reviews it within 24 hours.'); }}
+        onPress={() => void useStore.getState().report()}
       />
     </Pad>
   );
@@ -267,7 +276,7 @@ function ReviewSheet() {
   const review = useStore((s) => s.review);
   const name = useStore((s) => {
     const b = s.bookings.find((x) => x.id === s.review.bid);
-    return b ? CM[b.cid].name : '';
+    return b ? b.companionName : '';
   });
   const set = (o: Partial<typeof review>) => useStore.setState({ review: { ...review, ...o } });
   return (
@@ -282,19 +291,15 @@ function ReviewSheet() {
         ))}
       </Row>
       <TextInput value={review.text} onChangeText={(t) => set({ text: t.slice(0, 300) })} accessibilityLabel="Review" placeholder="What made it a good time?" placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 110, padding: 14, fontSize: 15, lineHeight: 22 }]} />
-      <PrimaryButton label="Post review" style={{ marginTop: 14 }} onPress={() => useStore.getState().submitReview()} />
+      <PrimaryButton label="Post review" style={{ marginTop: 14 }} onPress={() => void useStore.getState().submitReview()} />
     </Pad>
   );
 }
 
 function EditSheet() {
-  const edit = useStore((s) => s.edit ?? s.user);
+  const edit = useStore((s) => s.edit ?? { name: s.user?.name ?? '', bio: s.user?.bio ?? '' });
   const set = (o: Partial<typeof edit>) => useStore.setState({ edit: { ...edit, ...o } });
-  const save = () => {
-    if (!edit.name.trim()) return useStore.getState().showToast('Name can’t be empty');
-    useStore.setState({ user: { ...edit, first: edit.name.trim().split(' ')[0] }, sheet: null });
-    useStore.getState().showToast('Profile updated');
-  };
+  const save = () => void useStore.getState().saveEdit();
   return (
     <Pad>
       <SheetTitle style={{ marginBottom: 14 }}>Personal details</SheetTitle>
@@ -310,11 +315,13 @@ function EditSheet() {
 
 function SavedSheet() {
   const saved = useStore((s) => s.saved);
+  const byId = useStore((s) => s.byId);
   return (
     <Pad scroll>
       <SheetTitle>Saved companions</SheetTitle>
       {saved.map((k) => {
-        const c = CM[k];
+        const c = byId[k];
+        if (!c) return null;
         return (
           <Pressable key={k} accessibilityRole="button" onPress={() => openProfile(k)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.hairline }}>
             <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
@@ -332,7 +339,7 @@ function SavedSheet() {
 }
 
 function DeleteSheet() {
-  const { closeSheet, showToast } = useStore.getState();
+  const { closeSheet } = useStore.getState();
   return (
     <Pad>
       <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.redSoft, alignItems: 'center', justifyContent: 'center', marginTop: 8, marginBottom: 14 }}>
@@ -342,7 +349,7 @@ function DeleteSheet() {
       <Txt size={14} lh={1.55} color={colors.gray800}>Your profile, messages and booking history are permanently removed after 30 days. Active bookings need to be completed or cancelled first.</Txt>
       <Row style={{ gap: 8, marginTop: 20 }}>
         <SecondaryButton label="Keep account" height={50} size={15} style={{ flex: 1 }} onPress={closeSheet} />
-        <PrimaryButton label="Delete" height={50} radius={14} bg={colors.red} shadowColor="transparent" style={{ flex: 1 }} onPress={() => { closeSheet(); showToast('Deletion requested. You’ll get a confirmation email (prototype).'); }} />
+        <PrimaryButton label="Delete" height={50} radius={14} bg={colors.red} shadowColor="transparent" style={{ flex: 1 }} onPress={() => void useStore.getState().deleteAccount()} />
       </Row>
     </Pad>
   );
@@ -365,7 +372,10 @@ function GiftSheet() {
             </Box>
           </Enter>
           <H size={26} ls={-0.03} align="center">Gift sent to {to}</H>
-          <Txt size={14} color={colors.gray600} align="center">{amt} credit is on its way. They’ll get a link to pick a companion.</Txt>
+          <Txt size={14} color={colors.gray600} align="center">Share this gift code with {to}. It’s valid for 12 months on any booking.</Txt>
+          <Box shadow={3} style={{ marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.butter }}>
+            <Txt kind="mono" size={20} weight={700} ls={0.08} selectable>{gift.code}</Txt>
+          </Box>
           <PrimaryButton label="Done" weight={700} style={{ marginTop: 10, alignSelf: 'stretch' }} onPress={() => useStore.getState().closeSheet()} />
         </View>
       </Pad>
@@ -390,7 +400,7 @@ function GiftSheet() {
       </Row>
       <TextInput value={gift.to} onChangeText={(t) => set({ to: t })} accessibilityLabel="Recipient" placeholder="Friend’s name or email" placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 50, marginTop: 12 }]} />
       <TextInput value={gift.msg} onChangeText={(t) => set({ msg: t.slice(0, 140) })} accessibilityLabel="Message" placeholder="Add a message (optional)" placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 76, marginTop: 10, paddingTop: 12, fontSize: 15 }]} />
-      <PrimaryButton label={'Send gift · ' + amt} weight={700} dim={!gift.to.trim()} style={{ marginTop: 14 }} onPress={() => set({ done: true })} />
+      <PrimaryButton label={'Send gift · ' + amt} weight={700} dim={!gift.to.trim()} style={{ marginTop: 14 }} onPress={() => void useStore.getState().sendGift()} />
     </Pad>
   );
 }
@@ -401,7 +411,7 @@ function SafetySheet() {
   const safety = useStore((s) => s.safety);
   const name = useStore((s) => {
     const b = s.bookings.find((x) => x.id === s.safety.bid);
-    return b ? CM[b.cid].name : 'your companion';
+    return b ? b.companionName : 'your companion';
   });
   const set = (o: Partial<typeof safety>) => useStore.setState({ safety: { ...safety, ...o } });
   return (
@@ -413,20 +423,23 @@ function SafetySheet() {
         <H size={24} ls={-0.03}>Safety check-in</H>
       </Row>
       <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginTop: 8, marginBottom: 16 }}>We’ll ask if you’re OK during your time with {name}. Miss a check-in and your trusted contact gets your booking details and location.</Txt>
-      <Row style={{ gap: 12, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
-        <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.blush, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
-          <Txt size={15} weight={800}>A</Txt>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Txt size={15} weight={700}>Anna (sister)</Txt>
-          <Txt size={12} color={colors.gray600}>Trusted contact · +49 ··· 18</Txt>
-        </View>
-        <TextButton label="Change" size={13} weight={700} underline onPress={() => useStore.getState().showToast('Safety centre opens here (prototype)')} />
-      </Row>
+      <View style={{ gap: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
+        <Row style={{ gap: 12 }}>
+          <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.blush, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+            <Txt size={15} weight={800}>{(safety.contactName.trim()[0] ?? '?').toUpperCase()}</Txt>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Txt size={15} weight={700}>Trusted contact</Txt>
+            <Txt size={12} color={colors.gray600}>Someone we can reach if you don’t check in.</Txt>
+          </View>
+        </Row>
+        <TextInput value={safety.contactName} onChangeText={(t) => set({ contactName: t })} accessibilityLabel="Contact name" placeholder="Name, e.g. Anna (sister)" placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 46 }]} />
+        <TextInput value={safety.contactPhone} onChangeText={(t) => set({ contactPhone: t })} accessibilityLabel="Contact phone" placeholder="Phone, e.g. +49 151 2345678" placeholderTextColor={colors.gray400} keyboardType="phone-pad" style={[font('body'), input, { height: 46 }]} />
+      </View>
       <Row style={{ gap: 12, marginTop: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
         <View style={{ flex: 1 }}>
           <Txt size={15} weight={700}>Share live location</Txt>
-          <Txt size={12} color={colors.gray600}>Only with Anna, only during the booking.</Txt>
+          <Txt size={12} color={colors.gray600}>Only with {safety.contactName.trim() || 'your contact'}, only during the booking.</Txt>
         </View>
         <Toggle bordered on={safety.share} label="Share live location" onPress={() => set({ share: !safety.share })} />
       </Row>
@@ -436,14 +449,15 @@ function SafetySheet() {
           <Chip key={v} label={l} on={safety.every === v} height={44} radius={12} size={12.5} weight={700} padL={4} padR={4} style={{ flex: 1, borderWidth: 2 }} onPress={() => set({ every: v })} />
         ))}
       </Row>
-      <PrimaryButton label="Start check-in" weight={700} shadowColor={colors.mint} style={{ marginTop: 18 }} onPress={() => useStore.getState().startCheckin()} />
+      <PrimaryButton label="Start check-in" weight={700} shadowColor={colors.mint} dim={!safety.contactName.trim() || !safety.contactPhone.trim()} style={{ marginTop: 18 }} onPress={() => void useStore.getState().startCheckin()} />
       <Txt size={12} color={colors.gray600} align="center" style={{ marginTop: 12 }}>In an emergency, always call 112.</Txt>
     </Pad>
   );
 }
 
 function SosSheet() {
-  const { showToast } = useStore.getState();
+  const contact = useStore((s) => s.safety.contactName.trim() || 'your contact');
+  const { sos, endCheckin } = useStore.getState();
   return (
     <Pad>
       <View style={{ gap: 10 }}>
@@ -452,9 +466,9 @@ function SosSheet() {
           <Icon name="phone" size={18} color={colors.white} />
           <Txt size={16} weight={800} color={colors.white}>Call 112</Txt>
         </PressBox>
-        <SecondaryButton label="Alert Anna now" height={52} radius={16} size={15} weight={700} shadow={4} border={2.5} onPress={() => { useStore.setState({ sheet: null }); showToast('Anna has your location and booking details (prototype).'); }} />
+        <SecondaryButton label={`Alert ${contact} now`} height={52} radius={16} size={15} weight={700} shadow={4} border={2.5} onPress={() => void sos()} />
         <View style={{ alignItems: 'center' }}>
-          <TextButton label="I’m fine, end check-in" size={15} weight={700} style={{ paddingVertical: 12 }} onPress={() => { useStore.setState({ sheet: null, checkin: null }); showToast('Check-in ended. Hope it was a good time!'); }} />
+          <TextButton label="I’m fine, end check-in" size={15} weight={700} style={{ paddingVertical: 12 }} onPress={() => void endCheckin()} />
         </View>
       </View>
     </Pad>
@@ -466,7 +480,7 @@ function SosSheet() {
 function OtpSheet() {
   const ob = useStore((s) => s.bookings.find((x) => x.id === s.otpFor));
   if (!ob) return <Pad><View /></Pad>;
-  const c = CM[ob.cid];
+  const c = { name: ob.companionName };
   const rel = ob.pay === 'released';
   const amt = eur(priceOf(ob));
   const steps: [string, string, boolean][] = [
@@ -503,22 +517,16 @@ function OtpSheet() {
         <Icon name="shield-alert" size={15} color={colors.gray600} />
         <Txt size={12} lh={1.5} color={colors.gray600} style={{ flex: 1 }}>Never share the code before meeting, by chat or by phone. ZeitMit staff will never ask for it.</Txt>
       </Row>
-      {!rel ? (
-        <Pressable accessibilityRole="button" onPress={() => useStore.getState().simulateRelease(ob.id)} style={{ marginTop: 16, height: 48, borderRadius: 14, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
-          <Txt size={14} weight={700}>Demo: {c.name} enters the code</Txt>
-        </Pressable>
-      ) : null}
     </Pad>
   );
 }
 
 function OtpInSheet() {
   const otpIn = useStore((s) => s.otpIn);
-  const cRate = useStore((s) => s.cRate);
-  const u = useStore((s) => s.cUpcoming.find((x) => x.id === s.otpIn.uid) || s.cDone.find((x) => x.id === s.otpIn.uid));
+  const u = useStore((s) => s.comp.upcoming.find((x) => x.id === s.otpIn.uid) || s.comp.done.find((x) => x.id === s.otpIn.uid));
   const ref = useRef<TextInputInstance>(null);
   if (!u) return <Pad><View /></Pad>;
-  const amt = eur(cRate * u.dur);
+  const amt = eur(u.payout / 100);
   const v = otpIn.val;
 
   if (otpIn.done) {
@@ -568,7 +576,6 @@ function OtpInSheet() {
           <Txt size={13} weight={600} color={colors.roseDeep}>That code doesn’t match. Check with {u.who} and try again.</Txt>
         </Row>
       ) : null}
-      <Txt size={12} color={colors.gray600} style={{ marginTop: 14 }}>Demo: {u.who}’s code is <Txt size={12} weight={700}>{u.code}</Txt></Txt>
       <PrimaryButton label="Confirm & release payment" weight={700} shadowColor={colors.mint} dim={v.length < 4} style={{ marginTop: 16 }} onPress={() => useStore.getState().verifyOtp()} />
     </Pad>
   );

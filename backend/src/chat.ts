@@ -71,6 +71,7 @@ chat.get('/', async (c) => {
   return c.json(r.results.map((x) => ({
     id: x.id,
     cid: x.companion_id,
+    customerId: x.customer_id,
     name: side === 'customer' ? x.companion_name : x.customer_name || 'Customer',
     hue: x.hue,
     bookingId: x.booking_id,

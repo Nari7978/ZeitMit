@@ -1,20 +1,32 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { AM, ageStr, CM, DAYS, eur, LEVEL, NO, ratingStr, reviewsStr, RV, slots } from '../data';
+import { AM, ageStr, eur, LEVEL, NO, ratingStr, reviewsStr, slotDay, type Companion } from '../data';
+import { api } from '../api';
 import { useStore } from '../store';
 import { messageCompanion, openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, useTopPad } from '../ui/common';
 
+type Detail = Companion & {
+  reviewList: { n: string; a: string; stars: number; t: string; created_at: number }[];
+  slots: { date: string; times: string[] }[];
+  no: string[];
+};
+
 export default function Profile() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const c = CM[id];
+  const listed = useStore((s) => s.byId[id]);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  useEffect(() => {
+    api<Detail>('GET', `/companions/${id}`).then(setDetail).catch((e) => useStore.getState().showToast(e.message));
+  }, [id]);
+  const c: Companion | undefined = detail ?? listed;
   const insets = useSafeAreaInsets();
   const top = useTopPad();
   const [scrolled, setScrolled] = useState(false);
@@ -22,7 +34,8 @@ export default function Profile() {
   const { showToast, openSheet } = useStore.getState();
   if (!c) return null;
 
-  const nRev = Math.min(c.reviews, allReviews ? 4 : 2);
+  const reviews = detail?.reviewList ?? [];
+  const slots = detail?.slots ?? [];
   const btnBg = scrolled ? colors.white : 'rgba(255,255,255,.88)';
   const btnBd = scrolled ? colors.ink : 'transparent';
 
@@ -128,20 +141,21 @@ export default function Profile() {
             <Txt size={12} color={colors.gray600}>Tap a day to book</Txt>
           </Row>
           <Row style={{ gap: 6 }}>
-            {DAYS.map((d) => {
-              const n = slots(c.id, d.i);
+            {(slots.length ? slots : Array.from({ length: 7 }, () => null)).map((slot, i) => {
+              const d = slot ? slotDay(slot.date, i) : null;
+              const n = slot ? slot.times.length : 0;
               return (
                 <Pressable
-                  key={d.i}
+                  key={slot?.date ?? i}
                   accessibilityRole="button"
-                  accessibilityLabel={`${d.full}, ${n} slots`}
+                  accessibilityLabel={d ? `${d.full}, ${n} slots` : 'Loading'}
                   accessibilityState={{ disabled: !n }}
-                  onPress={() => n && openBooking(c.id, d.i)}
+                  onPress={() => n && openBooking(c.id, i)}
                   style={{ flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRadius: 14, borderWidth: 1, borderColor: n ? colors.ink : colors.cream, backgroundColor: n ? colors.white : colors.cream }}
                 >
-                  <Txt size={11} weight={500} color={n ? colors.ink : colors.gray400}>{d.d}</Txt>
-                  <Txt size={17} weight={700} color={n ? colors.ink : colors.gray400}>{d.n}</Txt>
-                  <Txt size={9.5} color={colors.gray600} numberOfLines={1}>{n ? n + (n === 1 ? ' slot' : ' slots') : '—'}</Txt>
+                  <Txt size={11} weight={500} color={n ? colors.ink : colors.gray400}>{d?.d ?? ' '}</Txt>
+                  <Txt size={17} weight={700} color={n ? colors.ink : colors.gray400}>{d?.n ?? ' '}</Txt>
+                  <Txt size={9.5} color={colors.gray600} numberOfLines={1}>{!d ? ' ' : n ? n + (n === 1 ? ' slot' : ' slots') : '—'}</Txt>
                 </Pressable>
               );
             })}
@@ -155,28 +169,28 @@ export default function Profile() {
               <Txt size={13} color={colors.gray600}>{c.rating ? 'From ' + c.reviews + ' completed bookings' : 'A rating appears after 3 completed bookings'}</Txt>
             </View>
           </Row>
-          {RV.slice(0, nRev).map((r) => (
-            <View key={r.n} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.hairline, gap: 8 }}>
+          {reviews.slice(0, allReviews ? 20 : 2).map((r, i) => (
+            <View key={i} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.hairline, gap: 8 }}>
               <Row style={{ gap: 10 }}>
                 <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: colors.butter, alignItems: 'center', justifyContent: 'center' }}>
                   <Txt size={13} weight={700} color={colors.gray800}>{r.n[0]}</Txt>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Txt size={14} weight={600}>{r.n}</Txt>
-                  <Txt size={12} color={colors.gray600}>{r.m} · {r.a} · Verified booking</Txt>
+                  <Txt size={12} color={colors.gray600}>{new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric' }).format(new Date(r.created_at * 1000))} · {r.a} · Verified booking</Txt>
                 </View>
               </Row>
               <Txt size={14} lh={1.55} color={colors.gray900}>{r.t}</Txt>
             </View>
           ))}
-          {c.reviews > 2 && !allReviews ? (
-            <SecondaryButton label={'See all ' + c.reviews + ' reviews'} onPress={() => setAllReviews(true)} style={{ marginTop: 14 }} />
+          {reviews.length > 2 && !allReviews ? (
+            <SecondaryButton label={'See all ' + reviews.length + ' reviews'} onPress={() => setAllReviews(true)} style={{ marginTop: 14 }} />
           ) : null}
 
           <Row style={{ marginTop: 24, marginBottom: 8, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
             <Icon name="shield-check" size={18} color={colors.green} />
             <Txt size={13} lh={1.45} color={colors.gray800} style={{ flex: 1 }}>Meet in public and pay only through ZeitMit.</Txt>
-            <Pressable accessibilityRole="button" onPress={() => openSheet('report', { reportReason: null })} style={{ padding: 4 }}>
+            <Pressable accessibilityRole="button" onPress={() => openSheet('report', { reportReason: null, reportTarget: c.id })} style={{ padding: 4 }}>
               <Txt size={13} weight={600} color={colors.red}>Report</Txt>
             </Pressable>
           </Row>

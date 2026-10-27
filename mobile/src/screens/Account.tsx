@@ -15,13 +15,16 @@ export default function Account() {
   const bottom = useNavBottom() + 90;
   const user = useStore((s) => s.user);
   const savedCount = useStore((s) => s.saved.length);
-  const compStatus = useStore((s) => s.compStatus);
+  const compStatus = useStore((s) => s.companionStatus);
+  const { logout } = useStore.getState();
+  if (!user) return null;
+  const editUser = { name: user.name, bio: user.bio };
   const { openSheet, showToast } = useStore.getState();
 
   type RowDef = [icon: string, label: string, value: string, fn?: () => void];
   const groups: { title: string; rows: RowDef[] }[] = [
     { title: 'Account', rows: [
-      ['user-round', 'Personal details', '', () => openSheet('edit', { edit: { ...user } })],
+      ['user-round', 'Personal details', '', () => openSheet('edit', { edit: editUser })],
       ['heart', 'Saved companions', String(savedCount), () => openSheet('saved')],
       ['gift', 'Gift a date', '', () => openSheet('gift', { gift: { amt: 100, to: '', msg: '', done: false } })],
       ['credit-card', 'Payment methods', 'Visa ··42'],
@@ -43,7 +46,7 @@ export default function Account() {
             </View>
             <View style={{ gap: 4, flex: 1, minWidth: 0 }}>
               <H size={24} ls={-0.025} numberOfLines={1}>{user.name}</H>
-              <Txt size={13} color={colors.gray600}>Berlin · Member since 2025</Txt>
+              <Txt size={13} color={colors.gray600}>Berlin · Member since {new Date(user.createdAt * 1000).getFullYear()}</Txt>
               <Row style={{ gap: 5 }}>
                 <Icon name="shield-check" size={14} color={colors.green} />
                 <Txt size={12} weight={600} color={colors.green}>Age confirmed 18+</Txt>
@@ -51,10 +54,10 @@ export default function Account() {
             </View>
           </Row>
           <View style={{ paddingTop: 16, paddingHorizontal: 20 }}>
-            <SecondaryButton label="Edit profile" icon="pencil" height={44} onPress={() => openSheet('edit', { edit: { ...user } })} />
+            <SecondaryButton label="Edit profile" icon="pencil" height={44} onPress={() => openSheet('edit', { edit: editUser })} />
           </View>
 
-          {compStatus === 'none' ? (
+          {compStatus === 'none' || compStatus === 'rejected' ? (
             <View style={{ marginTop: 20, marginHorizontal: 20, padding: 22, borderRadius: 24, backgroundColor: colors.ink, overflow: 'hidden' }}>
               <View style={{ position: 'absolute', right: -40, top: -40, width: 160, height: 160, borderRadius: 80, backgroundColor: 'rgba(255,79,139,.35)' }} />
               <View style={{ gap: 8 }}>
@@ -70,8 +73,8 @@ export default function Account() {
             <Box shadow={4} style={{ marginTop: 20, marginHorizontal: 20, padding: 18, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 14 }}>
               <Row style={{ justifyContent: 'space-between' }}>
                 <Txt size={15} weight={700}>Companion profile</Txt>
-                <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.amberSoft, justifyContent: 'center' }}>
-                  <Txt size={12} weight={600} color={colors.amberDeep}>Under review</Txt>
+                <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 999, backgroundColor: compStatus === 'approved' ? colors.greenSoft : colors.amberSoft, justifyContent: 'center' }}>
+                  <Txt size={12} weight={600} color={compStatus === 'approved' ? colors.greenDeep : colors.amberDeep}>{compStatus === 'approved' ? 'Live' : 'Under review'}</Txt>
                 </View>
               </Row>
               <PrimaryButton label="Switch to companion mode" icon="repeat" height={46} radius={14} size={14} onPress={toCompanionMode} />
@@ -102,7 +105,7 @@ export default function Account() {
           ))}
 
           <View style={{ paddingHorizontal: 20, marginTop: 24, gap: 8 }}>
-            <SecondaryButton label="Log out" height={50} radius={16} size={15} onPress={() => showToast('Logged out (prototype, session kept for demo)')} />
+            <SecondaryButton label="Log out" height={50} radius={16} size={15} onPress={() => void logout()} />
             <View style={{ alignItems: 'center' }}>
               <TextButton label="Delete account" color={colors.red} onPress={() => openSheet('delete')} style={{ paddingVertical: 12 }} />
             </View>

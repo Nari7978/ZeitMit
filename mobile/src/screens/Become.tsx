@@ -30,7 +30,8 @@ const HOW: [string, string, string][] = [
 export default function Become() {
   const insets = useSafeAreaInsets();
   const top = useTopPad();
-  const first = useStore((s) => s.user.first);
+  const first = useStore((s) => s.user?.first ?? '');
+  const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(false);
   const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false });
@@ -45,8 +46,11 @@ export default function Become() {
       upd({ aboutErr: false });
       return setStep(step + 1);
     }
-    useStore.getState().submitCompanion(b.rate, b.acts);
-    setDone(true);
+    if (busy) return;
+    setBusy(true);
+    void useStore.getState()
+      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idSubmitted: b.idv })
+      .then((ok) => { setBusy(false); if (ok) setDone(true); });
   };
 
   if (done) {
@@ -197,7 +201,7 @@ export default function Become() {
                 {b.idv ? (
                   <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.greenSoft, justifyContent: 'center' }}><Txt size={12} weight={600} color={colors.greenDeep}>Submitted</Txt></View>
                 ) : (
-                  <Pressable accessibilityRole="button" onPress={() => { upd({ idv: true }); useStore.getState().showToast('ID check submitted to verification partner (prototype)'); }} style={{ height: 36, paddingHorizontal: 14, borderRadius: 10, backgroundColor: colors.ink, justifyContent: 'center' }}>
+                  <Pressable accessibilityRole="button" onPress={() => { upd({ idv: true }); useStore.getState().showToast('Noted. Our team verifies your ID before your profile goes live.'); }} style={{ height: 36, paddingHorizontal: 14, borderRadius: 10, backgroundColor: colors.ink, justifyContent: 'center' }}>
                     <Txt size={13} weight={600} color={colors.white}>Start</Txt>
                   </Pressable>
                 )}

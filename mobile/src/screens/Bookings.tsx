@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { AM, BTAB, CM, eur, hours, ST, type BTab } from '../data';
+import { AM, BTAB, eur, hours, ST, type BTab } from '../data';
 import { priceOf, useStore, type Booking } from '../store';
 import { bookAgain, messageCompanion, openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -69,13 +69,13 @@ export default function Bookings() {
 }
 
 function BookingCard({ b }: { b: Booking }) {
-  const c = CM[b.cid];
+  const c = { id: b.cid, name: b.companionName, hue: b.hue };
   const st = ST[b.status];
   const price = eur(priceOf(b));
-  const { cancelBooking, showToast, openSheet, safety } = useStore.getState();
+  const { cancelBooking, openSheet, safety } = useStore.getState();
   const msg = () => {
     router.navigate('/messages');
-    messageCompanion(b.cid);
+    void messageCompanion(b.cid);
   };
 
   type Act = { label: string; fn: () => void; primary?: boolean };
@@ -88,7 +88,7 @@ function BookingCard({ b }: { b: Booking }) {
     ],
     pending: [
       { label: 'Message', fn: msg },
-      { label: 'Cancel request', fn: () => { cancelBooking(b.id); showToast('Request cancelled. ' + price + ' refunded in full.'); } },
+      { label: 'Cancel request', fn: () => void cancelBooking(b.id) },
     ],
     completed: b.reviewed
       ? [{ ...again, primary: true }]

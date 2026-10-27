@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 import { Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
@@ -18,10 +18,18 @@ export default function RootLayout() {
     BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold,
   });
 
-  // Mock "featured" fetch, as in the prototype.
+  const session = useStore((s) => s.session);
+
+  // Restore the saved session, then keep data fresh: on app resume and every 30s while open.
   useEffect(() => {
-    const t = setTimeout(() => useStore.setState({ loading: false }), 1200);
-    return () => clearTimeout(t);
+    void useStore.getState().boot();
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active' && useStore.getState().session === 'in') void useStore.getState().refresh();
+    });
+    const t = setInterval(() => {
+      if (AppState.currentState === 'active' && useStore.getState().session === 'in') void useStore.getState().refresh();
+    }, 30000);
+    return () => { sub.remove(); clearInterval(t); };
   }, []);
 
   const path = usePathname();
@@ -30,22 +38,28 @@ export default function RootLayout() {
   const onTabs = TAB_PATHS.includes(path) || path.startsWith('/companion');
   const toastBottom = onTabs ? navBottom + (checkin && path !== '/notifications' ? 158 : 82) : navBottom + 98;
 
-  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: colors.sun }} />;
+  if (!fontsLoaded || session === 'loading') return <View style={{ flex: 1, backgroundColor: colors.sun }} />;
+  const signedIn = session === 'in';
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.sun }, animation: 'fade' }}>
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="companion" />
-        <Stack.Screen name="profile/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
-        <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.cream } }} />
-        <Stack.Screen name="notifications" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
-        <Stack.Screen name="book/[cid]" options={{ animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="become" options={{ animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Protected guard={signedIn}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="companion" />
+          <Stack.Screen name="profile/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
+          <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.cream } }} />
+          <Stack.Screen name="notifications" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
+          <Stack.Screen name="book/[cid]" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="become" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
+        </Stack.Protected>
+        <Stack.Protected guard={!signedIn}>
+          <Stack.Screen name="login" />
+        </Stack.Protected>
       </Stack>
-      <SheetHost />
+      {signedIn ? <SheetHost /> : null}
       <Toast bottom={toastBottom} />
     </View>
   );

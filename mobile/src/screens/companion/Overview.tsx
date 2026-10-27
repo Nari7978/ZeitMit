@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur, hours } from '../../data';
-import { useStore } from '../../store';
+import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
 import { PrimaryButton } from '../../ui/common';
@@ -11,28 +11,32 @@ import { CompShell, Initial } from './Shell';
 
 export default function Overview() {
   const s = useStore();
-  const next = s.cUpcoming[0];
-  const held = s.cUpcoming.reduce((a, u) => a + s.cRate * u.dur, 0);
-  const released = s.cDone.reduce((a, u) => a + s.cRate * u.dur, 0);
+  const { requests, upcoming, earnings, rate, acts } = s.comp;
+  const next = upcoming[0];
+  const held = earnings.held / 100;
+  const released = earnings.released / 100;
+  const live = s.companionStatus === 'approved';
 
   return (
-    <CompShell title={'Hi, ' + s.user.first}>
-      <Row style={{ gap: 12, padding: 16, borderRadius: 20, backgroundColor: colors.amberSoft, alignItems: 'flex-start' }}>
-        <Icon name="hourglass" size={20} color="#B37112" style={{ marginTop: 1 }} />
-        <View style={{ flex: 1, gap: 4 }}>
-          <Txt size={14} weight={700} color="#5E3D08">Profile under review</Txt>
-          <Txt size={13} lh={1.45} color="#7A5413">Usually 1–3 working days. Your profile isn’t public yet; the requests below are sample data showing how bookings will look.</Txt>
-        </View>
-      </Row>
+    <CompShell title={'Hi, ' + (s.user?.first ?? '')}>
+      {!live ? (
+        <Row style={{ gap: 12, padding: 16, borderRadius: 20, backgroundColor: colors.amberSoft, alignItems: 'flex-start' }}>
+          <Icon name="hourglass" size={20} color="#B37112" style={{ marginTop: 1 }} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <Txt size={14} weight={700} color="#5E3D08">{s.companionStatus === 'rejected' ? 'Profile not approved' : 'Profile under review'}</Txt>
+            <Txt size={13} lh={1.45} color="#7A5413">{s.companionStatus === 'rejected' ? 'Check your email for details. You can update your answers and apply again.' : 'Usually 1–3 working days. Your profile isn’t public yet, so requests start once it’s approved.'}</Txt>
+          </View>
+        </Row>
+      ) : null}
       <Row style={{ gap: 12 }}>
-        <StatTile n={s.requests.length} label="New requests" onPress={() => router.navigate('/companion/requests')} />
-        <StatTile n={s.cUpcoming.length} label="Upcoming" onPress={() => router.navigate('/companion/calendar')} />
+        <StatTile n={requests.length} label="New requests" onPress={() => router.navigate('/companion/requests')} />
+        <StatTile n={upcoming.length} label="Upcoming" onPress={() => router.navigate('/companion/calendar')} />
       </Row>
       {next ? (
         <Box shadow={4} style={card}>
           <Txt size={13} weight={600} color={colors.gray600}>Next up</Txt>
           <Row style={{ gap: 12 }}>
-            <Initial who={next.who} hue={next.hue} />
+            <Initial who={next.who} hue={hueOf(next.customerId)} />
             <View style={{ flex: 1 }}>
               <Txt size={16} weight={700}>{next.who} · {AM[next.act].label}</Txt>
               <Txt size={13} color={colors.gray600}>{next.day} · {next.time} · {hours(next.dur)}</Txt>
@@ -42,11 +46,11 @@ export default function Overview() {
       ) : null}
       <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/listing')} accessibilityLabel="Your listing" style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
         <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center' }}>
-          <Txt size={15} weight={800}>{initials(s.user.name)}</Txt>
+          <Txt size={15} weight={800}>{initials(s.user?.name ?? '')}</Txt>
         </View>
         <View style={{ flex: 1 }}>
           <Txt size={15} weight={700}>Your listing</Txt>
-          <Txt size={13} color={colors.gray600}>{eur(s.cRate)}/h · {s.cActs.length} activities</Txt>
+          <Txt size={13} color={colors.gray600}>{eur(rate)}/h · {acts.length} activities</Txt>
         </View>
         <Icon name="chevron-right" size={18} color={colors.gray400} />
       </PressBox>
@@ -57,7 +61,7 @@ export default function Overview() {
         </Row>
         <Row style={{ gap: 10, alignItems: 'stretch' }}>
           <Money icon="lock" label="Held" value={eur(held)} sub="Paid, waiting for meet code" bg={colors.lilac} />
-          <Money icon="circle-check" label="Released" value={eur(released)} sub={`${s.cDone.length} confirmed with code`} bg={colors.mintSoft} />
+          <Money icon="circle-check" label="Released" value={eur(released)} sub={`${earnings.releasedCount} confirmed with code`} bg={colors.mintSoft} />
         </Row>
         <Txt size={12} lh={1.5} color={colors.gray600}>Money moves to you the moment you enter the customer’s 4-digit code at the meet-up. Payouts to your bank go out weekly.</Txt>
         <PrimaryButton label="Enter a meet code" icon="key-round" height={44} radius={12} size={14} weight={700} onPress={() => router.navigate('/companion/calendar')} />

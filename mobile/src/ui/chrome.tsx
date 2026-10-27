@@ -58,7 +58,7 @@ export function NavBar({ state, navigateToTab, items }: BottomTabBarProps & { it
 
 export function CustomerNavBar(props: BottomTabBarProps) {
   const pending = useStore((s) => s.bookings.filter((b) => b.status === 'pending').length);
-  const unread = useStore((s) => s.corder.reduce((a, k) => a + s.convos[k].unread, 0));
+  const unread = useStore((s) => s.convos.reduce((a, c) => a + c.unread, 0));
   return (
     <NavBar
       {...props}
@@ -74,8 +74,8 @@ export function CustomerNavBar(props: BottomTabBarProps) {
 }
 
 export function CompanionNavBar(props: BottomTabBarProps) {
-  const reqs = useStore((s) => s.requests.length);
-  const unread = useStore((s) => s.convos.sam.unread + s.convos.tom.unread);
+  const reqs = useStore((s) => s.comp.requests.length);
+  const unread = useStore((s) => s.compConvos.reduce((a, c) => a + c.unread, 0));
   return (
     <NavBar
       {...props}
@@ -96,7 +96,7 @@ export function CheckinBar() {
   const sheet = useStore((s) => s.sheet);
   const bottom = useNavBottom() + 78;
   if (!checkin || sheet) return null;
-  const { safety, showToast, openSheet } = useStore.getState();
+  const { checkinOk, openSheet } = useStore.getState();
   return (
     <Enter style={{ position: 'absolute', left: 14, right: 14, bottom, zIndex: 45 }}>
       <Box shadow={4} style={{ paddingVertical: 10, paddingRight: 10, paddingLeft: 14, borderRadius: 20, backgroundColor: colors.mint, borderWidth: 2.5, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -109,7 +109,7 @@ export function CheckinBar() {
         </View>
         <Pressable
           accessibilityRole="button"
-          onPress={() => showToast('Thanks! Next check-in ' + (safety.every ? 'in ' + safety.every + ' min' : 'at the end') + '.')}
+          onPress={() => void checkinOk()}
           style={{ height: 38, paddingHorizontal: 12, borderRadius: 12, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white, justifyContent: 'center' }}
         >
           <Txt size={13} weight={700}>I’m OK</Txt>

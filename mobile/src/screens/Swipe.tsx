@@ -3,7 +3,7 @@ import { Animated, Easing, PanResponder, Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { AM, ageStr, C, eur } from '../data';
+import { AM, ageStr, eur } from '../data';
 import { useStore } from '../store';
 import { openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -13,20 +13,23 @@ import { CircleButton, useTopPad } from '../ui/common';
 export default function Swipe() {
   const top = useTopPad();
   const insets = useSafeAreaInsets();
+  const C = useStore((s) => s.companions);
   const [i, setI] = useState(0);
   const dx = useRef(new Animated.Value(0)).current;
   const busy = useRef(false);
   const idx = useRef(0);
   idx.current = i;
+  const listRef = useRef(C);
+  listRef.current = C;
 
   const cur = C[i];
   const nxt = C[i + 1];
 
   const go = (dir: 'left' | 'right') => {
-    const c = C[idx.current];
+    const c = listRef.current[idx.current];
     if (busy.current || !c) return;
     busy.current = true;
-    if (dir === 'right' && !useStore.getState().saved.includes(c.id)) useStore.setState((s) => ({ saved: [...s.saved, c.id] }));
+    if (dir === 'right' && !useStore.getState().saved.includes(c.id)) useStore.getState().toggleSave(c.id);
     Animated.timing(dx, { toValue: dir === 'left' ? -520 : 520, duration: 300, easing: Easing.bezier(0.2, 0.8, 0.2, 1), useNativeDriver: true }).start(() => {
       dx.setValue(0);
       busy.current = false;

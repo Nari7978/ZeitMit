@@ -2,7 +2,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { A, AM, ageStr, C, CM, ratingStr, ROM, USER_INT, eur, isDateCompanion, type Companion } from '../data';
+import { A, AM, ageStr, ratingStr, ROM, eur, isDateCompanion, type Companion } from '../data';
 import { useStore } from '../store';
 import { openProfile, searchWith } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -22,14 +22,22 @@ export default function Discover() {
   const top = useTopPad();
   const bottom = useNavBottom() + 90;
   const city = useStore((s) => s.city);
-  const first = useStore((s) => s.user.first);
+  const first = useStore((s) => s.user?.first ?? '');
   const loading = useStore((s) => s.loading);
   const hasUnread = useStore((s) => s.notifs.some((n) => !n.read));
   const openSheet = useStore((s) => s.openSheet);
 
-  const featured = ['lena', 'jonas', 'kai', 'amara', 'yuki'].map((k) => CM[k]);
+  const C = useStore((s) => s.companions);
+  const saved = useStore((s) => s.saved);
+  const featured = C.slice(0, 5);
   const walkers = C.filter((c) => c.acts.includes('walks'));
   const dateList = C.filter(isDateCompanion);
+  // "Similar interests": interests of the companions you saved, matched against everyone else.
+  const liked = new Set(C.filter((c) => saved.includes(c.id)).flatMap((c) => c.interests));
+  const similar = C.filter((c) => !saved.includes(c.id))
+    .map((c) => ({ c, shared: c.interests.filter((i) => liked.has(i)) }))
+    .sort((a, b) => b.shared.length - a.shared.length)
+    .slice(0, 3);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
@@ -258,9 +266,8 @@ export default function Discover() {
           {/* Similar interests */}
           <SectionHead title="People with similar interests" style={{ marginTop: 28, marginBottom: 6 }} />
           <View style={{ paddingHorizontal: 20 }}>
-            {['kai', 'yuki', 'lena'].map((k) => {
-              const c = CM[k];
-              const shared = c.interests.filter((i) => USER_INT.includes(i));
+            {similar.map(({ c, shared }) => {
+              const k = c.id;
               return (
                 <Pressable key={k} accessibilityRole="button" accessibilityLabel={c.name} onPress={() => openProfile(k)} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: colors.ink }}>
                   <View style={{ width: 52, height: 52, borderRadius: 26, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>

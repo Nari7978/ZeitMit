@@ -18,7 +18,11 @@ companions.get('/', async (c) => {
         .all<{ companion_id: string }>()
     : { results: [] as { companion_id: string }[] };
   const today = new Set(todayOpen.results.map((x) => x.companion_id));
-  return c.json(r.results.map((row) => ({ ...toCompanion(row), today: today.has(row.user_id) })));
+  // Weekdays (0=Mon) with any availability, for the "tomorrow / weekend / soonest" filters.
+  const all = await c.env.DB.prepare('SELECT DISTINCT companion_id, day FROM availability').all<{ companion_id: string; day: number }>();
+  const days = new Map<string, number[]>();
+  for (const a of all.results) days.set(a.companion_id, [...(days.get(a.companion_id) ?? []), a.day]);
+  return c.json(r.results.map((row) => ({ ...toCompanion(row), today: today.has(row.user_id), days: (days.get(row.user_id) ?? []).sort() })));
 });
 
 companions.get('/:id', async (c) => {

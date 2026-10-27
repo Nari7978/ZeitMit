@@ -1,9 +1,8 @@
-// App state: a port of the prototype's Component state + actions. Navigation
-// (which overlay/screen is open) lives in Expo Router; everything else lives here.
+// App state backed by the ZeitMit API. Navigation (which screen is open) lives in Expo Router;
+// everything else lives here. Actions show a toast and return false when a request fails.
 import { create } from 'zustand';
-import {
-  ActId, AM, BookingStatus, BTab, C, CM, DAYS, dayOpen, eur, firstOpen, REPLIES, ROM, SORT, Tone,
-} from './data';
+import { api, ApiError, setUnauthorizedHandler, tokenStore } from './api';
+import { berlinWeekday, eur, firstOpen, type ActId, type BookingStatus, type BTab, type Companion, type SORT, type Tone } from './data';
 
 export type Filters = {
   type: 'all' | 'date';
@@ -19,255 +18,439 @@ export const EMPTY_FILTERS: Filters = { type: 'all', acts: [], when: 'any', max:
 
 export type Pay = 'held' | 'released' | 'refunded';
 export type Booking = {
-  id: string; cid: string; act: ActId; day: string; time: string; dur: number; status: BookingStatus;
-  place: string; pay: Pay; otp?: string; note?: string; reviewed?: boolean;
+  id: string; cid: string; companionName: string; hue: number; act: ActId; startsAt: number; day: string; time: string; full: string;
+  dur: number; place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
 };
-export type Msg = { sep: string } | { me: boolean; t: string; time: string };
 export type Convo = {
-  cid?: string; side?: 'comp'; name?: string; hue?: number; ctx: string;
-  status: BookingStatus | 'none'; bid?: string; unread: number; msgs: Msg[];
+  id: string; cid: string; customerId: string; name: string; hue: number; bookingId: string | null; act: ActId | null; startsAt: number | null;
+  status: BookingStatus | 'none'; last: { me: boolean; t: string } | null; lastAt: number; unread: number;
 };
-export type Notif = {
-  id: string; g: 'Today' | 'Yesterday' | 'Earlier'; icon: string; tone: Tone; title: string; body: string;
-  time: string; read: boolean; go: string;
+export type Notif = { id: string; icon: string; tone: Tone; title: string; body: string; go: string; read: number; created_at: number };
+export type CompBooking = {
+  id: string; who: string; customerId: string; act: ActId; startsAt: number; day: string; time: string; full: string;
+  dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number;
 };
-export type CompBooking = { id: string; code: string; who: string; hue: number; act: ActId; day: string; time: string; dur: number; note?: string };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
   | 'safety' | 'sos' | 'otp' | 'otpin' | 'delete';
 export type SortKey = keyof typeof SORT;
-export type User = { name: string; first: string; bio: string };
+export type User = { id: string; email: string; name: string; first: string; bio: string; ageConfirmed: boolean; createdAt: number };
+export type CompanionStatus = 'none' | 'pending' | 'approved' | 'rejected';
 
-export type NewBooking = { cid: string; act: ActId; day: number; time: string; dur: number; place: string };
+export type NewBooking = { cid: string; act: ActId; date: string; time: string; dur: number; place: string; note: string; boundariesAgreed: boolean };
+export type CompanionApplication = {
+  name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; langs: string[];
+  rate: number; days: string[]; wins: string[]; adult: boolean; rules: boolean; idSubmitted: boolean;
+};
 
 type State = {
-  saved: string[]; bump: string | null; loading: boolean; city: string;
+  session: 'loading' | 'out' | 'in';
+  user: User | null;
+  companionStatus: CompanionStatus;
+  companions: Companion[];
+  byId: Record<string, Companion>;
+  loading: boolean;
+  saved: string[]; bump: string | null; city: string;
   query: string; f: Filters; sort: SortKey;
   btab: BTab;
   bookings: Booking[];
-  corder: string[]; convos: Record<string, Convo>; typing: string | null;
+  convos: Convo[];
+  compConvos: Convo[];
   notifs: Notif[];
   toast: string | null;
-  compStatus: 'none' | 'review';
-  user: User; edit: User | null;
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number }; rate: number; acts: ActId[]; avail: string[] };
+  edit: { name: string; bio: string } | null;
   review: { bid: string | null; stars: number; text: string };
   reportReason: string | null;
-  requests: CompBooking[]; cUpcoming: CompBooking[]; cDone: CompBooking[];
-  avail: Record<string, boolean>; cRate: number; cActs: ActId[];
-  sheet: SheetKind | null;
-  /** Chat the open chat-menu / report sheet refers to. */
+  /** User the report / block sheet refers to. */
+  reportTarget: string | null;
+  /** Conversation the chat menu refers to. */
   sheetChat: string | null;
+  sheet: SheetKind | null;
   otpFor: string | null;
-  otpIn: { uid: string | null; val: string; err: boolean; done: boolean };
-  gift: { amt: number; to: string; msg: string; done: boolean };
-  checkin: { name: string; next: string } | null;
-  safety: { bid: string | null; share: boolean; every: number };
+  otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
+  gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
+  checkin: { id: string; name: string; next: string } | null;
+  safety: { bid: string | null; share: boolean; every: number; contactName: string; contactPhone: string };
 };
 
 type Actions = {
   set: (patch: Partial<State>) => void;
   showToast: (msg: string) => void;
+  boot: () => Promise<void>;
+  requestCode: (email: string) => Promise<{ ok: boolean; devCode?: string }>;
+  verifyCode: (email: string, code: string) => Promise<{ ok: boolean; isNew?: boolean }>;
+  finishSignup: (name: string) => Promise<boolean>;
+  logout: () => Promise<void>;
+  refresh: () => Promise<void>;
+  loadCompanionSide: () => Promise<void>;
   toggleSave: (id: string) => void;
   setF: (patch: Partial<Filters>) => void;
   clearAll: () => void;
   openSheet: (sheet: SheetKind, patch?: Partial<State>) => void;
   closeSheet: () => void;
-  addBooking: (b: NewBooking) => void;
-  cancelBooking: (id: string) => void;
-  ensureConvo: (cid: string) => void;
-  markConvoRead: (key: string) => void;
-  sendMsg: (key: string, text: string) => void;
+  addBooking: (b: NewBooking) => Promise<Booking | null>;
+  cancelBooking: (id: string) => Promise<boolean>;
+  openConversation: (cid: string) => Promise<string | null>;
+  markConvoRead: (id: string) => void;
   readNotif: (id: string) => void;
   markAllRead: () => void;
-  submitReview: () => void;
-  simulateRelease: (bid: string) => void;
-  acceptRequest: (id: string) => void;
-  declineRequest: (id: string) => void;
-  verifyOtp: () => void;
-  submitCompanion: (rate: number, acts: ActId[]) => void;
-  startCheckin: () => void;
+  submitReview: () => Promise<void>;
+  acceptRequest: (id: string) => Promise<void>;
+  declineRequest: (id: string) => Promise<void>;
+  verifyOtp: () => Promise<void>;
+  submitCompanion: (a: CompanionApplication) => Promise<boolean>;
+  setAvail: (day: string, win: string, on: boolean) => void;
+  setListing: (patch: { rate?: number; acts?: ActId[] }) => void;
+  startCheckin: () => Promise<void>;
+  checkinOk: () => Promise<void>;
+  endCheckin: () => Promise<void>;
+  sos: () => Promise<void>;
+  sendGift: () => Promise<void>;
+  saveEdit: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
+  report: () => Promise<void>;
+  block: (targetId: string) => Promise<boolean>;
 };
 
-export const priceOf = (b: Booking) => CM[b.cid].rate * b.dur * 1.1;
+export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
+
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], earnings: { held: 0, released: 0, releasedCount: 0 }, rate: 25, acts: [], avail: [] };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;
-let replyTimer: ReturnType<typeof setTimeout> | undefined;
+let listingTimer: ReturnType<typeof setTimeout> | undefined;
 
-export const useStore = create<State & Actions>()((set, get) => ({
-  saved: ['lena', 'kai'], bump: null, loading: true, city: 'Berlin',
-  query: '', f: EMPTY_FILTERS, sort: 'recommended',
-  btab: 'upcoming',
-  bookings: [
-    {id:'b1',pay:'held',otp:'4827',cid:'jonas',act:'walks',day:'Tue, 27 Oct',time:'14:00',dur:2,status:'confirmed',place:'Bode-Museum entrance, Museum Island'},
-    {id:'b2',pay:'held',otp:'6150',cid:'amara',act:'dinner',day:'Fri, 30 Oct',time:'19:30',dur:2,status:'pending',place:'Markthalle Neun'},
-    {id:'b3',pay:'released',cid:'mehmet',act:'gaming',day:'Sat, 17 Oct',time:'16:00',dur:3,status:'completed',place:'Board game café, Boxhagener Platz',reviewed:false},
-    {id:'b4',pay:'released',cid:'lena',act:'coffee',day:'Sat, 10 Oct',time:'11:00',dur:1,status:'completed',place:'Café at Paul-Lincke-Ufer',reviewed:true},
-    {id:'b5',pay:'refunded',cid:'noah',act:'movies',day:'Mon, 12 Oct',time:'20:00',dur:2,status:'cancelled',place:'Open-air cinema, Wedding',note:'Cancelled by you · €44 refunded'},
-  ],
-  corder: ['jonas', 'amara', 'mehmet', 'lena'],
-  convos: {
-    jonas:{cid:'jonas',ctx:'City walk · Tue 27 Oct, 14:00',status:'confirmed',bid:'b1',unread:2,msgs:[{sep:'Yesterday'},{me:false,t:'Hi Mira! Looking forward to Tuesday.',time:'18:02'},{me:true,t:'Me too. Is Museum Island still a good place to start?',time:'18:10'},{sep:'Today'},{me:false,t:'Perfect. Let’s meet at the Bode-Museum entrance at 14:00.',time:'09:41'},{me:false,t:'I’ll bring a rough route and we can adjust as we go.',time:'09:42'}]},
-    amara:{cid:'amara',ctx:'Dinner request · Fri 30 Oct',status:'pending',bid:'b2',unread:0,msgs:[{sep:'Saturday'},{me:true,t:'Hi Amara, I sent a request for Friday. Any Lebanese or Ethiopian place you love?',time:'15:20'},{me:false,t:'Hi! I saw it and will confirm tonight. I have two places in mind.',time:'15:48'}]},
-    mehmet:{cid:'mehmet',ctx:'Board games · Sat 17 Oct',status:'completed',bid:'b3',unread:0,msgs:[{sep:'17 Oct'},{me:false,t:'That was fun. You picked up Cascadia fast!',time:'19:30'},{me:true,t:'Thanks for teaching me. Next time Wingspan?',time:'19:44'}]},
-    lena:{cid:'lena',ctx:'Coffee · Sat 10 Oct',status:'completed',bid:'b4',unread:0,msgs:[{sep:'10 Oct'},{me:false,t:'Here’s the gallery I mentioned: it opens again on the 2nd.',time:'13:05'},{me:true,t:'Saved it, thank you!',time:'13:20'}]},
-    sam:{side:'comp',name:'Sam',hue:120,ctx:'City walk · Thu 29 Oct, 17:00',status:'confirmed',unread:1,msgs:[{sep:'Today'},{me:false,t:'Hi! Could we start at Warschauer Straße instead?',time:'08:55'}]},
-    tom:{side:'comp',name:'Tom',hue:20,ctx:'Coffee request · Wed 28 Oct',status:'pending',unread:0,msgs:[{sep:'Yesterday'},{me:false,t:'Hi Mira, I’m new to Berlin and would love some neighbourhood tips.',time:'20:14'}]},
-  },
-  typing: null,
-  notifs: [
-    {id:'n1',g:'Today',icon:'message-circle',tone:'violet',title:'New message from Jonas',body:'“Perfect. Let’s meet at the Bode-Museum entrance at 14:00.”',time:'09:42',read:false,go:'chat:jonas'},
-    {id:'n2',g:'Today',icon:'alarm-clock',tone:'neutral',title:'Reminder: city walk on Tuesday',body:'With Jonas at 14:00, Museum Island.',time:'08:00',read:false,go:'tab:upcoming'},
-    {id:'n3',g:'Yesterday',icon:'calendar-check',tone:'success',title:'Booking accepted',body:'Jonas accepted your city walk request.',time:'17:55',read:true,go:'tab:upcoming'},
-    {id:'n4',g:'Yesterday',icon:'hourglass',tone:'warning',title:'Request sent to Amara',body:'Dinner on Fri 30 Oct. She has 24 hours to respond.',time:'15:12',read:true,go:'tab:pending'},
-    {id:'n5',g:'Earlier',icon:'shield-check',tone:'success',title:'Age confirmation complete',body:'Your account is confirmed as 18+.',time:'Mon',read:true,go:''},
-    {id:'n6',g:'Earlier',icon:'receipt',tone:'neutral',title:'Refund processed',body:'€44 for the cancelled movie night with Noah.',time:'13 Oct',read:true,go:'tab:cancelled'},
-    {id:'n7',g:'Earlier',icon:'calendar-x',tone:'error',title:'Booking cancelled',body:'You cancelled Movies with Noah on 12 Oct.',time:'12 Oct',read:true,go:'tab:cancelled'},
-  ],
-  toast: null,
-  compStatus: 'none',
-  user: { name: 'Mira Hoffmann', first: 'Mira', bio: 'Designer, new-ish to Berlin. Into galleries, good coffee and long walks.' },
-  edit: null,
-  review: { bid: null, stars: 5, text: '' },
-  reportReason: null,
-  requests: [
-    {id:'r1',code:'7260',who:'Tom',hue:20,act:'coffee',day:'Wed, 28 Oct',time:'10:00',dur:1,note:'New to Berlin, would love tips on neighbourhoods.'},
-    {id:'r2',code:'1408',who:'Elif',hue:260,act:'culture',day:'Sat, 31 Oct',time:'14:00',dur:2,note:'Thinking Hamburger Bahnhof, then a coffee?'},
-  ],
-  cUpcoming: [{id:'u1',code:'3591',who:'Sam',hue:120,act:'walks',day:'Thu, 29 Oct',time:'17:00',dur:2}],
-  cDone: [],
-  avail: {'Tue-eve':true,'Wed-am':true,'Thu-eve':true,'Sat-am':true,'Sat-pm':true,'Sun-pm':true},
-  cRate: 28, cActs: ['coffee', 'culture', 'walks'],
-  sheet: null, sheetChat: null,
-  otpFor: null, otpIn: { uid: null, val: '', err: false, done: false },
-  gift: { amt: 100, to: '', msg: '', done: false },
-  checkin: null,
-  safety: { bid: null, share: true, every: 30 },
+const msg = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
-  set: (patch) => set(patch),
-  showToast: (msg) => {
-    clearTimeout(toastTimer);
-    set({ toast: msg });
-    toastTimer = setTimeout(() => set({ toast: null }), 2400);
-  },
-  toggleSave: (id) => {
-    set((s) => ({ saved: s.saved.includes(id) ? s.saved.filter((x) => x !== id) : [...s.saved, id], bump: id }));
-    clearTimeout(bumpTimer);
-    bumpTimer = setTimeout(() => set({ bump: null }), 240);
-  },
-  setF: (patch) => set((s) => ({ f: { ...s.f, ...patch } })),
-  clearAll: () => set({ f: EMPTY_FILTERS, query: '' }),
-  openSheet: (sheet, patch) => set({ ...patch, sheet }),
-  closeSheet: () => set({ sheet: null }),
+type MeResponse = { id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[] };
 
-  addBooking: (b) => {
-    const c = CM[b.cid];
-    const id = 'b' + Date.now();
-    const day = DAYS[b.day];
-    set((s) => ({
-      bookings: [{ id, cid: b.cid, act: b.act, day: day.full, time: b.time, dur: b.dur, status: 'pending', place: b.place, pay: 'held', otp: String(1000 + Math.floor(Math.random() * 9000)) }, ...s.bookings],
-      notifs: [{ id: 'n' + id, g: 'Today', icon: 'hourglass', tone: 'warning', title: 'Request sent to ' + c.name, body: AM[b.act].label + ' on ' + day.full + '. ' + c.name + ' has 24 hours to respond.', time: 'Now', read: false, go: 'tab:pending' }, ...s.notifs],
-    }));
-  },
-  cancelBooking: (id) => {
-    set((s) => ({
-      bookings: s.bookings.map((y) => (y.id === id ? { ...y, status: 'cancelled', pay: 'refunded', note: 'Cancelled by you · ' + eur(priceOf(y)) + ' refunded in full' } : y)),
-    }));
-  },
-
-  ensureConvo: (cid) => {
-    const s = get();
-    if (s.convos[cid]) {
-      set({ convos: { ...s.convos, [cid]: { ...s.convos[cid], unread: 0 } } });
-      return;
+export const useStore = create<State & Actions>()((set, get) => {
+  /** Runs a request, toasting the error on failure. */
+  async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await fn();
+    } catch (e) {
+      get().showToast(msg(e));
+      return undefined;
     }
+  }
+
+  const applyMe = (me: MeResponse) =>
     set({
-      corder: [cid, ...s.corder],
-      convos: { ...s.convos, [cid]: { cid, ctx: 'No booking yet', status: 'none', unread: 0, msgs: [{ sep: 'Today' }] } },
+      user: { id: me.id, email: me.email, name: me.name, first: (me.name || me.email.split('@')[0]).split(' ')[0], bio: me.bio, ageConfirmed: !!me.age_confirmed, createdAt: me.created_at },
+      companionStatus: me.companionStatus,
+      saved: me.saved,
     });
-  },
-  markConvoRead: (key) => set((s) => (s.convos[key] ? { convos: { ...s.convos, [key]: { ...s.convos[key], unread: 0 } } } : {})),
-  sendMsg: (key, text) => {
-    const t = text.trim();
-    if (!t) return;
-    const push = (m: Msg) => set((s) => ({ convos: { ...s.convos, [key]: { ...s.convos[key], msgs: [...s.convos[key].msgs, m] } } }));
-    push({ me: true, t, time: 'Now' });
-    clearTimeout(replyTimer);
-    replyTimer = setTimeout(() => {
-      set({ typing: key });
-      replyTimer = setTimeout(() => {
-        set({ typing: null });
-        push({ me: false, t: REPLIES[get().convos[key].msgs.length % 3], time: 'Now' });
-      }, 1500);
-    }, 600);
-  },
 
-  readNotif: (id) => set((s) => ({ notifs: s.notifs.map((x) => (x.id === id ? { ...x, read: true } : x)) })),
-  markAllRead: () => set((s) => ({ notifs: s.notifs.map((n) => ({ ...n, read: true })) })),
+  return {
+    session: 'loading', user: null, companionStatus: 'none',
+    companions: [], byId: {}, loading: true,
+    saved: [], bump: null, city: 'Berlin',
+    query: '', f: EMPTY_FILTERS, sort: 'recommended',
+    btab: 'upcoming',
+    bookings: [], convos: [], compConvos: [], notifs: [],
+    toast: null,
+    comp: EMPTY_COMP,
+    edit: null,
+    review: { bid: null, stars: 5, text: '' },
+    reportReason: null, reportTarget: null, sheetChat: null,
+    sheet: null,
+    otpFor: null, otpIn: { uid: null, val: '', err: false, done: false, busy: false },
+    gift: { amt: 100, to: '', msg: '', done: false },
+    checkin: null,
+    safety: { bid: null, share: true, every: 30, contactName: '', contactPhone: '' },
 
-  submitReview: () => {
-    const { review } = get();
-    set((s) => ({ sheet: null, bookings: s.bookings.map((b) => (b.id === review.bid ? { ...b, reviewed: true } : b)) }));
-    get().showToast('Thanks! Your review is live.');
-  },
-  simulateRelease: (bid) => {
-    const ob = get().bookings.find((x) => x.id === bid);
-    if (!ob) return;
-    const c = CM[ob.cid];
-    set((s) => ({
-      sheet: null, btab: 'completed', checkin: null,
-      bookings: s.bookings.map((y) => (y.id === bid ? { ...y, status: 'completed', pay: 'released' } : y)),
-      notifs: [{ id: 'nr' + bid, g: 'Today', icon: 'wallet', tone: 'success', title: 'Payment released to ' + c.name, body: 'Meet code confirmed. ' + eur(priceOf(ob)) + ' sent from ZeitMit.', time: 'Now', read: false, go: 'tab:completed' }, ...s.notifs],
-    }));
-    get().showToast('Code confirmed. ' + eur(priceOf(ob)) + ' released to ' + c.name + '.');
-  },
+    set: (patch) => set(patch),
+    showToast: (m) => {
+      clearTimeout(toastTimer);
+      set({ toast: m });
+      toastTimer = setTimeout(() => set({ toast: null }), 2600);
+    },
 
-  acceptRequest: (id) => {
-    const r = get().requests.find((x) => x.id === id);
-    if (!r) return;
-    set((s) => ({ requests: s.requests.filter((y) => y.id !== id), cUpcoming: [...s.cUpcoming, r] }));
-    get().showToast('Accepted. ' + r.who + ' has been notified.');
-  },
-  declineRequest: (id) => {
-    const r = get().requests.find((x) => x.id === id);
-    if (!r) return;
-    set((s) => ({ requests: s.requests.filter((y) => y.id !== id) }));
-    get().showToast('Declined. ' + r.who + ' won’t be charged.');
-  },
-  verifyOtp: () => {
-    const { otpIn, cUpcoming } = get();
-    const u = cUpcoming.find((x) => x.id === otpIn.uid);
-    if (!u || otpIn.val.length < 4) return;
-    if (otpIn.val !== u.code) {
-      set({ otpIn: { ...otpIn, err: true } });
-      return;
-    }
-    set((s) => ({ otpIn: { ...s.otpIn, done: true }, cUpcoming: s.cUpcoming.filter((y) => y.id !== u.id), cDone: [...s.cDone, u] }));
-  },
-  submitCompanion: (rate, acts) => set({ compStatus: 'review', cRate: rate, cActs: acts }),
-  startCheckin: () => {
-    const { bookings, safety } = get();
-    const b = bookings.find((x) => x.id === safety.bid);
-    const name = b ? CM[b.cid].name : 'your companion';
-    set({ sheet: null, checkin: { name, next: safety.every ? 'in ' + safety.every + ' min' : 'at the end' } });
-    get().showToast('Check-in on. Anna will be alerted if you miss one.');
-  },
-}));
+    // ---------- session ----------
+    boot: async () => {
+      setUnauthorizedHandler(() => { void get().logout(); });
+      const t = await tokenStore.load();
+      if (!t) return set({ session: 'out' });
+      try {
+        applyMe(await api<MeResponse>('GET', '/me'));
+        set({ session: 'in' });
+        await get().refresh();
+      } catch (e) {
+        // Offline: keep the session and let the screens retry; expired: log out.
+        if (e instanceof ApiError && e.status === 401) await get().logout();
+        else set({ session: 'in' });
+      }
+    },
+    requestCode: async (email) => {
+      const r = await attempt(() => api<{ sent: boolean; devCode?: string }>('POST', '/auth/request-code', { email }));
+      return r ? { ok: true, devCode: r.devCode } : { ok: false };
+    },
+    verifyCode: async (email, code) => {
+      const r = await attempt(() => api<{ token: string; isNew: boolean }>('POST', '/auth/verify', { email, code }));
+      if (!r) return { ok: false };
+      await tokenStore.save(r.token);
+      const me = await attempt(() => api<MeResponse>('GET', '/me'));
+      if (!me) return { ok: false };
+      applyMe(me);
+      const needsProfile = !me.name || !me.age_confirmed;
+      if (!needsProfile) {
+        set({ session: 'in' });
+        void get().refresh();
+      }
+      return { ok: true, isNew: needsProfile };
+    },
+    finishSignup: async (name) => {
+      const ok = await attempt(() => api('PATCH', '/me', { name: name.trim(), ageConfirmed: true }));
+      if (!ok) return false;
+      applyMe(await api<MeResponse>('GET', '/me'));
+      set({ session: 'in' });
+      void get().refresh();
+      return true;
+    },
+    logout: async () => {
+      await tokenStore.save(null);
+      set({ session: 'out', user: null, bookings: [], convos: [], compConvos: [], notifs: [], saved: [], comp: EMPTY_COMP, companionStatus: 'none', checkin: null, sheet: null });
+    },
+
+    refresh: async () => {
+      const [list, me, bookings, convos, notifs] = await Promise.allSettled([
+        api<Companion[]>('GET', '/companions'),
+        api<MeResponse>('GET', '/me'),
+        api<Booking[]>('GET', '/bookings'),
+        api<Convo[]>('GET', '/conversations'),
+        api<Notif[]>('GET', '/me/notifications'),
+      ]);
+      if (list.status === 'fulfilled') set({ companions: list.value, byId: Object.fromEntries(list.value.map((c) => [c.id, c])), loading: false });
+      else if (get().loading) get().showToast(msg(list.reason));
+      if (me.status === 'fulfilled') applyMe(me.value);
+      if (bookings.status === 'fulfilled') set({ bookings: bookings.value });
+      if (convos.status === 'fulfilled') set({ convos: convos.value });
+      if (notifs.status === 'fulfilled') set({ notifs: notifs.value });
+      if (get().companionStatus !== 'none') await get().loadCompanionSide();
+    },
+    loadCompanionSide: async () => {
+      const [bk, profile, convos] = await Promise.allSettled([
+        api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'earnings'>>('GET', '/companion/bookings'),
+        api<Companion & { avail: string[] }>('GET', '/companion'),
+        api<Convo[]>('GET', '/conversations?side=companion'),
+      ]);
+      set((s) => ({
+        comp: {
+          ...s.comp,
+          ...(bk.status === 'fulfilled' ? bk.value : {}),
+          ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail } : {}),
+        },
+        compConvos: convos.status === 'fulfilled' ? convos.value : s.compConvos,
+      }));
+    },
+
+    // ---------- browse ----------
+    toggleSave: (id) => {
+      const was = get().saved.includes(id);
+      set((s) => ({ saved: was ? s.saved.filter((x) => x !== id) : [...s.saved, id], bump: id }));
+      clearTimeout(bumpTimer);
+      bumpTimer = setTimeout(() => set({ bump: null }), 240);
+      api(was ? 'DELETE' : 'PUT', `/me/saved/${id}`).catch((e) => {
+        set((s) => ({ saved: was ? [...s.saved, id] : s.saved.filter((x) => x !== id) }));
+        get().showToast(msg(e));
+      });
+    },
+    setF: (patch) => set((s) => ({ f: { ...s.f, ...patch } })),
+    clearAll: () => set({ f: EMPTY_FILTERS, query: '' }),
+    openSheet: (sheet, patch) => set({ ...patch, sheet }),
+    closeSheet: () => set({ sheet: null }),
+
+    // ---------- bookings ----------
+    addBooking: async (b) => {
+      const bk = await attempt(() => api<Booking>('POST', '/bookings', {
+        companionId: b.cid, act: b.act, date: b.date, time: b.time, dur: b.dur, place: b.place, note: b.note, boundariesAgreed: b.boundariesAgreed,
+      }));
+      if (!bk) return null;
+      set((s) => ({ bookings: [bk, ...s.bookings] }));
+      void get().refresh();
+      return bk;
+    },
+    cancelBooking: async (id) => {
+      const r = await attempt(() => api<{ refunded: number }>('POST', `/bookings/${id}/cancel`));
+      if (!r) return false;
+      get().showToast('Request cancelled. ' + eur(r.refunded / 100) + ' refunded in full.');
+      await get().refresh();
+      return true;
+    },
+    submitReview: async () => {
+      const { review } = get();
+      const ok = await attempt(() => api('POST', `/bookings/${review.bid}/review`, { stars: review.stars, text: review.text }));
+      if (!ok) return;
+      set((s) => ({ sheet: null, bookings: s.bookings.map((b) => (b.id === review.bid ? { ...b, reviewed: true } : b)) }));
+      get().showToast('Thanks! Your review is live.');
+    },
+
+    // ---------- chat ----------
+    openConversation: async (cid) => {
+      const existing = get().convos.find((c) => c.cid === cid);
+      if (existing) return existing.id;
+      const r = await attempt(() => api<{ id: string }>('POST', '/conversations', { companionId: cid }));
+      if (!r) return null;
+      void api<Convo[]>('GET', '/conversations').then((convos) => set({ convos })).catch(() => {});
+      return r.id;
+    },
+    markConvoRead: (id) =>
+      set((s) => ({
+        convos: s.convos.map((c) => (c.id === id ? { ...c, unread: 0 } : c)),
+        compConvos: s.compConvos.map((c) => (c.id === id ? { ...c, unread: 0 } : c)),
+      })),
+
+    // ---------- notifications ----------
+    readNotif: (id) => {
+      set((s) => ({ notifs: s.notifs.map((x) => (x.id === id ? { ...x, read: 1 } : x)) }));
+      api('POST', '/me/notifications/read', { ids: [id] }).catch(() => {});
+    },
+    markAllRead: () => {
+      set((s) => ({ notifs: s.notifs.map((n) => ({ ...n, read: 1 })) }));
+      api('POST', '/me/notifications/read', {}).catch(() => {});
+    },
+
+    // ---------- companion side ----------
+    acceptRequest: async (id) => {
+      const r = get().comp.requests.find((x) => x.id === id);
+      const ok = await attempt(() => api('POST', `/companion/bookings/${id}/accept`));
+      if (!ok) return;
+      get().showToast('Accepted. ' + (r?.who ?? 'The customer') + ' has been notified.');
+      await get().loadCompanionSide();
+    },
+    declineRequest: async (id) => {
+      const r = get().comp.requests.find((x) => x.id === id);
+      const ok = await attempt(() => api('POST', `/companion/bookings/${id}/decline`));
+      if (!ok) return;
+      get().showToast('Declined. ' + (r?.who ?? 'The customer') + ' won’t be charged.');
+      await get().loadCompanionSide();
+    },
+    verifyOtp: async () => {
+      const { otpIn } = get();
+      if (!otpIn.uid || otpIn.val.length < 4 || otpIn.busy) return;
+      set({ otpIn: { ...otpIn, busy: true } });
+      try {
+        await api('POST', `/companion/bookings/${otpIn.uid}/verify-code`, { code: otpIn.val });
+        set((s) => ({ otpIn: { ...s.otpIn, done: true, busy: false } }));
+        await get().loadCompanionSide();
+      } catch (e) {
+        const wrong = e instanceof ApiError && e.status === 400;
+        set((s) => ({ otpIn: { ...s.otpIn, err: wrong, busy: false } }));
+        if (!wrong) get().showToast(msg(e));
+      }
+    },
+    submitCompanion: async (a) => {
+      const ok = await attempt(() => api('POST', '/companion/apply', a));
+      if (!ok) return false;
+      set({ companionStatus: 'pending', comp: { ...get().comp, rate: a.rate, acts: a.acts } });
+      void get().loadCompanionSide();
+      return true;
+    },
+    setAvail: (day, win, on) => {
+      const key = day + '-' + win;
+      set((s) => ({ comp: { ...s.comp, avail: on ? [...s.comp.avail, key] : s.comp.avail.filter((x) => x !== key) } }));
+      api('PUT', '/companion/availability', { day, win, on }).catch((e) => {
+        set((s) => ({ comp: { ...s.comp, avail: on ? s.comp.avail.filter((x) => x !== key) : [...s.comp.avail, key] } }));
+        get().showToast(msg(e));
+      });
+    },
+    setListing: (patch) => {
+      set((s) => ({ comp: { ...s.comp, ...patch } }));
+      clearTimeout(listingTimer);
+      listingTimer = setTimeout(() => {
+        const { rate, acts } = get().comp;
+        api('PATCH', '/companion', { rate, acts }).catch((e) => get().showToast(msg(e)));
+      }, 600);
+    },
+
+    // ---------- safety ----------
+    startCheckin: async () => {
+      const { bookings, safety } = get();
+      const b = bookings.find((x) => x.id === safety.bid);
+      if (!safety.contactName.trim() || !safety.contactPhone.trim()) return get().showToast('Add a trusted contact first.');
+      const r = await attempt(() => api<{ id: string }>('POST', '/safety/checkins', {
+        bookingId: safety.bid, contactName: safety.contactName, contactPhone: safety.contactPhone, share: safety.share, every: safety.every,
+      }));
+      if (!r) return;
+      set({ sheet: null, checkin: { id: r.id, name: b?.companionName ?? 'your companion', next: safety.every ? 'in ' + safety.every + ' min' : 'at the end' } });
+      get().showToast(`Check-in on. ${safety.contactName} will be alerted if you miss one.`);
+    },
+    checkinOk: async () => {
+      const { checkin, safety } = get();
+      if (!checkin) return;
+      const ok = await attempt(() => api('POST', `/safety/checkins/${checkin.id}/ok`, {}));
+      if (ok) get().showToast('Thanks! Next check-in ' + (safety.every ? 'in ' + safety.every + ' min' : 'at the end') + '.');
+    },
+    endCheckin: async () => {
+      const { checkin } = get();
+      if (checkin) await api('POST', `/safety/checkins/${checkin.id}/end`).catch(() => {});
+      set({ sheet: null, checkin: null });
+      get().showToast('Check-in ended. Hope it was a good time!');
+    },
+    sos: async () => {
+      const { checkin, safety } = get();
+      if (!checkin) return;
+      const ok = await attempt(() => api('POST', `/safety/checkins/${checkin.id}/sos`, {}));
+      set({ sheet: null });
+      if (ok) get().showToast(`Our safety team has your booking details and will contact ${safety.contactName || 'your trusted contact'}.`);
+    },
+
+    // ---------- account ----------
+    sendGift: async () => {
+      const { gift } = get();
+      if (!gift.to.trim()) return;
+      const r = await attempt(() => api<{ code: string }>('POST', '/gifts', { amount: gift.amt, to: gift.to, message: gift.msg }));
+      if (r) set({ gift: { ...gift, done: true, code: r.code } });
+    },
+    saveEdit: async () => {
+      const e = get().edit;
+      if (!e) return;
+      if (!e.name.trim()) return get().showToast('Name can’t be empty');
+      const ok = await attempt(() => api('PATCH', '/me', { name: e.name.trim(), bio: e.bio }));
+      if (!ok) return;
+      set((s) => ({ user: s.user ? { ...s.user, name: e.name.trim(), first: e.name.trim().split(' ')[0], bio: e.bio } : s.user, sheet: null }));
+      get().showToast('Profile updated');
+    },
+    deleteAccount: async () => {
+      const ok = await attempt(() => api('DELETE', '/me'));
+      if (!ok) return;
+      set({ sheet: null });
+      await get().logout();
+      get().showToast('Account deleted. Your data is removed within 30 days.');
+    },
+    report: async () => {
+      const { reportReason, reportTarget } = get();
+      if (!reportReason || !reportTarget) return;
+      const ok = await attempt(() => api('POST', '/me/reports', { targetId: reportTarget, reason: reportReason }));
+      if (!ok) return;
+      set({ sheet: null });
+      get().showToast('Report sent. Our safety team reviews it within 24 hours.');
+    },
+    block: async (targetId) => {
+      const ok = await attempt(() => api('POST', '/me/blocks', { targetId }));
+      if (ok) get().showToast('Blocked. They can’t message or book you.');
+      return !!ok;
+    },
+  };
+});
 
 // ---- derived selectors ----
 
-export function filtered(query: string, f: Filters, sort: State['sort']) {
+export function filtered(list: Companion[], query: string, f: Filters, sort: SortKey) {
   const q = query.trim().toLowerCase();
-  const r = C.filter((c) => {
+  const today = berlinWeekday();
+  const r = list.filter((c) => {
     if (q) {
-      const hay = [c.name, c.area, c.tagline, 'berlin', ...c.interests, ...c.langs.map((l) => l[0]), ...c.acts.map((a) => AM[a].label)].join(' ').toLowerCase();
+      const hay = [c.name, c.area, c.tagline, 'berlin', ...c.interests, ...c.langs.map((l) => l[0]), ...c.acts].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (f.type === 'date' && !c.acts.some((a) => ROM.includes(a))) return false;
+    if (f.type === 'date' && !c.acts.some((a) => ['date', 'plusone', 'family', 'call'].includes(a))) return false;
     if (f.acts.length && !f.acts.some((a) => c.acts.includes(a))) return false;
     if (f.when === 'today' && !c.today) return false;
-    if (f.when === 'tomorrow' && !dayOpen(c.id, 1)) return false;
-    if (f.when === 'weekend' && !(dayOpen(c.id, 6) || c.today)) return false;
+    if (f.when === 'tomorrow' && !c.days.includes((today + 1) % 7)) return false;
+    if (f.when === 'weekend' && !(c.days.includes(5) || c.days.includes(6) || c.today)) return false;
     if (c.rate > f.max) return false;
     if (f.langs.length && !f.langs.every((l) => c.langs.some((x) => x[0] === l))) return false;
     if (f.rating && !(c.rating && c.rating >= f.rating)) return false;
@@ -277,7 +460,7 @@ export function filtered(query: string, f: Filters, sort: State['sort']) {
   });
   if (sort === 'price') r.sort((a, b) => a.rate - b.rate);
   if (sort === 'rating') r.sort((a, b) => (b.rating || 0) - (a.rating || 0));
-  if (sort === 'soonest') r.sort((a, b) => firstOpen(a.id) - firstOpen(b.id));
+  if (sort === 'soonest') r.sort((a, b) => firstOpen(a) - firstOpen(b));
   return r;
 }
 
@@ -285,3 +468,6 @@ export const filterCount = (f: Filters) =>
   (f.type !== 'all' ? 1 : 0) + f.acts.length + (f.when !== 'any' ? 1 : 0) + (f.max < 60 ? 1 : 0) + f.langs.length + (f.rating ? 1 : 0) + (f.pref !== 'any' ? 1 : 0) + (f.lgbtq ? 1 : 0);
 
 export const toggleIn = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
+
+/** Stable hue for a customer's initial avatar. */
+export const hueOf = (id: string) => [...id].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 7);

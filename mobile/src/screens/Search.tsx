@@ -37,7 +37,8 @@ export default function Search() {
     }
   }, [params.focus]);
 
-  const results = filtered(query, f, sort);
+  const list = useStore((s) => s.companions);
+  const results = filtered(list, query, f, sort);
   const count = filterCount(f);
   const chips = activeChips(f);
 

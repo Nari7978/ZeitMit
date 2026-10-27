@@ -1,15 +1,14 @@
 import { View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur } from '../../data';
-import { useStore } from '../../store';
+import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, Enter, Row, Txt } from '../../ui/primitives';
 import { Pill, PrimaryButton, SecondaryButton } from '../../ui/common';
 import { actLine, CompShell, Initial } from './Shell';
 
 export default function Requests() {
-  const requests = useStore((s) => s.requests);
-  const cRate = useStore((s) => s.cRate);
+  const requests = useStore((s) => s.comp.requests);
   const { acceptRequest, declineRequest } = useStore.getState();
   return (
     <CompShell title="Requests">
@@ -17,7 +16,7 @@ export default function Requests() {
         <Enter key={r.id}>
           <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
             <Row style={{ gap: 12 }}>
-              <Initial who={r.who} hue={r.hue} />
+              <Initial who={r.who} hue={hueOf(r.customerId)} />
               <View style={{ flex: 1 }}>
                 <Txt size={16} weight={700}>{r.who}</Txt>
                 <Row style={{ gap: 5 }}>
@@ -25,19 +24,22 @@ export default function Requests() {
                   <Txt size={13} color={colors.gray600}>{actLine(r.act, r.dur)}</Txt>
                 </Row>
               </View>
-              <Pill label="Sample" bg={colors.blush} fg={colors.ink} height={24} />
+              <Pill label="New" bg={colors.blush} fg={colors.ink} height={24} />
             </Row>
             <Row style={{ gap: 16 }}>
               <Row style={{ gap: 6 }}><Icon name="calendar" size={15} color={colors.gray600} /><Txt size={13}>{r.day}</Txt></Row>
               <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{r.time}</Txt></Row>
             </Row>
-            <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun }}>
-              <Txt size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>
-            </View>
-            <Txt size={12} color={colors.gray600}>{eur(cRate * r.dur)} already paid and held by ZeitMit · released when you enter their meet code</Txt>
+            <Row style={{ gap: 6 }}><Icon name="map-pin" size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }}>{r.place}</Txt></Row>
+            {r.note ? (
+              <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun }}>
+                <Txt size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>
+              </View>
+            ) : null}
+            <Txt size={12} color={colors.gray600}>{eur(r.payout / 100)} already paid and held by ZeitMit · released when you enter their meet code</Txt>
             <Row style={{ gap: 8 }}>
-              <SecondaryButton label="Decline" height={44} radius={12} style={{ flex: 1 }} onPress={() => declineRequest(r.id)} />
-              <PrimaryButton label="Accept" height={44} radius={12} size={14} shadowColor="transparent" style={{ flex: 1 }} onPress={() => acceptRequest(r.id)} />
+              <SecondaryButton label="Decline" height={44} radius={12} style={{ flex: 1 }} onPress={() => void declineRequest(r.id)} />
+              <PrimaryButton label="Accept" height={44} radius={12} size={14} shadowColor="transparent" style={{ flex: 1 }} onPress={() => void acceptRequest(r.id)} />
             </Row>
           </Box>
         </Enter>
