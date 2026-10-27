@@ -5,6 +5,7 @@ Real People. Real Moments. A companion booking app for Berlin: friends, dates an
 | Folder | What |
 | --- | --- |
 | [`mobile/`](mobile) | Customer + companion app (Expo / React Native, TypeScript) |
+| [`backend/`](backend) | API on Cloudflare Workers + D1 (free plan) |
 | [`admin/`](admin) | Admin panel (planned) |
 
 ## Mobile app

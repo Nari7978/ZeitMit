@@ -1,0 +1,36 @@
+name = "zeitmit-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+APP_NAME = "ZeitMit"
+# Comma-separated emails that get the admin role on first login.
+ADMIN_EMAILS = ""
+# Sender for login emails once RESEND_API_KEY is set (must be a verified Resend domain).
+EMAIL_FROM = "ZeitMit <login@zeitmit.app>"
+# Testing only: return login codes in the API response until RESEND_API_KEY is set.
+# Admin logins are refused while this is "true". Set to "false" before real users join.
+DEV_LOGIN_CODES = "true"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zeitmit"
+# Filled in automatically by the deploy workflow (.github/workflows/backend.yml).
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "CHAT"
+class_name = "ChatRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatRoom"]
+
+[triggers]
+# Every 10 minutes: expire unanswered requests, alert on missed safety check-ins.
+crons = ["*/10 * * * *"]
+
+[observability]
+enabled = true
