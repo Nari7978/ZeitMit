@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "ZeitMit",
+    "slug": "zeitmit",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.nari7978.zeitmit"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFE94D",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.nari7978.zeitmit",
+      "versionCode": 1
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
+    "scheme": "zeitmit",
+    "backgroundColor": "#FFE94D"
+  }
+}
