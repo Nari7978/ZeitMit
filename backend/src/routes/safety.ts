@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
 import { notify } from '../lib/notify';
 import { digits, fail, newId, now } from '../lib/util';
+import { createCheckout, getSession, stripeOn } from '../lib/stripe';
 
 export const safety = new Hono<AppEnv>();
 
@@ -80,8 +81,58 @@ gifts.post('/', async (c) => {
   if (![50, 100, 150].includes(amount)) fail(400, 'Choose €50, €100 or €150.');
   if (!to?.trim()) fail(400, 'Add your friend’s name or email.');
   const code = 'ZM-' + digits(4) + '-' + digits(4);
-  // TODO(payments): charge the sender before issuing the code.
-  await c.env.DB.prepare('INSERT INTO gifts (id, sender_id, recipient, amount, message, code, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(newId('g'), u.id, to.trim().slice(0, 120), amount * 100, (message ?? '').slice(0, 140), code, now() + 365 * 86400).run();
-  return c.json({ code, amount }, 201);
+  const id = newId('g');
+  const paidNow = !stripeOn(c.env); // without Stripe, gifts are free test credit
+  await c.env.DB.prepare('INSERT INTO gifts (id, sender_id, recipient, amount, message, code, expires_at, paid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, u.id, to.trim().slice(0, 120), amount * 100, (message ?? '').slice(0, 140), code, now() + 365 * 86400, paidNow ? 1 : 0).run();
+  if (paidNow) return c.json({ id, code, amount }, 201);
+  try {
+    const s = await createCheckout(c.env, { amount: amount * 100, name: `ZeitMit gift for ${to.trim().slice(0, 40)}`, ref: id, kind: 'gift', origin: new URL(c.req.url).origin, email: u.email });
+    await c.env.DB.prepare('UPDATE gifts SET payment_ref = ? WHERE id = ?').bind(s.id, id).run();
+    return c.json({ id, amount, checkoutUrl: s.url }, 201);
+  } catch (e) {
+    console.error('Gift checkout failed', e);
+    await c.env.DB.prepare('DELETE FROM gifts WHERE id = ?').bind(id).run();
+    fail(409, 'The payment couldn’t start. Please try again in a moment.');
+  }
+});
+
+/** After Stripe Checkout: reveals the gift code once the payment went through. */
+gifts.post('/:id/confirm-payment', async (c) => {
+  const g = await c.env.DB.prepare('SELECT id, code, amount, paid, payment_ref FROM gifts WHERE id = ? AND sender_id = ?').bind(c.req.param('id'), c.get('user').id)
+    .first<{ id: string; code: string; amount: number; paid: number; payment_ref: string | null }>();
+  if (!g) fail(404, 'Gift not found.');
+  if (!g!.paid) {
+    const s = g!.payment_ref && stripeOn(c.env) ? await getSession(c.env, g!.payment_ref) : null;
+    if (s?.payment_status !== 'paid') return c.json({ paid: false }, 402);
+    await c.env.DB.prepare('UPDATE gifts SET paid = 1 WHERE id = ?').bind(g!.id).run();
+  }
+  return c.json({ paid: true, code: g!.code, amount: g!.amount / 100 });
+});
+
+/** Redeem a gift code into account credit (used automatically on the next bookings). */
+gifts.post('/redeem', async (c) => {
+  const u = c.get('user');
+  const { code } = await c.req.json<{ code?: string }>();
+  const norm = (code ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  const g = await c.env.DB.prepare('SELECT id, sender_id, amount, redeemed_by, expires_at, paid FROM gifts WHERE code = ?').bind(norm)
+    .first<{ id: string; sender_id: string; amount: number; redeemed_by: string | null; expires_at: number; paid: number }>();
+  if (!g || !g.paid) fail(404, 'That gift code doesn’t exist. Check the spelling.');
+  if (g!.redeemed_by) fail(409, 'This gift code was already used.');
+  if (g!.expires_at < now()) fail(409, 'This gift code has expired.');
+  if (g!.sender_id === u.id) fail(400, 'You can’t redeem a gift you sent. Share the code with your friend.');
+  const res = await c.env.DB.prepare('UPDATE gifts SET redeemed_by = ?, redeemed_at = unixepoch() WHERE id = ? AND redeemed_by IS NULL').bind(u.id, g!.id).run();
+  if (!res.meta.changes) fail(409, 'This gift code was already used.');
+  await c.env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(g!.amount, u.id).run();
+  const bal = await c.env.DB.prepare('SELECT credit FROM users WHERE id = ?').bind(u.id).first<{ credit: number }>();
+  return c.json({ added: g!.amount, credit: bal?.credit ?? g!.amount });
+});
+
+/** Live location while a check-in is running (only stored when sharing is on). */
+safety.post('/checkins/:id/location', async (c) => {
+  const ck = await mine(c.env, c.req.param('id'), c.get('user').id);
+  const { lat, lng } = await c.req.json<{ lat?: number; lng?: number }>();
+  if (typeof lat !== 'number' || typeof lng !== 'number' || Math.abs(lat) > 90 || Math.abs(lng) > 180) fail(400, 'Invalid location.');
+  await c.env.DB.prepare('UPDATE checkins SET last_lat = ?, last_lng = ? WHERE id = ? AND share_location = 1').bind(lat, lng, ck.id).run();
+  return c.json({ ok: true });
 });

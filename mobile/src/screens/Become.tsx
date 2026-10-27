@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { pickAndUpload } from '../lib/photos';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -9,13 +10,15 @@ import { A, AM, CSTEPS, eur, INTERESTS, LANGS, OKOPTS, WEEK, WIN, type ActId } f
 import { toggleIn, useStore } from '../store';
 import { toCompanionMode } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Chip, Enter, H, Row, Stripes, Toggle, Txt } from '../ui/primitives';
+import { Box, Chip, Enter, H, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, IconTile, PrimaryButton, SecondaryButton, TextButton, useTopPad } from '../ui/common';
 import { StepTitle } from './BookingFlow';
+import { t } from '../i18n';
 
 type Draft = {
   name: string; showAge: boolean; about: string; aboutErr: boolean; interests: string[]; acts: ActId[]; langs: string[];
   rate: number; days: string[]; wins: string[]; ok: string[]; adult: boolean; idv: boolean; rules: boolean;
+  photoId?: string; photoUrl?: string; idPhotoId?: string; tagline: string;
 };
 
 const HOW: [string, string, string][] = [
@@ -34,7 +37,19 @@ export default function Become() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(false);
-  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false });
+  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false, tagline: '' });
+  const [uploading, setUploading] = useState<'photo' | 'id' | null>(null);
+  const upload = async (kind: 'companion' | 'id', source: 'library' | 'camera') => {
+    setUploading(kind === 'id' ? 'id' : 'photo');
+    try {
+      const r = await pickAndUpload(kind, source);
+      if (r) upd(kind === 'id' ? { idPhotoId: r.id, idv: true } : { photoId: r.id, photoUrl: r.url });
+    } catch (e) {
+      useStore.getState().showToast((e as Error).message);
+    } finally {
+      setUploading(null);
+    }
+  };
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
   const footPad = Math.max(30, insets.bottom + 8);
 
@@ -49,7 +64,7 @@ export default function Become() {
     if (busy) return;
     setBusy(true);
     void useStore.getState()
-      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idSubmitted: b.idv })
+      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline })
       .then((ok) => { setBusy(false); if (ok) setDone(true); });
   };
 
@@ -130,6 +145,16 @@ export default function Become() {
         {step === 1 && (
           <>
             <StepTitle title="Introduce yourself" />
+            <Row style={{ gap: 14, marginBottom: 18 }}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Add profile photo" onPress={() => void upload('companion', 'library')} style={{ width: 96, height: 120, borderRadius: 20, borderWidth: 2, borderColor: colors.ink, borderStyle: b.photoUrl ? 'solid' : 'dashed', backgroundColor: colors.white, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+                {b.photoUrl ? <Photo hue={0} url={b.photoUrl} /> : <Icon name={uploading === 'photo' ? 'hourglass' : 'image-plus'} size={26} />}
+              </Pressable>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Txt size={14} weight={700}>Profile photo</Txt>
+                <Txt size={12} lh={1.45} color={colors.gray600}>A clear, friendly photo of you. Profiles with a photo get far more requests.</Txt>
+                <TextButton label={b.photoUrl ? 'Change photo' : 'Choose a photo'} size={13} onPress={() => void upload('companion', 'library')} />
+              </View>
+            </Row>
             <Label>Display name</Label>
             <Box shadow={3} style={{ borderRadius: 14 }}>
               <TextInput value={b.name} onChangeText={(t) => upd({ name: t })} accessibilityLabel="Display name" style={[font('body'), input, { height: 52, borderWidth: 2 }]} />
@@ -149,7 +174,7 @@ export default function Become() {
               value={b.about}
               onChangeText={(t) => upd({ about: t.slice(0, 400), aboutErr: false })}
               accessibilityLabel="About you"
-              placeholder="What you enjoy, what you’re like to spend time with, what you can show people…"
+              placeholder={t("What you enjoy, what you’re like to spend time with, what you can show people…")}
               placeholderTextColor={colors.gray400}
               multiline
               textAlignVertical="top"
@@ -196,13 +221,13 @@ export default function Become() {
                 <IconTile icon="scan-face" iconSize={19} />
                 <View style={{ flex: 1 }}>
                   <Txt size={15} weight={600}>Verify your identity</Txt>
-                  <Txt size={12} lh={1.4} color={colors.gray600} style={{ marginTop: 2 }}>ID + selfie via our verification partner.</Txt>
+                  <Txt size={12} lh={1.4} color={colors.gray600} style={{ marginTop: 2 }}>A selfie holding your ID card or passport next to your face. Only our review team sees it, and it’s deleted after the check.</Txt>
                 </View>
                 {b.idv ? (
-                  <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.greenSoft, justifyContent: 'center' }}><Txt size={12} weight={600} color={colors.greenDeep}>Submitted</Txt></View>
+                  <View style={{ height: 26, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.greenSoft, justifyContent: 'center' }}><Txt size={12} weight={600} color={colors.greenDeep}>Uploaded</Txt></View>
                 ) : (
-                  <Pressable accessibilityRole="button" onPress={() => { upd({ idv: true }); useStore.getState().showToast('Noted. Our team verifies your ID before your profile goes live.'); }} style={{ height: 36, paddingHorizontal: 14, borderRadius: 10, backgroundColor: colors.ink, justifyContent: 'center' }}>
-                    <Txt size={13} weight={600} color={colors.white}>Start</Txt>
+                  <Pressable accessibilityRole="button" disabled={uploading === 'id'} onPress={() => void upload('id', Platform.OS === 'web' ? 'library' : 'camera')} style={{ height: 36, paddingHorizontal: 14, borderRadius: 10, backgroundColor: colors.ink, justifyContent: 'center', opacity: uploading === 'id' ? 0.5 : 1 }}>
+                    <Txt size={13} weight={600} color={colors.white}>{uploading === 'id' ? 'Uploading…' : 'Take photo'}</Txt>
                   </Pressable>
                 )}
               </Box>

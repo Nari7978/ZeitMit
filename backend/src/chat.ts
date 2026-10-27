@@ -57,7 +57,7 @@ chat.get('/', async (c) => {
   const u = c.get('user');
   const side = c.req.query('side') === 'companion' ? 'companion' : 'customer';
   const r = await c.env.DB.prepare(
-    `SELECT cv.*, cp.display_name AS companion_name, cp.hue, cu.name AS customer_name,
+    `SELECT cv.*, cp.display_name AS companion_name, cp.hue, cp.photo_id, cu.name AS customer_name, cu.avatar_id,
             b.activity, b.starts_at, b.status AS booking_status,
             (SELECT body FROM messages m WHERE m.conversation_id = cv.id ORDER BY created_at DESC LIMIT 1) AS last_body,
             (SELECT sender_id FROM messages m WHERE m.conversation_id = cv.id ORDER BY created_at DESC LIMIT 1) AS last_sender
@@ -67,13 +67,14 @@ chat.get('/', async (c) => {
      LEFT JOIN bookings b ON b.id = cv.booking_id
      WHERE ${side === 'customer' ? 'cv.customer_id' : 'cv.companion_id'} = ?
      ORDER BY cv.last_at DESC LIMIT 100`,
-  ).bind(u.id).all<ConvRow & { companion_name: string; hue: number; customer_name: string; activity: string | null; starts_at: number | null; booking_status: string | null; last_body: string | null; last_sender: string | null }>();
+  ).bind(u.id).all<ConvRow & { companion_name: string; hue: number; photo_id: string | null; avatar_id: string | null; customer_name: string; activity: string | null; starts_at: number | null; booking_status: string | null; last_body: string | null; last_sender: string | null }>();
   return c.json(r.results.map((x) => ({
     id: x.id,
     cid: x.companion_id,
     customerId: x.customer_id,
     name: side === 'customer' ? x.companion_name : x.customer_name || 'Customer',
     hue: x.hue,
+    photoUrl: side === 'customer' ? (x.photo_id ? `/photos/${x.photo_id}` : null) : x.avatar_id ? `/photos/${x.avatar_id}` : null,
     bookingId: x.booking_id,
     act: x.activity,
     startsAt: x.starts_at,

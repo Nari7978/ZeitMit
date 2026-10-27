@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
 import { notify } from '../lib/notify';
-import { fail } from '../lib/util';
+import { euros, fail } from '../lib/util';
+import { refundBooking } from './bookings';
 
 /** Endpoints for the admin panel (admin/ folder). All require role = admin. */
 export const admin = new Hono<AppEnv>();
@@ -25,16 +26,21 @@ admin.get('/companions', async (c) => {
   const status = c.req.query('status') ?? 'pending';
   const r = await c.env.DB.prepare('SELECT c.*, u.email FROM companions c JOIN users u ON u.id = c.user_id WHERE c.status = ? ORDER BY c.created_at LIMIT 200')
     .bind(status).all<CompanionRow & { email: string }>();
-  return c.json(r.results.map((x) => ({ ...toCompanion(x), email: x.email })));
+  return c.json(r.results.map((x) => ({ ...toCompanion(x), email: x.email, ageValue: x.age, idPhotoUrl: x.id_photo_id ? `/photos/${x.id_photo_id}` : null })));
 });
 
 admin.post('/companions/:id/:decision', async (c) => {
   const decision = c.req.param('decision');
   if (decision !== 'approve' && decision !== 'reject') fail(400, 'Use approve or reject.');
   const id = c.req.param('id');
-  const res = await c.env.DB.prepare('UPDATE companions SET status = ?, id_verified = ? WHERE user_id = ?')
-    .bind(decision === 'approve' ? 'approved' : 'rejected', decision === 'approve' ? 1 : 0, id).run();
-  if (!res.meta.changes) fail(404, 'Companion not found.');
+  const row = await c.env.DB.prepare('SELECT id_photo_id FROM companions WHERE user_id = ?').bind(id).first<{ id_photo_id: string | null }>();
+  if (!row) fail(404, 'Companion not found.');
+  // The ID photo is only needed for this decision: delete it right away (GDPR data minimisation).
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE companions SET status = ?, id_verified = ?, id_photo_id = NULL WHERE user_id = ?')
+      .bind(decision === 'approve' ? 'approved' : 'rejected', decision === 'approve' ? 1 : 0, id),
+    c.env.DB.prepare("DELETE FROM photos WHERE owner_id = ? AND kind = 'id'").bind(id),
+  ]);
   await notify(c.env, id, decision === 'approve'
     ? { icon: 'badge-check', tone: 'success', title: 'Your companion profile is live', body: 'You’re verified and visible in search. Requests will appear in companion mode.', go: 'comp:overview' }
     : { icon: 'circle-alert', tone: 'error', title: 'Companion profile not approved', body: 'We couldn’t approve your profile. Check your email for details.', go: '' }, c.executionCtx);
@@ -51,10 +57,9 @@ admin.get('/bookings', async (c) => {
 });
 
 admin.post('/bookings/:id/refund', async (c) => {
-  // TODO(payments): refund through Stripe.
-  const res = await c.env.DB.prepare("UPDATE bookings SET status = 'cancelled', pay_status = 'refunded', cancel_note = 'Refunded by ZeitMit support' WHERE id = ? AND pay_status = 'held'")
-    .bind(c.req.param('id')).run();
-  if (!res.meta.changes) fail(409, 'Only held payments can be refunded.');
+  const b = await c.env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(c.req.param('id')).first<Parameters<typeof refundBooking>[1]>();
+  if (!b || !(await refundBooking(c.env, b, (amt) => `Refunded by ZeitMit support · ${amt}`))) fail(409, 'Only held payments can be refunded.');
+  await notify(c.env, b!.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Refund issued', body: `ZeitMit support refunded ${euros(b!.total)} for your booking.`, go: 'tab:cancelled' }, c.executionCtx);
   return c.json({ ok: true });
 });
 

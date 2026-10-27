@@ -7,6 +7,7 @@ import { Icon } from '../ui/Icon';
 import { Box, H, Row, Txt } from '../ui/primitives';
 import { PrimaryButton, TextButton } from '../ui/common';
 import { Logo } from './Discover';
+import { t } from '../i18n';
 
 type Step = 'email' | 'code' | 'profile';
 
@@ -63,7 +64,7 @@ export default function Login() {
                 Real people for coffee, city walks, dates and plus-ones in Berlin. Always in public, always paid through ZeitMit.
               </Txt>
               <Label>Email</Label>
-              <Field value={email} onChangeText={setEmail} placeholder="you@example.com" keyboardType="email-address" autoCapitalize="none" autoComplete="email" onSubmitEditing={() => emailOk && sendCode()} />
+              <Field value={email} onChangeText={setEmail} placeholder={t("you@example.com")} keyboardType="email-address" autoCapitalize="none" autoComplete="email" onSubmitEditing={() => emailOk && sendCode()} />
               <PrimaryButton label={busy ? 'Sending…' : 'Continue'} dim={!emailOk || busy} onPress={sendCode} style={{ marginTop: 16 }} />
               <Txt size={12} lh={1.5} color={colors.gray600} align="center" style={{ marginTop: 14 }}>
                 We’ll email you a 6-digit code. No password needed.
@@ -121,7 +122,7 @@ export default function Login() {
               <H size={32} ls={-0.035}>Welcome to ZeitMit</H>
               <Txt size={15} lh={1.5} color={colors.gray600} style={{ marginTop: 8, marginBottom: 22 }}>Just two things before you start.</Txt>
               <Label>Your name</Label>
-              <Field value={name} onChangeText={setName} placeholder="e.g. Mira Hoffmann" autoComplete="name" />
+              <Field value={name} onChangeText={setName} placeholder={t("e.g. Mira Hoffmann")} autoComplete="name" />
               <Txt size={12} color={colors.gray600} style={{ marginTop: 6 }}>Companions see your first name only.</Txt>
               <Box shadow={4} style={{ marginTop: 18, borderRadius: 18 }}>
                 <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: adult }} onPress={() => setAdult(!adult)} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>

@@ -13,6 +13,13 @@ export type Env = {
    * Testing only: anyone could log in as any email, so admin access is disabled while it's on.
    */
   DEV_LOGIN_CODES?: string;
+  /** Brevo transactional email (free 300/day). Sender must be verified in Brevo. */
+  BREVO_API_KEY?: string;
+  EMAIL_FROM_ADDRESS?: string;
+  /** Stripe secret key (sk_test_… for test mode). Without it, payments are simulated. */
+  STRIPE_SECRET_KEY?: string;
+  /** Override for tests (mock Stripe server). */
+  STRIPE_API_BASE?: string;
 };
 
 export type AuthUser = { id: string; email: string; role: 'customer' | 'admin' };

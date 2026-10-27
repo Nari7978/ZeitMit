@@ -6,11 +6,12 @@ import { requireAdmin, requireAuth } from './lib/auth';
 import { auth } from './routes/auth';
 import { me } from './routes/me';
 import { companions } from './routes/companions';
-import { bookings, companionBookings, expirePending } from './routes/bookings';
+import { bookings, companionBookings, expirePending, expireUnpaid } from './routes/bookings';
 import { companionProfile } from './routes/companionProfile';
 import { escalateMissedCheckins, gifts, safety } from './routes/safety';
 import { admin } from './routes/admin';
 import { chat } from './chat';
+import { photos } from './routes/photos';
 
 export { ChatRoom } from './chat';
 
@@ -22,6 +23,19 @@ app.get('/', (c) => c.json({ name: 'zeitmit-api', ok: true, devLoginCodes: c.env
 
 app.route('/auth', auth);
 app.route('/companions', companions);
+app.route('/photos', photos);
+
+/** Stripe Checkout lands here, then hands control back to the app via its URL scheme. */
+app.get('/payments/return', (c) => {
+  const q = new URLSearchParams({ kind: c.req.query('kind') ?? '', id: c.req.query('id') ?? '', status: c.req.query('status') ?? '' });
+  const deep = `zeitmit://payment-done?${q}`;
+  const ok = c.req.query('status') === 'success';
+  return c.html(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>ZeitMit</title>
+<body style="font-family:system-ui;background:#FFE94D;color:#111;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center;padding:24px">
+<div><h1 style="font-size:28px">${ok ? 'Payment done' : 'Payment cancelled'}</h1><p>Returning to ZeitMit…</p>
+<p><a href="${deep}" style="color:#111;font-weight:700">Tap here if nothing happens</a></p></div>
+<script>location.href=${JSON.stringify(deep)}</script></body>`);
+});
 
 app.use('/me/*', requireAuth);
 app.use('/me', requireAuth);
@@ -62,6 +76,6 @@ app.notFound((c) => c.json({ error: 'Not found.' }, 404));
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.all([expirePending(env), escalateMissedCheckins(env)]));
+    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), escalateMissedCheckins(env)]));
   },
 } satisfies ExportedHandler<Env>;

@@ -19,7 +19,12 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.nari7978.zeitmit",
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -29,7 +34,28 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ZeitMit uses your photos so you can add a profile picture.",
+          "cameraPermission": "ZeitMit uses the camera for your profile photo and the companion ID check."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "During a safety check-in, ZeitMit shares your location with your trusted contact only if you turn it on."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FF4F8B"
+        }
+      ],
+      "expo-web-browser"
     ],
     "scheme": "zeitmit",
     "backgroundColor": "#FFE94D",

@@ -48,6 +48,20 @@ export function toCompanionMode() {
   router.dismissTo('/companion');
 }
 
+/** Opens the screen a notification points to: "chat:<id>", "tab:<bookings tab>", "comp:<tab>". */
+export function followGo(go: string) {
+  if (go.startsWith('chat:')) {
+    router.dismissTo('/messages');
+    openChat(go.slice(5));
+  } else if (go.startsWith('tab:')) {
+    toBookings(go.slice(4) as BTab);
+  } else if (go.startsWith('comp:')) {
+    const tab = go.slice(5);
+    useStore.setState({ sheet: null });
+    router.dismissTo(tab === 'overview' ? '/companion' : (`/companion/${tab}` as '/companion'));
+  }
+}
+
 export function toCustomerMode() {
   useStore.setState({ sheet: null });
   router.dismissTo('/account');

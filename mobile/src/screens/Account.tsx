@@ -1,12 +1,15 @@
-import { Pressable, ScrollView, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
 import { useStore } from '../store';
 import { toBookings, toCompanionMode } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, H, Row, Txt } from '../ui/primitives';
+import { Box, Enter, H, Photo, Row, Txt } from '../ui/primitives';
+import { eur } from '../data';
+import { openSettings, type SettingsPage } from './Settings';
 import { PrimaryButton, SecondaryButton, StatusCover, TextButton, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
+import { t } from '../i18n';
 
 export const initials = (name: string) => name.split(' ').map((w) => w[0]).join('').slice(0, 2);
 
@@ -19,21 +22,46 @@ export default function Account() {
   const { logout } = useStore.getState();
   if (!user) return null;
   const editUser = { name: user.name, bio: user.bio };
-  const { openSheet, showToast } = useStore.getState();
+  const { openSheet } = useStore.getState();
 
-  type RowDef = [icon: string, label: string, value: string, fn?: () => void];
+  type RowDef = [icon: string, label: string, value: string, fn: () => void];
+  const page = (p: SettingsPage) => () => openSettings(p);
+  const p = user.prefs;
+  const notifValue = p.pushMessages && p.pushBookings ? 'Bookings & messages' : p.pushMessages ? 'Messages only' : p.pushBookings ? 'Bookings only' : 'Off';
   const groups: { title: string; rows: RowDef[] }[] = [
     { title: 'Account', rows: [
       ['user-round', 'Personal details', '', () => openSheet('edit', { edit: editUser })],
       ['heart', 'Saved companions', String(savedCount), () => openSheet('saved')],
       ['gift', 'Gift a date', '', () => openSheet('gift', { gift: { amt: 100, to: '', msg: '', done: false } })],
-      ['credit-card', 'Payment methods', 'Visa ··42'],
+      ['ticket', 'Redeem a gift code', user.credit ? eur(user.credit / 100) + ' credit' : '', () => openSheet('redeem')],
+      ['credit-card', 'Payments & credit', '', page('payments')],
       ['history', 'Booking history', '', () => toBookings('completed')],
     ] },
-    { title: 'Preferences', rows: [['bell', 'Notifications', 'Bookings & messages'], ['compass', 'Discovery preferences', 'Optional'], ['globe', 'Language', 'English']] },
-    { title: 'Privacy & safety', rows: [['lock', 'Privacy controls', ''], ['ban', 'Blocked accounts', '0'], ['key-round', 'Account security', '2-step on'], ['shield-check', 'Verification', 'Age confirmed']] },
-    { title: 'Support', rows: [['life-buoy', 'Help centre', ''], ['users', 'Community guidelines', ''], ['file-text', 'Terms & privacy', '']] },
+    { title: 'Preferences', rows: [
+      ['bell', 'Notifications', notifValue, page('notifications')],
+      ['compass', 'Discovery preferences', p.discoveryPref !== 'any' || p.discoveryMaxRate < 60 ? 'On' : 'Optional', page('discovery')],
+      ['globe', 'Language', user.language === 'de' ? 'Deutsch' : user.language === 'en' ? 'English' : 'Phone setting', page('language')],
+    ] },
+    { title: 'Privacy & safety', rows: [
+      ['lock', 'Privacy controls', '', page('privacy')],
+      ['ban', 'Blocked accounts', '', page('blocked')],
+      ['key-round', 'Account security', 'Email code', page('security')],
+      ['shield-check', 'Verification', user.ageConfirmed ? 'Age confirmed' : '', page('verification')],
+    ] },
+    { title: 'Support', rows: [
+      ['life-buoy', 'Help centre', '', page('help')],
+      ['users', 'Community guidelines', '', page('guidelines')],
+      ['file-text', 'Terms & privacy', '', page('terms')],
+    ] },
   ];
+  const changePhoto = () => {
+    if (Platform.OS === 'web') return void useStore.getState().uploadAvatar('library');
+    Alert.alert(t('Profile photo'), undefined, [
+      { text: t('Take photo'), onPress: () => void useStore.getState().uploadAvatar('camera') },
+      { text: t('Choose from library'), onPress: () => void useStore.getState().uploadAvatar('library') },
+      { text: t('Cancel'), style: 'cancel' },
+    ]);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
@@ -41,9 +69,12 @@ export default function Account() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           <Row style={{ paddingTop: 16, paddingHorizontal: 20, gap: 16 }}>
-            <View style={{ width: 76, height: 76, borderRadius: 26, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center' }}>
-              <H size={26}>{initials(user.name)}</H>
-            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Change profile photo" onPress={changePhoto} style={{ width: 76, height: 76, borderRadius: 26, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {user.avatarUrl ? <Photo hue={0} url={user.avatarUrl} /> : <H size={26}>{initials(user.name)}</H>}
+              <View style={{ position: 'absolute', right: 4, bottom: 4, width: 24, height: 24, borderRadius: 12, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="camera" size={13} color={colors.white} />
+              </View>
+            </Pressable>
             <View style={{ gap: 4, flex: 1, minWidth: 0 }}>
               <H size={24} ls={-0.025} numberOfLines={1}>{user.name}</H>
               <Txt size={13} color={colors.gray600}>Berlin · Member since {new Date(user.createdAt * 1000).getFullYear()}</Txt>
@@ -89,7 +120,7 @@ export default function Account() {
                   <Pressable
                     key={label}
                     accessibilityRole="button"
-                    onPress={fn ?? (() => showToast(label + ' opens here (prototype)'))}
+                    onPress={fn}
                     style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 54, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: colors.hairline, backgroundColor: pressed ? colors.sun : colors.white })}
                   >
                     <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: colors.butter, alignItems: 'center', justifyContent: 'center' }}>

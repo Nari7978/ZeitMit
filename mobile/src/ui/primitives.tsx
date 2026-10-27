@@ -1,12 +1,15 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import {
-  AccessibilityInfo, Animated, Easing, Pressable, StyleSheet, Text, View,
+  AccessibilityInfo, Animated, Easing, Image, Pressable, StyleSheet, Text, View,
   type PressableProps, type StyleProp, type TextProps, type TextStyle, type ViewStyle,
 } from 'react-native';
 import Svg, { Defs, Path, Pattern, Rect } from 'react-native-svg';
 import { colors, em, font, type FontKind, type Weight } from '../theme';
 import { oklch } from '../lib/oklch';
 import { Icon } from './Icon';
+import { photoUri } from '../lib/photos';
+import { t } from '../i18n';
+import { useStore } from '../store';
 
 // ---------- Text ----------
 
@@ -23,10 +26,24 @@ type TxtProps = TextProps & {
   style?: StyleProp<TextStyle>;
 };
 
-export function Txt({ size = 15, weight = 400, color = colors.ink, kind = 'body', ls, lh, align, style, ...rest }: TxtProps) {
+/** Translates plain-text children. Mixed text like "Hi {name}!" is translated as one sentence first. */
+function translate(children: ReactNode): ReactNode {
+  if (typeof children === 'string') return t(children);
+  if (!Array.isArray(children)) return children;
+  if (children.every((c) => typeof c === 'string' || typeof c === 'number')) {
+    const whole = children.join('');
+    const tr = t(whole);
+    if (tr !== whole) return tr;
+  }
+  return children.map((c) => (typeof c === 'string' ? t(c) : c));
+}
+
+export function Txt({ size = 15, weight = 400, color = colors.ink, kind = 'body', ls, lh, align, style, children, ...rest }: TxtProps) {
+  useStore((s) => s.user?.language); // re-render when the language changes
   return (
     <Text
       {...rest}
+      children={translate(children)}
       style={[
         font(kind, weight),
         { fontSize: size, color },
@@ -140,6 +157,17 @@ export function Stripes({ hue, l = [0.885, 0.855], c = [0.04, 0.05], style }: { 
 }
 
 export const stripeBase = (hue: number) => oklch(0.885, 0.04, hue);
+
+/** A person's photo, falling back to the striped placeholder until one is uploaded. */
+export function Photo({ hue, url, style }: { hue: number; url?: string | null; style?: StyleProp<ViewStyle> }) {
+  const uri = photoUri(url);
+  return (
+    <>
+      <Stripes hue={hue} style={style} />
+      {uri ? <Image source={{ uri }} resizeMode="cover" style={[StyleSheet.absoluteFill, style as object]} accessibilityIgnoresInvertColors /> : null}
+    </>
+  );
+}
 
 /** Solid tinted avatar colour used for customers (`oklch(0.92 0.04 h)`). */
 export const tint = (hue: number) => ({ bg: oklch(0.92, 0.04, hue), fg: oklch(0.4, 0.08, hue) });

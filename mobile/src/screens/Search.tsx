@@ -6,9 +6,10 @@ import { A, ageStr, eur, isDateCompanion, PREF, ratingStr, reviewsStr, SORT, WHE
 import { filterCount, filtered, toggleIn, useStore, type Filters } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Chip, Enter, H, PressBox, Row, Stripes, Txt } from '../ui/primitives';
+import { Chip, Enter, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { EmptyState, SaveButton, SecondaryButton, StatusCover, TextButton, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
+import { t } from '../i18n';
 
 export function activeChips(f: Filters): [string, Partial<Filters>][] {
   const chips: [string, Partial<Filters>][] = [];
@@ -65,7 +66,7 @@ export default function Search() {
                     value={query}
                     onChangeText={(t) => set({ query: t })}
                     accessibilityLabel="Search companions"
-                    placeholder="Activity, interest, language…"
+                    placeholder={t("Activity, interest, language…")}
                     placeholderTextColor={colors.gray400}
                     returnKeyType="search"
                     style={[font('body', 400), { flex: 1, minWidth: 0, fontSize: 16, color: colors.ink, paddingVertical: 0, outlineStyle: 'none' } as object]}
@@ -125,8 +126,8 @@ export default function Search() {
                 <Enter key={c.id}>
                   <PressBox shadow={4} fx="scale" onPress={() => openProfile(c.id)} accessibilityLabel={`${c.name}, ${eur(c.rate)} per hour`} style={{ flexDirection: 'row', gap: 14, padding: 10, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
                     <View style={{ width: 104, height: 132, borderRadius: 16, overflow: 'hidden' }}>
-                      <Stripes hue={c.hue} />
-                      <Txt kind="mono" size={9} weight={500} lh={1.35} color="rgba(23,21,43,.5)" style={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>{c.photo}</Txt>
+                      <Photo hue={c.hue} url={c.photoUrl} />
+                      <Txt kind="mono" size={9} weight={500} lh={1.35} color="rgba(23,21,43,.5)" style={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>{c.photoUrl ? '' : c.photo}</Txt>
                     </View>
                     <View style={{ flex: 1, minWidth: 0, gap: 5, paddingTop: 4, paddingRight: 2, paddingBottom: 2 }}>
                       <Row style={{ alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>

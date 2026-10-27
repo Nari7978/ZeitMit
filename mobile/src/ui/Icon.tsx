@@ -7,7 +7,7 @@ import {
   Landmark, Languages, Layers, LayoutDashboard, LifeBuoy, ListChecks, Lock, MapPin, MessageCircle, MessageSquareText,
   Minus, PartyPopper, Pencil, Phone, Plus, Receipt, Repeat, RotateCcw, ScanFace, Search, SearchX, Send, Share,
   ShieldAlert, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, TriangleAlert, User, UserRound, Users,
-  UsersRound, Utensils, Video, Wallet, X,
+  UsersRound, Utensils, Video, Wallet, X, Camera, Ticket, ImagePlus, IdCard, Mail, LogOut, Trash2, ExternalLink, Smartphone, Navigation,
   type LucideProps,
 } from 'lucide-react-native';
 import { colors } from '../theme';
@@ -30,7 +30,8 @@ const ICONS: Record<string, ComponentType<LucideProps>> = {
   'search-x': SearchX, send: Send, share: Share, 'shield-alert': ShieldAlert, 'shield-check': ShieldCheck,
   'shopping-bag': ShoppingBag, 'sliders-horizontal': SlidersHorizontal, sparkles: Sparkles,
   'triangle-alert': TriangleAlert, user: User, 'user-round': UserRound, users: Users, 'users-round': UsersRound,
-  utensils: Utensils, video: Video, wallet: Wallet, x: X,
+  utensils: Utensils, video: Video, wallet: Wallet, x: X, camera: Camera, ticket: Ticket, 'image-plus': ImagePlus, 'id-card': IdCard,
+  mail: Mail, 'log-out': LogOut, 'trash-2': Trash2, 'external-link': ExternalLink, smartphone: Smartphone, navigation: Navigation,
 };
 
 type Props = { name: string; size?: number; color?: string; strokeWidth?: number; style?: LucideProps['style'] };

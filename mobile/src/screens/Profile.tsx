@@ -10,8 +10,9 @@ import { api } from '../api';
 import { useStore } from '../store';
 import { messageCompanion, openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
-import { H, PressBox, Row, Stripes, Txt } from '../ui/primitives';
+import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, useTopPad } from '../ui/common';
+import { locale } from '../i18n';
 
 type Detail = Companion & {
   reviewList: { n: string; a: string; stars: number; t: string; created_at: number }[];
@@ -52,9 +53,9 @@ export default function Profile() {
         contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
       >
         <View style={{ height: 470 }}>
-          <Stripes hue={c.hue} />
+          <Photo hue={c.hue} url={c.photoUrl} />
           <LinearGradient colors={['rgba(18,14,38,.45)', 'rgba(18,14,38,0)']} locations={[0, 0.28]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-          <Txt kind="mono" size={11} weight={500} color="rgba(23,21,43,.55)" style={{ position: 'absolute', left: 20, bottom: 60 }}>{c.photo}</Txt>
+          <Txt kind="mono" size={11} weight={500} color="rgba(23,21,43,.55)" style={{ position: 'absolute', left: 20, bottom: 60 }}>{c.photoUrl ? '' : c.photo}</Txt>
           <Row style={{ position: 'absolute', bottom: 42, left: 0, right: 0, justifyContent: 'center', gap: 6 }}>
             <View style={{ width: 18, height: 6, borderRadius: 3, backgroundColor: colors.white }} />
             {[0, 1, 2].map((i) => <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,.55)' }} />)}
@@ -177,7 +178,7 @@ export default function Profile() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Txt size={14} weight={600}>{r.n}</Txt>
-                  <Txt size={12} color={colors.gray600}>{new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric' }).format(new Date(r.created_at * 1000))} · {r.a} · Verified booking</Txt>
+                  <Txt size={12} color={colors.gray600}>{new Intl.DateTimeFormat(locale(), { month: 'short', year: 'numeric' }).format(new Date(r.created_at * 1000))} · {r.a} · Verified booking</Txt>
                 </View>
               </Row>
               <Txt size={14} lh={1.55} color={colors.gray900}>{r.t}</Txt>

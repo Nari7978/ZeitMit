@@ -5,7 +5,7 @@ export type CompanionRow = {
   user_id: string; display_name: string; age: number | null; show_age: number; pronouns: string | null; gender: string;
   area: string; dist: string; hue: number; photo_note: string; tagline: string; bio: string; rate: number;
   interests: string; languages: string; activities: string; boundaries: string; lgbtq: number; status: string;
-  id_verified: number; rating: number | null; review_count: number;
+  id_verified: number; rating: number | null; review_count: number; photo_id: string | null; id_photo_id: string | null;
 };
 
 /** API shape, mirroring the mobile app's `Companion` type. */
@@ -32,6 +32,8 @@ export function toCompanion(r: CompanionRow) {
     ok: parseJson<string[]>(r.boundaries, []),
     bio: r.bio,
     status: r.status,
+    photoUrl: r.photo_id ? `/photos/${r.photo_id}` : null,
+    showAge: !!r.show_age,
   };
 }
 

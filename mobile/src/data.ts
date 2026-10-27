@@ -1,5 +1,6 @@
 // Static catalogue (activities, labels, colours) and pure helpers. Live data comes from the API (src/api.ts).
 import { colors } from './theme';
+import { locale, t } from './i18n';
 
 export type Gender = 'w' | 'm' | 'nb';
 export type ActId =
@@ -30,6 +31,7 @@ export type Companion = {
   bio: string;
   /** Weekdays with availability, 0 = Mon. */
   days: number[];
+  photoUrl?: string | null;
 };
 
 export type Activity = { id: ActId; label: string; icon: string; desc: string };
@@ -81,11 +83,11 @@ export const TONE: Record<Tone, [string, string]> = {violet:['#FFD6E5','#111111'
 
 // ---- Berlin date helpers (the service runs in Berlin time) ----
 
-const fmt = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', ...o });
+const fmt = (o: Intl.DateTimeFormatOptions, loc = locale()) => new Intl.DateTimeFormat(loc, { timeZone: 'Europe/Berlin', ...o });
 
 /** Weekday index in Berlin, 0 = Mon. */
 export function berlinWeekday(d = new Date()) {
-  return WEEK.indexOf(fmt({ weekday: 'short' }).format(d));
+  return WEEK.indexOf(fmt({ weekday: 'short' }, 'en-GB').format(d));
 }
 
 /** 'YYYY-MM-DD' slot dates from the API → labels for the day picker. */
@@ -96,7 +98,7 @@ export function slotDay(date: string, index: number) {
     date,
     d: short,
     n: String(d.getUTCDate()),
-    full: fmt({ weekday: 'short', day: 'numeric', month: 'short' }).format(d).replace(/^(\w+)/, '$1,'),
+    full: fmt({ weekday: 'short', day: 'numeric', month: 'short' }).format(d).replace(/^([^\s,]+),?/, '$1,'),
     label: index === 0 ? 'Today' : index === 1 ? 'Tmrw' : short,
   };
 }
@@ -135,7 +137,7 @@ export const eur = (n: number) => {
   const v = Math.round(n * 100) / 100;
   return '€' + (Number.isInteger(v) ? v : v.toFixed(2));
 };
-export const hours = (d: number) => d + (d === 1 ? ' hour' : ' hours');
+export const hours = (d: number) => t(d + (d === 1 ? ' hour' : ' hours'));
 export const ageStr = (c: { age: number | null }) => (c.age ? ', ' + c.age : '');
 export const ratingStr = (c: Companion) => (c.rating ? c.rating.toFixed(1) : 'New');
 export const reviewsStr = (c: Companion) => (c.rating ? '(' + c.reviews + ')' : '');

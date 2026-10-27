@@ -6,7 +6,7 @@ import { A, AM, ageStr, ratingStr, ROM, eur, isDateCompanion, type Companion } f
 import { useStore } from '../store';
 import { openProfile, searchWith } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, H, PressBox, Row, Shimmer, Stripes, Txt } from '../ui/primitives';
+import { Box, Enter, H, PressBox, Row, Shimmer, Stripes, Txt, Photo } from '../ui/primitives';
 import { SaveButton, SectionHead, StatusCover, TextButton, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 import { oklch } from '../lib/oklch';
@@ -163,7 +163,7 @@ export default function Discover() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingTop: 16, paddingHorizontal: 20 }}>
               {dateList.map((c) => (
                 <Pressable key={c.id} accessibilityRole="button" accessibilityLabel={c.name} onPress={() => openProfile(c.id)} style={{ width: 132, gap: 8 }}>
-                  <View style={{ height: 160, borderRadius: 18, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+                  <View style={{ height: 160, borderRadius: 18, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
                   <View style={{ paddingHorizontal: 2 }}>
                     <Txt size={14} weight={600} numberOfLines={1}>{c.name}{ageStr(c)}</Txt>
                     <Txt size={12} color={colors.gray800}>{eur(c.rate)}/h · {c.area}</Txt>
@@ -185,7 +185,7 @@ export default function Discover() {
                 <Row style={{ gap: 10, marginTop: 4 }}>
                   <Row>
                     {walkers.slice(0, 3).map((w) => (
-                      <View key={w.id} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: '#2A2142', marginRight: -8, overflow: 'hidden' }}><Stripes hue={w.hue} /></View>
+                      <View key={w.id} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: '#2A2142', marginRight: -8, overflow: 'hidden' }}><Photo hue={w.hue} url={w.photoUrl} /></View>
                     ))}
                   </Row>
                   <Txt size={13} color="rgba(255,255,255,.85)" style={{ marginLeft: 8 }}>{walkers.length} companions who know the quiet corners</Txt>
@@ -200,8 +200,8 @@ export default function Discover() {
             {C.filter((c) => c.today).map((c) => (
               <Pressable key={c.id} accessibilityRole="button" accessibilityLabel={c.name} onPress={() => openProfile(c.id)} style={{ width: 148, gap: 10 }}>
                 <View style={{ height: 184, borderRadius: 20, overflow: 'hidden' }}>
-                  <Stripes hue={c.hue} />
-                  <Txt kind="mono" size={9} weight={500} lh={1.4} color="rgba(23,21,43,.5)" style={{ position: 'absolute', left: 10, right: 10, bottom: 10 }}>{c.photo}</Txt>
+                  <Photo hue={c.hue} url={c.photoUrl} />
+                  <Txt kind="mono" size={9} weight={500} lh={1.4} color="rgba(23,21,43,.5)" style={{ position: 'absolute', left: 10, right: 10, bottom: 10 }}>{c.photoUrl ? '' : c.photo}</Txt>
                   <SaveButton id={c.id} variant="photo" size={32} iconSize={15} style={{ position: 'absolute', top: 8, right: 8 }} />
                 </View>
                 <View style={{ gap: 2, paddingHorizontal: 2 }}>
@@ -218,8 +218,8 @@ export default function Discover() {
             {C.filter((c) => c.acts.includes('coffee')).slice(0, 4).map((c) => (
               <Pressable key={c.id} accessibilityRole="button" accessibilityLabel={c.name} onPress={() => openProfile(c.id)} style={{ width: '47%', flexGrow: 1, gap: 10, minWidth: 0 }}>
                 <View style={{ aspectRatio: 4 / 5, borderRadius: 20, overflow: 'hidden' }}>
-                  <Stripes hue={c.hue} />
-                  <Txt kind="mono" size={9} weight={500} lh={1.4} color="rgba(23,21,43,.5)" style={{ position: 'absolute', left: 10, top: 10, right: 10 }}>{c.photo}</Txt>
+                  <Photo hue={c.hue} url={c.photoUrl} />
+                  <Txt kind="mono" size={9} weight={500} lh={1.4} color="rgba(23,21,43,.5)" style={{ position: 'absolute', left: 10, top: 10, right: 10 }}>{c.photoUrl ? '' : c.photo}</Txt>
                   {c.verified ? (
                     <Row style={{ position: 'absolute', left: 10, bottom: 10, height: 24, paddingHorizontal: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,.92)', gap: 4 }}>
                       <Icon name="badge-check" size={13} />
@@ -253,7 +253,7 @@ export default function Discover() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingTop: 14, paddingHorizontal: 20, paddingBottom: 8 }}>
             {C.filter((c) => c.lgbtq).map((c) => (
               <PressBox key={c.id} shadow={4} fx="push" onPress={() => openProfile(c.id)} accessibilityLabel={c.name} style={{ width: 220, flexDirection: 'row', gap: 12, alignItems: 'center', padding: 10, borderRadius: 20, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
-                <View style={{ width: 64, height: 76, borderRadius: 14, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+                <View style={{ width: 64, height: 76, borderRadius: 14, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
                 <View style={{ gap: 3, flex: 1, minWidth: 0 }}>
                   <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
                   <Txt size={12} color={colors.gray600} numberOfLines={1}>{c.area} · {c.dist}</Txt>
@@ -270,7 +270,7 @@ export default function Discover() {
               const k = c.id;
               return (
                 <Pressable key={k} accessibilityRole="button" accessibilityLabel={c.name} onPress={() => openProfile(k)} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: colors.ink }}>
-                  <View style={{ width: 52, height: 52, borderRadius: 26, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+                  <View style={{ width: 52, height: 52, borderRadius: 26, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
                   <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                     <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
                     <Txt size={13} color={colors.gray600}>{shared.length ? 'You both like ' + shared.slice(0, 2).join(' & ') : c.tagline}</Txt>
@@ -321,8 +321,8 @@ function FeaturedCard({ c }: { c: Companion }) {
         onPress={() => openProfile(c.id)}
         style={{ width: 252, height: 336, borderRadius: 24, overflow: 'hidden', backgroundColor: oklch(0.885, 0.04, c.hue) }}
       >
-        <Stripes hue={c.hue} />
-        <Txt kind="mono" size={10} weight={500} lh={1.4} color="rgba(23,21,43,.5)" style={{ position: 'absolute', top: 16, left: 16, maxWidth: 150 }}>{c.photo}</Txt>
+        <Photo hue={c.hue} url={c.photoUrl} />
+        <Txt kind="mono" size={10} weight={500} lh={1.4} color="rgba(23,21,43,.5)" style={{ position: 'absolute', top: 16, left: 16, maxWidth: 150 }}>{c.photoUrl ? '' : c.photo}</Txt>
         <SaveButton id={c.id} variant="photo" size={38} iconSize={18} style={{ position: 'absolute', top: 12, right: 12 }} />
         <LinearGradient colors={['rgba(18,14,38,0)', 'rgba(18,14,38,.86)']} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '62%' }} />
         <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16, gap: 6 }}>

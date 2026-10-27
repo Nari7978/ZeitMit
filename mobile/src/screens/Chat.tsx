@@ -8,14 +8,15 @@ import { useStore } from '../store';
 import { api, wsUrl } from '../api';
 import { toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, Row, Stripes, Txt, TypingDots } from '../ui/primitives';
+import { Box, Enter, Row, Stripes, Txt, TypingDots, Photo } from '../ui/primitives';
 import { CircleButton } from '../ui/common';
 import { convoContext } from './Messages';
+import { locale, t } from '../i18n';
 
 type Msg = { id: string; me: boolean; t: string; at: number; pending?: boolean };
 
 const timeOf = (unix: number) =>
-  new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(unix * 1000));
+  new Intl.DateTimeFormat(locale(), { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(unix * 1000));
 const dayOf = (unix: number) => {
   const w = notifWhen(unix);
   return w.g === 'Earlier' ? w.time : w.g;
@@ -126,7 +127,7 @@ export default function Chat() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colors.cream }}>
       <Row style={{ paddingTop: insets.top + 4, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: colors.white, borderBottomWidth: 2, borderBottomColor: colors.ink, gap: 10 }}>
         <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
-        <View style={{ width: 40, height: 40, borderRadius: 14, overflow: 'hidden' }}><Stripes hue={x.hue} /></View>
+        <View style={{ width: 40, height: 40, borderRadius: 14, overflow: 'hidden' }}><Photo hue={x.hue} url={x.photoUrl} /></View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Txt size={16} weight={700}>{name}</Txt>
           <Txt size={12} color={colors.gray600}>{isComp ? 'Customer · booking via ZeitMit' : 'Usually replies within 2 hours'}</Txt>
@@ -186,7 +187,7 @@ export default function Chat() {
           returnKeyType="send"
           submitBehavior="submit"
           accessibilityLabel="Message"
-          placeholder={`Message ${name}…`}
+          placeholder={t(`Message ${name}…`)}
           placeholderTextColor={colors.gray400}
           style={[font('body'), { flex: 1, minWidth: 0, height: 46, paddingHorizontal: 18, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.sun, fontSize: 15, color: colors.ink, outlineStyle: 'none' } as object]}
         />

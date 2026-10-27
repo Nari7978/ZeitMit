@@ -94,6 +94,12 @@ export function CompanionNavBar(props: BottomTabBarProps) {
 export function CheckinBar() {
   const checkin = useStore((s) => s.checkin);
   const sheet = useStore((s) => s.sheet);
+  // While a check-in runs with sharing on, update the location every 5 minutes.
+  useEffect(() => {
+    if (!checkin) return;
+    const t = setInterval(() => void useStore.getState().sendLocation(), 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [checkin]);
   const bottom = useNavBottom() + 78;
   if (!checkin || sheet) return null;
   const { checkinOk, openSheet } = useStore.getState();

@@ -9,6 +9,8 @@ import { colors } from '../theme';
 import { useStore } from '../store';
 import { Toast, useNavBottom } from '../ui/chrome';
 import { SheetHost } from '../sheets/SheetHost';
+import { onNotificationTap, registerForPush } from '../lib/push';
+import { followGo } from '../nav';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
 
@@ -32,6 +34,13 @@ export default function RootLayout() {
     return () => { sub.remove(); clearInterval(t); };
   }, []);
 
+  // Push: register once signed in; follow taps on notifications.
+  useEffect(() => {
+    if (session !== 'in') return;
+    void registerForPush();
+    return onNotificationTap((go) => { void useStore.getState().refresh(); followGo(go); });
+  }, [session]);
+
   const path = usePathname();
   const checkin = useStore((s) => !!s.checkin);
   const navBottom = useNavBottom();
@@ -54,6 +63,7 @@ export default function RootLayout() {
           <Stack.Screen name="book/[cid]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="become" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
         </Stack.Protected>
         <Stack.Protected guard={!signedIn}>
           <Stack.Screen name="login" />

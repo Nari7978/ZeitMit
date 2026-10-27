@@ -4,7 +4,7 @@ import { AM, msgTime, ST, whenShort } from '../data';
 import { useStore, type Convo } from '../store';
 import { openChat } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Enter, H, Row, Stripes, Txt } from '../ui/primitives';
+import { Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { StatusCover, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 
@@ -23,7 +23,7 @@ export function ConvoRow({ x }: { x: Convo }) {
       onPress={() => openChat(x.id)}
       style={({ pressed }) => ({ flexDirection: 'row', gap: 14, alignItems: 'center', paddingVertical: 12, paddingHorizontal: 20, backgroundColor: pressed ? colors.butter : 'transparent' })}
     >
-      <View style={{ width: 56, height: 56, borderRadius: 18, overflow: 'hidden' }}><Stripes hue={x.hue} /></View>
+      <View style={{ width: 56, height: 56, borderRadius: 18, overflow: 'hidden' }}><Photo hue={x.hue} url={x.photoUrl} /></View>
       <View style={{ flex: 1, minWidth: 0, gap: 3, paddingBottom: 12, borderBottomWidth: 2, borderBottomColor: colors.ink }}>
         <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', gap: 8 }}>
           <Txt size={16} weight={unread ? 700 : 600}>{x.name}</Txt>

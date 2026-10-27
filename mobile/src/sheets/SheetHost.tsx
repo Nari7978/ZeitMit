@@ -1,5 +1,5 @@
 // Bottom sheets (filters, sort, gift, safety, meet code, …) rendered above every screen.
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { router } from 'expo-router';
@@ -9,8 +9,9 @@ import { A, ageStr, eur, LANGS, PREF, SORT, WHEN } from '../data';
 import { filtered, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Chip, Enter, H, PressBox, Row, Stripes, Toggle, Txt } from '../ui/primitives';
+import { Box, Chip, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, TextButton } from '../ui/common';
+import { t } from '../i18n';
 
 export function SheetHost() {
   const sheet = useStore((s) => s.sheet);
@@ -67,6 +68,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'otp': return <OtpSheet />;
     case 'otpin': return <OtpInSheet />;
     case 'delete': return <DeleteSheet />;
+    case 'redeem': return <RedeemSheet />;
   }
 }
 
@@ -290,7 +292,7 @@ function ReviewSheet() {
           </Pressable>
         ))}
       </Row>
-      <TextInput value={review.text} onChangeText={(t) => set({ text: t.slice(0, 300) })} accessibilityLabel="Review" placeholder="What made it a good time?" placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 110, padding: 14, fontSize: 15, lineHeight: 22 }]} />
+      <TextInput value={review.text} onChangeText={(t) => set({ text: t.slice(0, 300) })} accessibilityLabel="Review" placeholder={t("What made it a good time?")} placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 110, padding: 14, fontSize: 15, lineHeight: 22 }]} />
       <PrimaryButton label="Post review" style={{ marginTop: 14 }} onPress={() => void useStore.getState().submitReview()} />
     </Pad>
   );
@@ -324,7 +326,7 @@ function SavedSheet() {
         if (!c) return null;
         return (
           <Pressable key={k} accessibilityRole="button" onPress={() => openProfile(k)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.hairline }}>
-            <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+            <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
             <View style={{ flex: 1 }}>
               <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
               <Txt size={13} color={colors.gray600}>{c.area} · {eur(c.rate)}/h</Txt>
@@ -356,6 +358,29 @@ function DeleteSheet() {
 }
 
 // ---------- Gift a date ----------
+
+function RedeemSheet() {
+  const credit = useStore((s) => s.user?.credit ?? 0);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const redeem = async () => {
+    if (!code.trim() || busy) return;
+    setBusy(true);
+    const ok = await useStore.getState().redeemGift(code);
+    setBusy(false);
+    if (ok) useStore.getState().closeSheet();
+  };
+  return (
+    <Pad>
+      <BigTitle>Redeem a gift code</BigTitle>
+      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginBottom: 16 }}>
+        Enter the code from your gift. The credit is used automatically on your next booking.{credit ? ` You have ${eur(credit / 100)} now.` : ''}
+      </Txt>
+      <TextInput value={code} onChangeText={(t) => setCode(t.toUpperCase())} autoCapitalize="characters" autoCorrect={false} accessibilityLabel="Gift code" placeholder={t("ZM-1234-5678")} placeholderTextColor={colors.gray400} style={[font('mono', 600), input, { height: 54, fontSize: 18, letterSpacing: 1.5 }]} />
+      <PrimaryButton label={busy ? 'Checking…' : 'Redeem'} weight={700} dim={!code.trim() || busy} style={{ marginTop: 14 }} onPress={() => void redeem()} />
+    </Pad>
+  );
+}
 
 function GiftSheet() {
   const gift = useStore((s) => s.gift);
@@ -398,8 +423,8 @@ function GiftSheet() {
       <Row style={{ gap: 8, marginTop: 20 }}>
         {[50, 100, 150].map((a) => <Chip key={a} label={eur(a)} on={gift.amt === a} height={46} radius={14} size={15} weight={700} style={{ flex: 1, borderWidth: 2 }} onPress={() => set({ amt: a })} />)}
       </Row>
-      <TextInput value={gift.to} onChangeText={(t) => set({ to: t })} accessibilityLabel="Recipient" placeholder="Friend’s name or email" placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 50, marginTop: 12 }]} />
-      <TextInput value={gift.msg} onChangeText={(t) => set({ msg: t.slice(0, 140) })} accessibilityLabel="Message" placeholder="Add a message (optional)" placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 76, marginTop: 10, paddingTop: 12, fontSize: 15 }]} />
+      <TextInput value={gift.to} onChangeText={(t) => set({ to: t })} accessibilityLabel="Recipient" placeholder={t("Friend’s name or email")} placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 50, marginTop: 12 }]} />
+      <TextInput value={gift.msg} onChangeText={(t) => set({ msg: t.slice(0, 140) })} accessibilityLabel="Message" placeholder={t("Add a message (optional)")} placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 76, marginTop: 10, paddingTop: 12, fontSize: 15 }]} />
       <PrimaryButton label={'Send gift · ' + amt} weight={700} dim={!gift.to.trim()} style={{ marginTop: 14 }} onPress={() => void useStore.getState().sendGift()} />
     </Pad>
   );
@@ -433,8 +458,8 @@ function SafetySheet() {
             <Txt size={12} color={colors.gray600}>Someone we can reach if you don’t check in.</Txt>
           </View>
         </Row>
-        <TextInput value={safety.contactName} onChangeText={(t) => set({ contactName: t })} accessibilityLabel="Contact name" placeholder="Name, e.g. Anna (sister)" placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 46 }]} />
-        <TextInput value={safety.contactPhone} onChangeText={(t) => set({ contactPhone: t })} accessibilityLabel="Contact phone" placeholder="Phone, e.g. +49 151 2345678" placeholderTextColor={colors.gray400} keyboardType="phone-pad" style={[font('body'), input, { height: 46 }]} />
+        <TextInput value={safety.contactName} onChangeText={(t) => set({ contactName: t })} accessibilityLabel="Contact name" placeholder={t("Name, e.g. Anna (sister)")} placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 46 }]} />
+        <TextInput value={safety.contactPhone} onChangeText={(t) => set({ contactPhone: t })} accessibilityLabel="Contact phone" placeholder={t("Phone, e.g. +49 151 2345678")} placeholderTextColor={colors.gray400} keyboardType="phone-pad" style={[font('body'), input, { height: 46 }]} />
       </View>
       <Row style={{ gap: 12, marginTop: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
         <View style={{ flex: 1 }}>

@@ -107,13 +107,58 @@ r = await call('POST', '/safety/checkins', T, { bookingId, contactName: 'Anna', 
 ok(soon ? r.status === 404 : r.status === 201, 'safety check-in starts for confirmed booking');
 r = await call('POST', '/gifts', T, { amount: 100, to: 'Sam' });
 ok(r.status === 201 && /^ZM-\d{4}-\d{4}$/.test(r.data.code), 'gift card issued');
+const giftCode = r.data.code;
+r = await call('POST', '/gifts/redeem', T, { code: giftCode });
+ok(r.status === 400, 'sender cannot redeem own gift');
+const friend = await login(`friend+${stamp}@example.com`);
+await call('PATCH', '/me', friend.token, { name: 'Sam', ageConfirmed: true });
+r = await call('POST', '/gifts/redeem', friend.token, { code: giftCode.toLowerCase() });
+ok(r.status === 200 && r.data.credit === 10000, 'friend redeems €100 credit');
+r = await call('POST', '/gifts/redeem', friend.token, { code: giftCode });
+ok(r.status === 409, 'gift code works only once');
+const slot3 = (await call('GET', '/companions/demo_noah')).data.slots.find((d) => d.times.length);
+r = await call('POST', '/bookings', friend.token, { companionId: 'demo_noah', act: 'movies', date: slot3.date, time: slot3.times[0], dur: 2, place: 'Cinema' });
+ok(r.status === 201 && r.data.creditUsed === 4400, 'credit applied to booking (€44)');
+await call('POST', `/bookings/${r.data.id}/cancel`, friend.token);
+r = await call('GET', '/me', friend.token);
+ok(r.data.credit === 10000, 'cancel returns credit to account');
+
+// Photos
+const PIXEL = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+r = await call('POST', '/photos', T, { kind: 'avatar', data: PIXEL });
+ok(r.status === 201, 'avatar uploaded');
+const pic = await fetch(BASE + r.data.url);
+ok(pic.ok && pic.headers.get('content-type') === 'image/jpeg', 'avatar served publicly');
+r = await call('GET', '/me', T);
+ok(!!r.data.avatarUrl, 'profile has avatarUrl');
+r = await call('POST', '/photos', T, { kind: 'id', data: PIXEL });
+const idPhoto = r.data;
+ok((await fetch(BASE + idPhoto.url)).status === 403, 'ID photo is private');
+
+// Settings
+r = await call('PATCH', '/me', T, { prefs: { pushMessages: false }, language: 'de' });
+r = await call('GET', '/me', T);
+ok(r.data.prefs.pushMessages === false && r.data.prefs.pushBookings === true && r.data.language === 'de', 'settings saved');
+await call('POST', '/me/blocks', T, { targetId: 'demo_mehmet' });
+r = await call('GET', '/me/blocks', T);
+ok(r.data.some((x) => x.id === 'demo_mehmet' && x.name === 'Mehmet'), 'blocked list');
+await call('DELETE', '/me/blocks/demo_mehmet', T);
+r = await call('GET', '/me/blocks', T);
+ok(r.data.length === 0, 'unblock');
 await call('PUT', '/me/saved/demo_lena', T);
 r = await call('GET', '/me', T);
 ok(r.data.saved.includes('demo_lena') && r.data.name === 'Mira Hoffmann', 'saved companions + profile');
 
 // Become a companion
-r = await call('POST', '/companion/apply', T, { name: 'Mira', about: 'Designer, new-ish to Berlin. Into galleries, good coffee and long walks.', acts: ['coffee', 'culture'], langs: ['German', 'English'], rate: 28, days: ['Sat', 'Sun'], wins: ['pm'], adult: true, rules: true, idSubmitted: true });
+const apply = { name: 'Mira', about: 'Designer, new-ish to Berlin. Into galleries, good coffee and long walks.', acts: ['coffee', 'culture'], langs: ['German', 'English'], levels: { German: 'Native' }, rate: 28, days: ['Sat', 'Sun'], wins: ['pm'], adult: true, rules: true, tagline: 'Galleries and good coffee' };
+r = await call('POST', '/companion/apply', T, apply);
+ok(r.status === 400, 'application needs an ID photo');
+r = await call('POST', '/companion/apply', T, { ...apply, idPhotoId: idPhoto.id });
 ok(r.status === 201 && r.data.status === 'pending', 'companion application goes to review');
+r = await call('PATCH', '/companion', T, { tagline: 'Slow museums, fast coffee', interests: ['Art', 'Coffee'], langs: ['German'], levels: { German: 'Native' }, area: 'Neukölln' });
+ok(r.status === 200, 'companion edits listing');
+r = await call('GET', '/companion', T);
+ok(r.data.tagline === 'Slow museums, fast coffee' && r.data.langs[0][1] === 'Native' && r.data.area === 'Neukölln', 'listing edits saved');
 r = await call('GET', '/companions');
 ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not public');
 

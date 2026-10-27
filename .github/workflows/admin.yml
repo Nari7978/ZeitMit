@@ -1,0 +1,41 @@
+name: Deploy admin panel
+
+on:
+  push:
+    branches: [claude/awesome-knuth-6avmg9, main]
+    paths: ['admin/**', '.github/workflows/admin.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: admin-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      VITE_API_URL: https://zeitmit-api.zeitmit.workers.dev
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Create the Pages project on first deploy
+        run: npx -y wrangler@4 pages project create zeitmit-admin --production-branch main 2>&1 | tail -2 || true
+      - name: Deploy to Cloudflare Pages
+        run: |
+          set -o pipefail
+          if ! npx -y wrangler@4 pages deploy dist --project-name zeitmit-admin --branch main --commit-dirty=true 2>&1 | tee deploy.log; then
+            grep -iE "error|✘" deploy.log | head -10 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          echo "Admin panel: https://zeitmit-admin.pages.dev"

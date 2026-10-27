@@ -10,8 +10,9 @@ const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '2
 import { useStore } from '../store';
 import { toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, H, Ring, Row, Stripes, Txt } from '../ui/primitives';
+import { Box, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, TextButton, useTopPad } from '../ui/common';
+import { t } from '../i18n';
 
 type Draft = { act: ActId | null; day: number | null; time: string | null; dur: number | null; place: string; note: string; placeErr: boolean; agree: boolean };
 
@@ -33,7 +34,9 @@ export default function BookingFlow() {
 
   const sub = b.dur ? c.rate * b.dur : 0;
   const fee = Math.round(sub * 10) / 100;
-  const total = b.dur ? eur(sub + fee) : '—';
+  const credit = (useStore.getState().user?.credit ?? 0) / 100;
+  const creditUse = b.dur ? Math.min(credit, sub + fee) : 0;
+  const total = b.dur ? eur(sub + fee - creditUse) : '—';
   const isDateAct = !!b.act && ROM.includes(b.act);
   const valid = [!!b.act, b.day != null && !!b.time, !!b.dur, true, true, !isDateAct || b.agree][step - 1];
 
@@ -72,7 +75,7 @@ export default function BookingFlow() {
           You paid {total}. ZeitMit holds it safely until you meet. If {c.name} declines, you get a full refund. When you meet, share your meet code and the money is released.
         </Txt>
         <Box shadow={4} style={{ width: '100%', marginTop: 12, padding: 16, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+          <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Txt size={15} weight={700}>{actLabel} · {durLabel}</Txt>
             <Txt size={13} color={colors.gray600}>{dayLabel} · {b.time}</Txt>
@@ -95,7 +98,7 @@ export default function BookingFlow() {
       <Row style={{ paddingTop: top, paddingHorizontal: 16, gap: 10 }}>
         <CircleButton icon="chevron-left" label="Back" onPress={back} />
         <Row style={{ flex: 1, gap: 10, minWidth: 0 }}>
-          <View style={{ width: 36, height: 36, borderRadius: 12, overflow: 'hidden' }}><Stripes hue={c.hue} /></View>
+          <View style={{ width: 36, height: 36, borderRadius: 12, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ minWidth: 0, flex: 1 }}>
             <Txt size={16} weight={700}>Book {c.name}</Txt>
             <Txt size={12} color={colors.gray600} numberOfLines={1}>Step {step} of 6 · {BSTEPS[step - 1]}</Txt>
@@ -192,7 +195,7 @@ export default function BookingFlow() {
             <StepTitle title="Where will you meet?" sub="A café, park entrance or public venue." />
             <Row style={{ height: 54, gap: 10, paddingHorizontal: 16, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: b.placeErr ? colors.red : colors.ink }}>
               <Icon name="map-pin" size={18} color={colors.gray600} />
-              <TextInput value={b.place} onChangeText={(t) => upd({ place: t, placeErr: false })} accessibilityLabel="Meeting place" placeholder="e.g. Café at Paul-Lincke-Ufer" placeholderTextColor={colors.gray400} style={[font('body'), inputReset, { flex: 1, fontSize: 16 }]} />
+              <TextInput value={b.place} onChangeText={(t) => upd({ place: t, placeErr: false })} accessibilityLabel="Meeting place" placeholder={t("e.g. Café at Paul-Lincke-Ufer")} placeholderTextColor={colors.gray400} style={[font('body'), inputReset, { flex: 1, fontSize: 16 }]} />
             </Row>
             {b.placeErr ? (
               <Row style={{ gap: 6, marginTop: 8 }}>
@@ -220,7 +223,7 @@ export default function BookingFlow() {
                 value={b.note}
                 onChangeText={(t) => upd({ note: t.slice(0, 240) })}
                 accessibilityLabel="Note"
-                placeholder={`Hi ${c.name}, I’d love to…`}
+                placeholder={t(`Hi ${c.name}, I’d love to…`)}
                 placeholderTextColor={colors.gray400}
                 multiline
                 textAlignVertical="top"
@@ -253,6 +256,7 @@ export default function BookingFlow() {
               <PriceRow l="Hourly rate" r={eur(c.rate)} />
               <PriceRow l={`${eur(c.rate)} × ${b.dur || 0} h`} r={eur(sub)} />
               <PriceRow l="Service fee (10%)" r={eur(fee)} />
+              {creditUse ? <PriceRow l="Gift credit" r={'−' + eur(creditUse)} /> : null}
               <View style={{ height: 1, backgroundColor: colors.ink }} />
               <Row style={{ justifyContent: 'space-between' }}>
                 <Txt size={16} weight={700}>Total payable</Txt>

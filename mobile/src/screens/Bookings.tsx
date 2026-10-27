@@ -5,7 +5,7 @@ import { AM, BTAB, eur, hours, ST, type BTab } from '../data';
 import { priceOf, useStore, type Booking } from '../store';
 import { bookAgain, messageCompanion, openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, H, Row, Stripes, Txt } from '../ui/primitives';
+import { Box, Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { EmptyState, Pill, PrimaryButton, StatusCover, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 
@@ -69,7 +69,7 @@ export default function Bookings() {
 }
 
 function BookingCard({ b }: { b: Booking }) {
-  const c = { id: b.cid, name: b.companionName, hue: b.hue };
+  const c = { id: b.cid, name: b.companionName, hue: b.hue, photoUrl: b.photoUrl };
   const st = ST[b.status];
   const price = eur(priceOf(b));
   const { cancelBooking, openSheet, safety } = useStore.getState();
@@ -107,7 +107,7 @@ function BookingCard({ b }: { b: Booking }) {
       <Box shadow={4} style={{ backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 22, padding: 16, gap: 14 }}>
         <Row style={{ gap: 12 }}>
           <Pressable accessibilityRole="button" accessibilityLabel={`View ${c.name}’s profile`} onPress={() => openProfile(c.id)} style={{ width: 52, height: 52, borderRadius: 16, overflow: 'hidden' }}>
-            <Stripes hue={c.hue} />
+            <Photo hue={c.hue} url={c.photoUrl} />
           </Pressable>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Txt size={16} weight={700}>{c.name}</Txt>

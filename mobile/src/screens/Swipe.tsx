@@ -7,7 +7,7 @@ import { AM, ageStr, eur } from '../data';
 import { useStore } from '../store';
 import { openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, H, PressBox, Row, Stripes, Txt } from '../ui/primitives';
+import { Box, Enter, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, useTopPad } from '../ui/common';
 
 export default function Swipe() {
@@ -74,14 +74,14 @@ export default function Swipe() {
           <View style={{ flex: 1, marginTop: 18, marginHorizontal: 22 }}>
             {nxt ? (
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 30, borderWidth: 2.5, borderColor: colors.ink, overflow: 'hidden', transform: [{ translateY: 14 }, { scale: 0.94 }] }}>
-                <Stripes hue={nxt.hue} />
+                <Photo hue={nxt.hue} url={nxt.photoUrl} />
               </View>
             ) : null}
             <Animated.View {...pan.panHandlers} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, transform: [{ translateX: dx }, { rotate }] }}>
               <Box shadow={6} style={{ flex: 1, borderRadius: 30 }}>
                 <View style={{ flex: 1, borderRadius: 30, borderWidth: 2.5, borderColor: colors.ink, overflow: 'hidden' }}>
-                  <Stripes hue={cur.hue} />
-                  <Txt kind="mono" size={10} weight={500} lh={1.4} color="rgba(17,17,17,.5)" style={{ position: 'absolute', top: 18, left: 18, right: 120 }}>{cur.photo}</Txt>
+                  <Photo hue={cur.hue} url={cur.photoUrl} />
+                  <Txt kind="mono" size={10} weight={500} lh={1.4} color="rgba(17,17,17,.5)" style={{ position: 'absolute', top: 18, left: 18, right: 120 }}>{cur.photoUrl ? '' : cur.photo}</Txt>
                   <Animated.View style={[stamp, { left: 20, backgroundColor: colors.mint, opacity: likeOp, transform: [{ rotate: '-12deg' }] }]}>
                     <H size={28}>LIKE</H>
                   </Animated.View>
