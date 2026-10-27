@@ -80,6 +80,8 @@ jobs:
           set -o pipefail
           ARGS=()
           [ -n "$ADMIN_EMAILS" ] && ARGS+=(--var "ADMIN_EMAILS:$ADMIN_EMAILS")
+          [ -z "$ADMIN_EMAILS" ] && echo "::warning::Variable ADMIN_EMAILS is not set (Settings → Secrets and variables → Actions → Variables tab)."
+          [ -n "$BREVO_API_KEY" ] && [ -z "$EMAIL_FROM_ADDRESS" ] && echo "::warning::BREVO_API_KEY is set but the variable EMAIL_FROM_ADDRESS is not (Variables tab, not Secrets), so on-screen test login codes stay on."
           if [ -n "$BREVO_API_KEY" ] && [ -n "$EMAIL_FROM_ADDRESS" ]; then
             # Real email login is configured: turn off on-screen test codes (and enable admin logins).
             ARGS+=(--var "EMAIL_FROM_ADDRESS:$EMAIL_FROM_ADDRESS" --var "DEV_LOGIN_CODES:false")
