@@ -109,7 +109,7 @@ jobs:
           for i in 1 2 3 4 5 6; do
             BODY=$(curl -sf "$URL/" || true)
             if echo "$BODY" | grep -q '"ok":true'; then
-              echo "::notice::API is live at $URL — $BODY"
+              echo "::notice::API is live at $URL — $BODY — public companions: $(curl -sf "$URL/companions" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).length))")"
               exit 0
             fi
             sleep 10

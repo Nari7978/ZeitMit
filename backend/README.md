@@ -26,7 +26,7 @@ node scripts/smoke.mjs         # end-to-end checks against the local API
 ## Test-mode features (switch off before real users)
 - **`DEV_LOGIN_CODES = "true"`** in `wrangler.toml`: login codes come back in the API response instead of by email, and admin access is disabled. Add a free [Resend](https://resend.com) key (`npx wrangler secret put RESEND_API_KEY`) and set it to `"false"` to go live.
 - **Payments are simulated:** bookings are marked "held" without charging anyone. Places to wire in Stripe are marked `TODO(payments)`.
-- **Demo companions:** `migrations/0002_seed_demo.sql` adds the eight sample companions (logins `<name>@demo.zeitmit.app`).
+- **Demo companions:** `migrations/0002_seed_demo.sql` adds eight sample companions (logins `<name>@demo.zeitmit.app`) and `0006_remove_demo_companions.sql` removes them again, so the live app starts empty. For local testing add them back with `npm run seed:demo:local` (the smoke test needs them).
 - **Safety SMS:** missed check-ins and SOS raise in-app alerts and show in the admin API; texting the trusted contact is `TODO(sms)`.
 
 ## API overview

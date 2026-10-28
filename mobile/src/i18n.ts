@@ -360,6 +360,17 @@ const DE: Record<string, string> = {
   'Enter your age. You must be 18 or older.': 'Gib dein Alter ein. Du musst mindestens 18 sein.',
   'Choose how you identify.': 'Wähle, wie du dich identifizierst.',
   'Pronouns are limited to 20 characters.': 'Pronomen sind auf 20 Zeichen begrenzt.',
+  // Launch, no companions yet
+  'JUST LAUNCHED IN BERLIN': 'GERADE IN BERLIN GESTARTET',
+  'The first companions are joining now': 'Die ersten Begleitpersonen kommen gerade dazu',
+  'We check every profile and ID before it goes live, so it takes a little while. We’ll show new companions here as soon as they’re approved.': 'Wir prüfen jedes Profil und jeden Ausweis, bevor es live geht. Das dauert etwas. Neue Begleitpersonen erscheinen hier, sobald sie bestätigt sind.',
+  'Become one of the first': 'Sei eine*r der Ersten',
+  'Your companion profile is in review.': 'Dein Begleitprofil wird geprüft.',
+  'No companions in Berlin yet': 'Noch keine Begleitpersonen in Berlin',
+  'We’re reviewing the first profiles now. Check back soon, or become one of the first companions.': 'Wir prüfen gerade die ersten Profile. Schau bald wieder vorbei oder werde selbst eine der ersten Begleitpersonen.',
+  'Become a companion': 'Begleitperson werden',
+  'No companions yet': 'Noch keine Begleitpersonen',
+  'We’re reviewing the first profiles now. Check back soon.': 'Wir prüfen gerade die ersten Profile. Schau bald wieder vorbei.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */

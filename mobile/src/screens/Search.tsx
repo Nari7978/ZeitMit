@@ -39,6 +39,7 @@ export default function Search() {
   }, [params.focus]);
 
   const list = useStore((s) => s.companions);
+  const loading = useStore((s) => s.loading);
   const results = filtered(list, query, f, sort);
   const count = filterCount(f);
   const chips = activeChips(f);
@@ -165,7 +166,11 @@ export default function Search() {
               ))}
             </View>
           ) : (
-            <EmptyState icon="search-x" tilt={-8} title="No one matches all of that" body="Try a wider price range, another day, or fewer languages." action={<SecondaryButton label="Clear filters" onPress={clearAll} style={{ marginTop: 8 }} />} />
+            list.length || loading ? (
+              <EmptyState icon="search-x" tilt={-8} title="No one matches all of that" body="Try a wider price range, another day, or fewer languages." action={<SecondaryButton label="Clear filters" onPress={clearAll} style={{ marginTop: 8 }} />} />
+            ) : (
+              <EmptyState icon="users-round" tilt={-8} title="No companions in Berlin yet" body="We’re reviewing the first profiles now. Check back soon, or become one of the first companions." action={<SecondaryButton label="Become a companion" onPress={() => router.push('/become')} style={{ marginTop: 8 }} />} />
+            )
           )}
         </Enter>
       </ScrollView>

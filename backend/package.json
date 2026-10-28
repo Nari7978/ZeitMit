@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply zeitmit --local",
     "db:migrate:remote": "wrangler d1 migrations apply zeitmit --remote",
-    "seed:gen": "node scripts/gen-seed.mjs"
+    "seed:gen": "node scripts/gen-seed.mjs",
+    "seed:demo:local": "wrangler d1 execute DB --local --file migrations/0002_seed_demo.sql"
   },
   "dependencies": {
     "hono": "^4.13.14"

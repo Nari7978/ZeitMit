@@ -133,14 +133,18 @@ export default function Swipe() {
               <Icon name="party-popper" size={40} color={colors.white} />
             </Box>
           </Enter>
-          <H size={30} ls={-0.03} align="center">That’s everyone for now</H>
-          <Txt size={15} color={colors.gray800} align="center">New companions join Berlin every week.</Txt>
+          <H size={30} ls={-0.03} align="center">{C.length ? 'That’s everyone for now' : 'No companions yet'}</H>
+          <Txt size={15} color={colors.gray800} align="center">{C.length ? 'New companions join Berlin every week.' : 'We’re reviewing the first profiles now. Check back soon.'}</Txt>
+          {!C.length ? (
+            <PressBox shadow={4} fx="push" onPress={() => router.back()} style={[endBtn, { marginTop: 10 }]}><Txt size={15} weight={700}>Back to Discover</Txt></PressBox>
+          ) : (
           <Row style={{ gap: 10, marginTop: 10 }}>
             <PressBox shadow={4} fx="push" onPress={() => setI(0)} style={endBtn}><Txt size={15} weight={700}>Start again</Txt></PressBox>
             <PressBox shadow={4} fx="push" onPress={() => { router.back(); useStore.getState().openSheet('saved'); }} style={[endBtn, { backgroundColor: colors.ink }]}>
               <Txt size={15} weight={700} color={colors.white}>See who I liked</Txt>
             </PressBox>
           </Row>
+          )}
         </View>
       )}
     </View>

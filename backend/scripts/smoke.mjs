@@ -1,5 +1,6 @@
 // End-to-end smoke test against a running API (local `npm run dev` or the deployed Worker).
-// Needs DEV_LOGIN_CODES = "true". Usage: node scripts/smoke.mjs [baseUrl]
+// Needs DEV_LOGIN_CODES = "true" and the demo companions (`npm run seed:demo:local`).
+// Usage: node scripts/smoke.mjs [baseUrl]
 // Admin steps sign a session with JWT_SECRET (defaults to the local .dev.vars value).
 import crypto from 'node:crypto';
 const BASE = process.argv[2] ?? 'http://localhost:8787';

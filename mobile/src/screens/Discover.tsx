@@ -7,7 +7,8 @@ import { useStore } from '../store';
 import { openProfile, searchWith } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, PressBox, Row, Shimmer, Stripes, Txt, Photo } from '../ui/primitives';
-import { SaveButton, SectionHead, StatusCover, TextButton, useTopPad } from '../ui/common';
+import { PrimaryButton, SaveButton, SectionHead, StatusCover, TextButton, useTopPad } from '../ui/common';
+import { openSettings } from './Settings';
 import { useNavBottom } from '../ui/chrome';
 import { oklch } from '../lib/oklch';
 
@@ -30,6 +31,8 @@ export default function Discover() {
   const C = useStore((s) => s.companions);
   const saved = useStore((s) => s.saved);
   const featured = C.slice(0, 5);
+  // Right after launch there may be no approved companions yet.
+  const hasCompanions = loading || C.length > 0;
   const walkers = C.filter((c) => c.acts.includes('walks'));
   const dateList = C.filter(isDateCompanion);
   // "Similar interests": interests of the companions you saved, matched against everyone else.
@@ -111,12 +114,18 @@ export default function Discover() {
           </ScrollView>
 
           {/* Featured */}
-          <SectionHead title="Featured this week" onSeeAll={() => router.navigate('/search')} style={{ marginTop: 24, marginBottom: 14 }} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={266} decelerationRate="fast" contentContainerStyle={{ gap: 14, paddingHorizontal: 20, paddingBottom: 18 }}>
-            {loading
-              ? [0, 1].map((i) => <Shimmer key={i} style={{ width: 252, height: 336, borderRadius: 24 }} />)
-              : featured.map((c) => <FeaturedCard key={c.id} c={c} />)}
-          </ScrollView>
+          {hasCompanions ? (
+            <>
+              <SectionHead title="Featured this week" onSeeAll={() => router.navigate('/search')} style={{ marginTop: 24, marginBottom: 14 }} />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={266} decelerationRate="fast" contentContainerStyle={{ gap: 14, paddingHorizontal: 20, paddingBottom: 18 }}>
+                {loading
+                  ? [0, 1].map((i) => <Shimmer key={i} style={{ width: 252, height: 336, borderRadius: 24 }} />)
+                  : featured.map((c) => <FeaturedCard key={c.id} c={c} />)}
+              </ScrollView>
+            </>
+          ) : (
+            <LaunchCard />
+          )}
 
           {/* Swipe mode + Gift */}
           <Row style={{ gap: 10, paddingHorizontal: 20, paddingBottom: 26, alignItems: 'stretch' }}>
@@ -188,12 +197,14 @@ export default function Discover() {
                       <View key={w.id} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: '#2A2142', marginRight: -8, overflow: 'hidden' }}><Photo hue={w.hue} url={w.photoUrl} /></View>
                     ))}
                   </Row>
-                  <Txt size={13} color="rgba(255,255,255,.85)" style={{ marginLeft: 8 }}>{walkers.length} companions who know the quiet corners</Txt>
+                  {walkers.length ? <Txt size={13} color="rgba(255,255,255,.85)" style={{ marginLeft: 8 }}>{walkers.length} companions who know the quiet corners</Txt> : null}
                 </Row>
               </View>
             </Pressable>
           </View>
 
+          {hasCompanions ? (
+            <>
           {/* Available today */}
           <SectionHead dot title="Available today" onSeeAll={() => searchWith({ when: 'today' })} style={{ marginTop: 32, marginBottom: 14 }} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingHorizontal: 20, paddingBottom: 4 }}>
@@ -282,6 +293,9 @@ export default function Discover() {
             })}
           </View>
 
+            </>
+          ) : null}
+
           {/* Respectful by design */}
           <Row style={{ marginTop: 28, marginHorizontal: 20, padding: 18, borderRadius: 20, backgroundColor: colors.lilac, gap: 14, alignItems: 'flex-start' }}>
             <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' }}>
@@ -290,7 +304,7 @@ export default function Discover() {
             <View style={{ flex: 1, gap: 6 }}>
               <Txt size={15} weight={700}>Respectful by design</Txt>
               <Txt size={13} lh={1.5} color={colors.gray800}>Every meeting is in a public place, booked and paid through ZeitMit, and covered by our community guidelines.</Txt>
-              <TextButton label="How we keep it safe →" size={13} onPress={() => useStore.getState().showToast('Safety centre opens here (prototype)')} style={{ alignSelf: 'flex-start', paddingVertical: 2 }} />
+              <TextButton label="How we keep it safe →" size={13} onPress={() => openSettings('guidelines')} style={{ alignSelf: 'flex-start', paddingVertical: 2 }} />
             </View>
           </Row>
         </Enter>
@@ -350,5 +364,22 @@ function FeaturedCard({ c }: { c: Companion }) {
         </View>
       </Pressable>
     </Enter>
+  );
+}
+
+/** Shown on Discover while no companion has been approved yet. */
+function LaunchCard() {
+  const status = useStore((s) => s.companionStatus);
+  return (
+    <Box shadow={4} style={{ marginTop: 24, marginHorizontal: 20, marginBottom: 26, padding: 20, borderRadius: 24, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 10 }}>
+      <Txt kind="mono" size={11} weight={600} ls={0.08} color={colors.roseDeep}>JUST LAUNCHED IN BERLIN</Txt>
+      <H size={24} lh={1.12} ls={-0.025}>The first companions are joining now</H>
+      <Txt size={14} lh={1.5} color={colors.gray800}>We check every profile and ID before it goes live, so it takes a little while. We’ll show new companions here as soon as they’re approved.</Txt>
+      {status === 'none' || status === 'rejected' ? (
+        <PrimaryButton label="Become one of the first" onPress={() => router.push('/become')} style={{ marginTop: 6 }} />
+      ) : status === 'pending' ? (
+        <Txt size={13} weight={600} color={colors.gray600}>Your companion profile is in review.</Txt>
+      ) : null}
+    </Box>
   );
 }
