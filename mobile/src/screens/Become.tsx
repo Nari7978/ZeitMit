@@ -19,7 +19,12 @@ type Draft = {
   name: string; showAge: boolean; about: string; aboutErr: boolean; interests: string[]; acts: ActId[]; langs: string[];
   rate: number; days: string[]; wins: string[]; ok: string[]; adult: boolean; idv: boolean; rules: boolean;
   photoId?: string; photoUrl?: string; idPhotoId?: string; tagline: string;
+  age: string; gender?: Gender; pronouns: string;
 };
+
+type Gender = 'w' | 'm' | 'nb';
+export const GENDERS: [Gender, string][] = [['w', 'Woman'], ['m', 'Man'], ['nb', 'Non-binary']];
+const ageOk = (a: string) => /^\d{2}$/.test(a) && +a >= 18 && +a <= 99;
 
 const HOW: [string, string, string][] = [
   ['user-round', 'Create your profile', 'Introduce yourself through what you enjoy, not how you look.'],
@@ -37,7 +42,7 @@ export default function Become() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(false);
-  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false, tagline: '' });
+  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false, tagline: '', age: '', pronouns: '' });
   const [uploading, setUploading] = useState<'photo' | 'id' | null>(null);
   const upload = async (kind: 'companion' | 'id', source: 'library' | 'camera') => {
     setUploading(kind === 'id' ? 'id' : 'photo');
@@ -53,10 +58,10 @@ export default function Become() {
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
   const footPad = Math.max(30, insets.bottom + 8);
 
-  const valid = [true, !!b.name.trim() && b.about.trim().length >= 40, b.acts.length > 0 && b.langs.length > 0, b.days.length > 0 && b.wins.length > 0, b.adult && b.idv && b.rules, true][step];
+  const valid = [true, !!b.name.trim() && b.about.trim().length >= 40 && ageOk(b.age) && !!b.gender, b.acts.length > 0 && b.langs.length > 0, b.days.length > 0 && b.wins.length > 0, b.adult && b.idv && b.rules, true][step];
   const next = () => {
     if (!valid && step !== 1) return;
-    if (step === 1 && b.about.trim().length < 40) return upd({ aboutErr: true });
+    if (step === 1 && (b.about.trim().length < 40 || !ageOk(b.age) || !b.gender || !b.name.trim())) return upd({ aboutErr: true });
     if (step < 5) {
       upd({ aboutErr: false });
       return setStep(step + 1);
@@ -64,7 +69,7 @@ export default function Become() {
     if (busy) return;
     setBusy(true);
     void useStore.getState()
-      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline })
+      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline, age: +b.age, gender: b.gender!, pronouns: b.pronouns.trim() || undefined })
       .then((ok) => { setBusy(false); if (ok) setDone(true); });
   };
 
@@ -159,6 +164,26 @@ export default function Become() {
             <Box shadow={3} style={{ borderRadius: 14 }}>
               <TextInput value={b.name} onChangeText={(t) => upd({ name: t })} accessibilityLabel="Display name" style={[font('body'), input, { height: 52, borderWidth: 2 }]} />
             </Box>
+            <Row style={{ gap: 12, marginTop: 16 }}>
+              <View style={{ width: 96 }}>
+                <Label>Age</Label>
+                <Box shadow={3} style={{ borderRadius: 14 }}>
+                  <TextInput value={b.age} onChangeText={(v) => upd({ age: v.replace(/\D/g, '').slice(0, 2) })} keyboardType="number-pad" accessibilityLabel="Age" placeholder="25" placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 52, borderWidth: 2, borderColor: b.aboutErr && !ageOk(b.age) ? colors.red : colors.ink }]} />
+                </Box>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Label>Pronouns (optional)</Label>
+                <Box shadow={3} style={{ borderRadius: 14 }}>
+                  <TextInput value={b.pronouns} onChangeText={(v) => upd({ pronouns: v.slice(0, 20) })} accessibilityLabel="Pronouns" placeholder={t('e.g. she/her')} placeholderTextColor={colors.gray400} autoCapitalize="none" style={[font('body'), input, { height: 52, borderWidth: 2 }]} />
+                </Box>
+              </View>
+            </Row>
+            {b.aboutErr && b.age && !ageOk(b.age) ? <Txt size={12} color={colors.red} style={{ marginTop: 6 }}>You must be 18 or older to become a companion.</Txt> : null}
+            <Label style={{ marginTop: 16 }}>I am a</Label>
+            <Row style={{ gap: 8 }}>
+              {GENDERS.map(([k, l]) => <Chip key={k} label={l} height={44} radius={12} weight={600} style={{ flex: 1 }} on={b.gender === k} onPress={() => upd({ gender: k })} />)}
+            </Row>
+            {b.aboutErr && !b.gender ? <Txt size={12} color={colors.red} style={{ marginTop: 6 }}>Choose how you identify. Customers can filter by it.</Txt> : null}
             <Box shadow={3} style={{ marginTop: 16, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Txt size={14} weight={600}>Show my age</Txt>
@@ -178,10 +203,10 @@ export default function Become() {
               placeholderTextColor={colors.gray400}
               multiline
               textAlignVertical="top"
-              style={[font('body'), input, { height: 130, paddingTop: 14, borderWidth: 1.5, borderColor: b.aboutErr ? colors.red : colors.ink, fontSize: 15, lineHeight: 22 }]}
+              style={[font('body'), input, { height: 130, paddingTop: 14, borderWidth: 1.5, borderColor: b.aboutErr && b.about.trim().length < 40 ? colors.red : colors.ink, fontSize: 15, lineHeight: 22 }]}
             />
             <Row style={{ justifyContent: 'space-between', marginTop: 6 }}>
-              {b.aboutErr ? <Txt size={12} color={colors.red}>Write at least 40 characters.</Txt> : <View />}
+              {b.aboutErr && b.about.trim().length < 40 ? <Txt size={12} color={colors.red}>Write at least 40 characters.</Txt> : <View />}
               <Txt size={12} color={colors.gray600}>{b.about.length}/400</Txt>
             </Row>
             <Label style={{ marginTop: 18, marginBottom: 8 }}>Interests</Label>
@@ -254,7 +279,8 @@ export default function Become() {
             <StepTitle title="Review and submit" />
             <Box shadow={4} style={{ backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 16 }}>
               {[
-                ['Name · age', `${b.name} · ${b.showAge ? 'Shown' : 'Hidden'}`],
+                ['Name · age', `${b.name}, ${b.age} · ${t(b.showAge ? 'Shown' : 'Hidden')}`],
+                ['Gender', t(GENDERS.find(([k]) => k === b.gender)?.[1] ?? '—') + (b.pronouns.trim() ? ` · ${b.pronouns.trim()}` : '')],
                 ['About', b.about],
                 ['Interests', b.interests.join(', ') || '—'],
                 ['Activities', b.acts.map((a) => AM[a].label).join(', ') || '—'],

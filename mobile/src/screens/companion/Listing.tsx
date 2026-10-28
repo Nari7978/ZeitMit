@@ -9,7 +9,7 @@ import { openProfile, toCustomerMode } from '../../nav';
 import { Icon } from '../../ui/Icon';
 import { Box, Chip, Photo, Row, Toggle, Txt } from '../../ui/primitives';
 import { PrimaryButton, SecondaryButton, TextButton } from '../../ui/common';
-import { RateStepper } from '../Become';
+import { GENDERS, RateStepper } from '../Become';
 import { CompShell } from './Shell';
 import { t } from '../../i18n';
 
@@ -17,7 +17,7 @@ const LEVELS = ['Native', 'Fluent', 'Conversational', 'Basic'];
 
 type Draft = {
   photoUrl: string | null; tagline: string; about: string; interests: string[]; langs: Record<string, string>; ok: string[];
-  area: string; showAge: boolean; lgbtq: boolean;
+  area: string; showAge: boolean; lgbtq: boolean; age: string; gender: 'w' | 'm' | 'nb'; pronouns: string;
 };
 
 export default function Listing() {
@@ -32,10 +32,11 @@ export default function Listing() {
   const upd = (o: Partial<Draft>) => { setD((x) => (x ? { ...x, ...o } : x)); setDirty(true); };
 
   useEffect(() => {
-    api<Companion & { bio: string; showAge: boolean }>('GET', '/companion')
+    api<Companion & { bio: string; showAge: boolean; ageValue: number | null }>('GET', '/companion')
       .then((c) => setD({
         photoUrl: c.photoUrl ?? null, tagline: c.tagline, about: c.bio, interests: c.interests, ok: c.ok, area: c.area,
         langs: Object.fromEntries(c.langs), showAge: c.showAge, lgbtq: c.lgbtq,
+        age: c.ageValue ? String(c.ageValue) : '', gender: c.g, pronouns: c.pron ?? '',
       }))
       .catch((e) => showToast(e.message));
   }, [showToast]);
@@ -56,10 +57,12 @@ export default function Listing() {
     if (!d) return;
     if (d.about.trim().length < 40) return showToast('Write at least 40 characters about yourself.');
     if (!Object.keys(d.langs).length) return showToast('Pick at least one language.');
+    if (!/^\d{2}$/.test(d.age) || +d.age < 18) return showToast('Enter your age. You must be 18 or older.');
     setBusy('save');
     try {
       await api('PATCH', '/companion', {
         tagline: d.tagline, about: d.about, interests: d.interests, ok: d.ok, area: d.area, showAge: d.showAge, lgbtq: d.lgbtq,
+        age: +d.age, gender: d.gender, pronouns: d.pronouns,
         langs: Object.keys(d.langs), levels: d.langs,
       });
       setDirty(false);
@@ -114,6 +117,20 @@ export default function Listing() {
             <Txt size={12} weight={600} color={colors.gray600}>About</Txt>
             <TextInput value={d.about} onChangeText={(t) => upd({ about: t.slice(0, 400) })} multiline textAlignVertical="top" accessibilityLabel="About" style={[...input, { height: 120, paddingTop: 12, lineHeight: 21 }]} />
             <Txt size={12} color={colors.gray600} align="right">{d.about.length}/400</Txt>
+            <Row style={{ gap: 10 }}>
+              <View style={{ width: 80, gap: 6 }}>
+                <Txt size={12} weight={600} color={colors.gray600}>Age</Txt>
+                <TextInput value={d.age} onChangeText={(v) => upd({ age: v.replace(/\D/g, '').slice(0, 2) })} keyboardType="number-pad" accessibilityLabel="Age" style={[...input, { height: 46 }]} />
+              </View>
+              <View style={{ flex: 1, gap: 6 }}>
+                <Txt size={12} weight={600} color={colors.gray600}>Pronouns (optional)</Txt>
+                <TextInput value={d.pronouns} onChangeText={(v) => upd({ pronouns: v.slice(0, 20) })} placeholder={t('e.g. she/her')} placeholderTextColor={colors.gray400} autoCapitalize="none" accessibilityLabel="Pronouns" style={[...input, { height: 46 }]} />
+              </View>
+            </Row>
+            <Txt size={12} weight={600} color={colors.gray600}>I am a</Txt>
+            <Row style={{ gap: 8 }}>
+              {GENDERS.map(([k, l]) => <Chip key={k} label={l} height={40} radius={12} weight={600} style={{ flex: 1 }} on={d.gender === k} onPress={() => upd({ gender: k })} />)}
+            </Row>
             <Txt size={12} weight={600} color={colors.gray600}>Area</Txt>
             <TextInput value={d.area} onChangeText={(t) => upd({ area: t.slice(0, 40) })} placeholder={t("e.g. Kreuzberg")} placeholderTextColor={colors.gray400} accessibilityLabel="Area" style={[...input, { height: 46 }]} />
           </Box>

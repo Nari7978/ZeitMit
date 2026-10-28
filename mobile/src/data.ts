@@ -137,6 +137,7 @@ export const eur = (n: number) => {
   const v = Math.round(n * 100) / 100;
   return '€' + (Number.isInteger(v) ? v : v.toFixed(2));
 };
+export const memberSince = (unix: number) => 'Member since ' + new Date(unix * 1000).getFullYear();
 export const hours = (d: number) => t(d + (d === 1 ? ' hour' : ' hours'));
 export const ageStr = (c: { age: number | null }) => (c.age ? ', ' + c.age : '');
 export const ratingStr = (c: Companion) => (c.rating ? c.rating.toFixed(1) : 'New');

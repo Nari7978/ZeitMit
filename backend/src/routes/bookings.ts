@@ -21,8 +21,11 @@ const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; ph
 });
 
 /** Booking as the companion sees it (never includes the meet code). */
-const forCompanion = (b: BookingRow & { customer_name?: string; avatar_id?: string | null }) => ({
+type CustomerInfo = { customer_name?: string; avatar_id?: string | null; customer_bio?: string | null; customer_id_status?: string; customer_since?: number };
+const forCompanion = (b: BookingRow & CustomerInfo) => ({
   id: b.id, who: b.customer_name || 'Customer', customerId: b.customer_id, avatarUrl: b.avatar_id ? `/photos/${b.avatar_id}` : null, act: b.activity, startsAt: b.starts_at,
+  // What a companion may know about who is booking: never the email or documents.
+  customer: { bio: b.customer_bio ?? '', verified: b.customer_id_status === 'approved', since: b.customer_since ?? null },
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.note, status: b.status, pay: b.pay_status,
   payout: b.subtotal,
 });
@@ -225,9 +228,10 @@ export const companionBookings = new Hono<AppEnv>();
 
 companionBookings.get('/', async (c) => {
   const r = await c.env.DB.prepare(
-    `SELECT b.*, u.name AS customer_name, u.avatar_id FROM bookings b JOIN users u ON u.id = b.customer_id
+    `SELECT b.*, u.name AS customer_name, u.avatar_id, u.bio AS customer_bio, u.id_status AS customer_id_status, u.created_at AS customer_since
+     FROM bookings b JOIN users u ON u.id = b.customer_id
      WHERE b.companion_id = ? AND b.paid = 1 ORDER BY b.starts_at LIMIT 200`,
-  ).bind(c.get('user').id).all<BookingRow & { customer_name: string }>();
+  ).bind(c.get('user').id).all<BookingRow & CustomerInfo>();
   const all = r.results.map(forCompanion);
   const held = r.results.filter((b) => b.status === 'confirmed' && b.pay_status === 'held').reduce((a, b) => a + b.subtotal, 0);
   const released = r.results.filter((b) => b.pay_status === 'released').reduce((a, b) => a + b.subtotal, 0);

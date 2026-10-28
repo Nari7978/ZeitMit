@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useIsFocused } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { toCustomerMode } from '../../nav';
 import { Icon } from '../../ui/Icon';
 import { Enter, H, Row, tint, Txt } from '../../ui/primitives';
 import { StatusCover } from '../../ui/common';
+import { photoUri } from '../../lib/photos';
 import { useNavBottom } from '../../ui/chrome';
 
 /** Black header + scroll body shared by every companion-mode tab. */
@@ -41,11 +42,13 @@ export function CompShell({ title, children, pad = true }: { title: string; chil
 }
 
 /** Customer initial in a tinted rounded square. */
-export function Initial({ who, hue, size = 48, radius = 16, fontSize = 18 }: { who: string; hue: number; size?: number; radius?: number; fontSize?: number }) {
+export function Initial({ who, hue, size = 48, radius = 16, fontSize = 18, url }: { who: string; hue: number; size?: number; radius?: number; fontSize?: number; url?: string | null }) {
   const t = tint(hue);
+  const uri = photoUri(url);
   return (
-    <View style={{ width: size, height: size, borderRadius: radius, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ width: size, height: size, borderRadius: radius, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
       <Txt size={fontSize} weight={700} color={t.fg}>{who[0]}</Txt>
+      {uri ? <Image source={{ uri }} resizeMode="cover" style={StyleSheet.absoluteFill} accessibilityIgnoresInvertColors /> : null}
     </View>
   );
 }

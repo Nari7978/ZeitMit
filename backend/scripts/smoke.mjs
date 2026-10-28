@@ -106,6 +106,10 @@ const K = kai.token;
 r = await call('GET', '/companion/bookings', K);
 ok(r.data.requests.some((b) => b.id === bookingId && b.who === 'Mira Hoffmann'), 'companion sees the request');
 ok(!JSON.stringify(r.data).includes('"otp"'), 'companion never sees the meet code');
+{
+  const req = r.data.requests.find((b) => b.id === bookingId);
+  ok(req?.customer?.verified === true && typeof req.customer.since === 'number' && !JSON.stringify(req).includes('@'), 'request shows customer ID-verified badge, never the email');
+}
 
 r = await call('POST', `/companion/bookings/${bookingId}/accept`, K);
 ok(r.status === 200, 'companion accepts');
@@ -197,14 +201,24 @@ ok(r.data.saved.includes('demo_lena') && r.data.name === 'Mira Hoffmann', 'saved
 
 // Become a companion
 const apply = { name: 'Mira', about: 'Designer, new-ish to Berlin. Into galleries, good coffee and long walks.', acts: ['coffee', 'culture'], langs: ['German', 'English'], levels: { German: 'Native' }, rate: 28, days: ['Sat', 'Sun'], wins: ['pm'], adult: true, rules: true, tagline: 'Galleries and good coffee' };
-r = await call('POST', '/companion/apply', T, apply);
-ok(r.status === 400, 'application needs an ID photo');
 r = await call('POST', '/companion/apply', T, { ...apply, idPhotoId: idPhoto.id });
+ok(r.status === 400 && /age/i.test(r.data.error), 'application needs an age');
+r = await call('POST', '/companion/apply', T, { ...apply, idPhotoId: idPhoto.id, age: 17, gender: 'w' });
+ok(r.status === 400, 'under-18 application rejected');
+r = await call('POST', '/companion/apply', T, { ...apply, idPhotoId: idPhoto.id, age: 27 });
+ok(r.status === 400 && /identify/.test(r.data.error), 'application needs a gender');
+r = await call('POST', '/companion/apply', T, { ...apply, age: 27, gender: 'w' });
+ok(r.status === 400, 'application needs an ID photo');
+r = await call('POST', '/companion/apply', T, { ...apply, idPhotoId: idPhoto.id, age: 27, gender: 'w', pronouns: 'she/her' });
 ok(r.status === 201 && r.data.status === 'pending', 'companion application goes to review');
 r = await call('PATCH', '/companion', T, { tagline: 'Slow museums, fast coffee', interests: ['Art', 'Coffee'], langs: ['German'], levels: { German: 'Native' }, area: 'Neukölln' });
 ok(r.status === 200, 'companion edits listing');
 r = await call('GET', '/companion', T);
 ok(r.data.tagline === 'Slow museums, fast coffee' && r.data.langs[0][1] === 'Native' && r.data.area === 'Neukölln', 'listing edits saved');
+ok(r.data.g === 'w' && r.data.ageValue === 27 && r.data.pron === 'she/her', 'gender, age and pronouns saved');
+r = await call('PATCH', '/companion', T, { gender: 'nb', age: 28, pronouns: '' });
+r = await call('GET', '/companion', T);
+ok(r.data.g === 'nb' && r.data.ageValue === 28 && !r.data.pron, 'gender, age and pronouns editable');
 r = await call('GET', '/companions');
 ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not public');
 

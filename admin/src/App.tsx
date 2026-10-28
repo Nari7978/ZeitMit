@@ -193,6 +193,7 @@ function IdChecks({ say, refresh }: Ctx) {
 type Applicant = {
   id: string; name: string; email: string; ageValue: number | null; area: string; tagline: string; bio: string; rate: number;
   interests: string[]; langs: [string, string][]; acts: string[]; ok: string[]; photoUrl: string | null; idPhotoUrl: string | null; status: string;
+  g: 'w' | 'm' | 'nb'; pron?: string;
 };
 
 function Companions({ say, refresh }: Ctx) {
@@ -224,7 +225,7 @@ function Companions({ say, refresh }: Ctx) {
                   <h2 style={{ fontSize: 24 }}>{a.name}{a.ageValue ? `, ${a.ageValue}` : ''}</h2>
                   <span className="muted small">{a.email}</span>
                 </div>
-                <div className="small"><b>{eur(a.rate * 100)}/h</b> · {a.area} · “{a.tagline}”</div>
+                <div className="small"><b>{eur(a.rate * 100)}/h</b> · {({ w: 'Woman', m: 'Man', nb: 'Non-binary' } as const)[a.g]}{a.pron ? ` (${a.pron})` : ''} · {a.area} · “{a.tagline}”</div>
                 <div className="small" style={{ lineHeight: 1.55 }}>{a.bio}</div>
                 <div>{a.acts.map((x) => <span key={x} className="pill">{x}</span>)}</div>
                 <div className="small muted">Languages: {a.langs.map(([l, lv]) => `${l} (${lv})`).join(', ') || '—'} · Interests: {a.interests.join(', ') || '—'} · Boundaries: {a.ok.join(', ') || '—'}</div>

@@ -1,6 +1,6 @@
 import { View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, eur } from '../../data';
+import { AM, eur, memberSince } from '../../data';
 import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, Enter, Row, Txt } from '../../ui/primitives';
@@ -16,9 +16,12 @@ export default function Requests() {
         <Enter key={r.id}>
           <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
             <Row style={{ gap: 12 }}>
-              <Initial who={r.who} hue={hueOf(r.customerId)} />
+              <Initial who={r.who} hue={hueOf(r.customerId)} url={r.avatarUrl} />
               <View style={{ flex: 1 }}>
-                <Txt size={16} weight={700}>{r.who}</Txt>
+                <Row style={{ gap: 6 }}>
+                  <Txt size={16} weight={700}>{r.who}</Txt>
+                  {r.customer?.verified ? <Icon name="badge-check" size={16} color={colors.green} /> : null}
+                </Row>
                 <Row style={{ gap: 5 }}>
                   <Icon name={AM[r.act].icon} size={14} color={colors.gray600} />
                   <Txt size={13} color={colors.gray600}>{actLine(r.act, r.dur)}</Txt>
@@ -26,6 +29,14 @@ export default function Requests() {
               </View>
               <Pill label="New" bg={colors.blush} fg={colors.ink} height={24} />
             </Row>
+            {r.customer ? (
+              <View style={{ gap: 4 }}>
+                <Txt size={12} color={colors.gray600}>
+                  {r.customer.verified ? 'ID verified' : 'ID not verified'}{r.customer.since ? ' · ' + memberSince(r.customer.since) : ''}
+                </Txt>
+                {r.customer.bio ? <Txt size={13} lh={1.45} color={colors.gray800} numberOfLines={4}>{r.customer.bio}</Txt> : null}
+              </View>
+            ) : null}
             <Row style={{ gap: 16 }}>
               <Row style={{ gap: 6 }}><Icon name="calendar" size={15} color={colors.gray600} /><Txt size={13}>{r.day}</Txt></Row>
               <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{r.time}</Txt></Row>

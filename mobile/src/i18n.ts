@@ -346,10 +346,27 @@ const DE: Record<string, string> = {
   'Add a photo of your ID and a selfie holding it.': 'Füge ein Foto deines Ausweises und ein Selfie mit dem Ausweis hinzu.',
   'Upload the photos again, please.': 'Bitte lade die Fotos noch einmal hoch.',
   'ID check not approved': 'Ausweisprüfung nicht bestätigt',
+  // Profile details
+  'Age': 'Alter',
+  'Pronouns (optional)': 'Pronomen (optional)',
+  'e.g. she/her': 'z. B. sie/ihr',
+  'I am a': 'Ich bin',
+  'Woman': 'Frau',
+  'Man': 'Mann',
+  'You must be 18 or older to become a companion.': 'Du musst mindestens 18 sein, um Begleitperson zu werden.',
+  'Choose how you identify. Customers can filter by it.': 'Wähle, wie du dich identifizierst. Kund*innen können danach filtern.',
+  'Gender': 'Geschlecht',
+  'ID not verified': 'Ausweis nicht verifiziert',
+  'Enter your age. You must be 18 or older.': 'Gib dein Alter ein. Du musst mindestens 18 sein.',
+  'Choose how you identify.': 'Wähle, wie du dich identifizierst.',
+  'Pronouns are limited to 20 characters.': 'Pronomen sind auf 20 Zeichen begrenzt.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^(.+) · Member since (\d+)$/, '{$1} · Mitglied seit $2'],
+  [/^Member since (\d+)$/, 'Mitglied seit $1'],
+  [/^(.+), (\d+) · (Shown|Hidden)$/, '$1, $2 · {$3}'],
   [/^(\d+) companions who know the quiet corners$/, '$1 Begleitpersonen, die die ruhigen Ecken kennen'],
   [/^Step (\d) of (\d) · (.+)$/, 'Schritt $1 von $2 · {$3}'],
   [/^Book (.+)$/, '{$1} buchen'],

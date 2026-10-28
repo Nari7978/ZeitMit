@@ -33,6 +33,7 @@ export type Notif = { id: string; icon: string; tone: Tone; title: string; body:
 export type CompBooking = {
   id: string; who: string; customerId: string; avatarUrl?: string | null; act: ActId; startsAt: number; day: string; time: string; full: string;
   dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number;
+  customer?: { bio: string; verified: boolean; since: number | null };
 };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
@@ -56,7 +57,7 @@ export type NewBooking = { cid: string; act: ActId; date: string; time: string; 
 export type CompanionApplication = {
   name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; langs: string[];
   rate: number; days: string[]; wins: string[]; adult: boolean; rules: boolean; idPhotoId?: string; photoId?: string; tagline?: string;
-  levels?: Record<string, string>; area?: string;
+  levels?: Record<string, string>; area?: string; age: number; gender: 'w' | 'm' | 'nb'; pronouns?: string;
 };
 
 type State = {

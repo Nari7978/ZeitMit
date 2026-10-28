@@ -22,9 +22,11 @@ function validate(b: Listing, full: boolean) {
   if (full || b.langs !== undefined) if (!b.langs?.length || !b.langs.every((l) => LANGUAGES.includes(l))) fail(400, 'Pick at least one language.');
   if (b.ok && !b.ok.every((o) => BOUNDARY_OPTIONS.includes(o))) fail(400, 'Unknown boundary option.');
   if (full || b.rate !== undefined) if (!Number.isInteger(b.rate) || b.rate! < 15 || b.rate! > 80) fail(400, 'Rate must be €15–€80 per hour.');
+  if (full || b.age !== undefined) if (!Number.isInteger(b.age) || b.age! < 18 || b.age! > 99) fail(400, 'Enter your age. You must be 18 or older.');
+  if (full || b.gender !== undefined) if (!['w', 'm', 'nb'].includes(b.gender ?? '')) fail(400, 'Choose how you identify.');
+  if (b.pronouns && b.pronouns.length > 20) fail(400, 'Pronouns are limited to 20 characters.');
   if (full) {
     if (!b.days?.length || !b.wins?.length) fail(400, 'Choose at least one day and time of day.');
-    if (b.age !== undefined && (!Number.isInteger(b.age) || b.age < 18 || b.age > 99)) fail(400, 'You must be 18 or older.');
   }
 }
 
@@ -60,7 +62,7 @@ companionProfile.post('/apply', async (c) => {
       `INSERT INTO companions (user_id, display_name, age, show_age, pronouns, gender, area, hue, tagline, bio, rate, interests, languages, activities, boundaries, lgbtq, photo_id, id_photo_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      u.id, b.name!.trim(), b.age ?? null, b.showAge === false ? 0 : 1, b.pronouns ?? null, b.gender ?? 'nb', b.area ?? 'Berlin',
+      u.id, b.name!.trim(), b.age ?? null, b.showAge === false ? 0 : 1, b.pronouns?.trim() || null, b.gender!, b.area ?? 'Berlin',
       Math.floor(Math.random() * 360), b.tagline?.trim().slice(0, 60) || interests.slice(0, 2).join(' and ') || 'New in Berlin', b.about!.trim(), b.rate!,
       JSON.stringify(interests), JSON.stringify(b.langs!.map((l) => [l, LEVELS.includes(b.levels?.[l] ?? '') ? b.levels![l] : 'Fluent'])), JSON.stringify(b.acts), JSON.stringify(b.ok ?? []), b.lgbtq ? 1 : 0,
       photo ? b.photoId! : null, b.idPhotoId!,
@@ -84,11 +86,13 @@ companionProfile.patch('/', async (c) => {
   const res = await c.env.DB.prepare(
     `UPDATE companions SET rate = COALESCE(?, rate), activities = COALESCE(?, activities), boundaries = COALESCE(?, boundaries),
        bio = COALESCE(?, bio), tagline = COALESCE(?, tagline), interests = COALESCE(?, interests), languages = COALESCE(?, languages),
-       area = COALESCE(?, area), show_age = COALESCE(?, show_age), lgbtq = COALESCE(?, lgbtq) WHERE user_id = ?`,
+       area = COALESCE(?, area), show_age = COALESCE(?, show_age), lgbtq = COALESCE(?, lgbtq),
+       age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END WHERE user_id = ?`,
   ).bind(
     b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.about?.trim() ?? null,
     b.tagline?.trim() ?? null, b.interests ? JSON.stringify(b.interests) : null, langs, b.area?.trim() ?? null,
-    b.showAge === undefined ? null : b.showAge ? 1 : 0, b.lgbtq === undefined ? null : b.lgbtq ? 1 : 0, u.id,
+    b.showAge === undefined ? null : b.showAge ? 1 : 0, b.lgbtq === undefined ? null : b.lgbtq ? 1 : 0,
+    b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, u.id,
   ).run();
   if (!res.meta.changes) fail(404, 'You don’t have a companion profile yet.');
   return c.json({ ok: true });
