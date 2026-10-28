@@ -158,6 +158,10 @@ admin.delete('/users/:id', async (c) => {
   const u = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(id).first<{ id: string; email: string }>();
   if (!u) fail(404, 'User not found.');
   const refunded = await refundOpen(c.env, 'both', id);
+  // Companions this person reviewed: their ratings are recalculated afterwards.
+  const reviewed = await c.env.DB.prepare(
+    'SELECT DISTINCT r.companion_id FROM reviews r JOIN bookings b ON b.id = r.booking_id WHERE b.customer_id = ? AND r.companion_id <> ?',
+  ).bind(id, id).all<{ companion_id: string }>();
   const mine = '(SELECT id FROM bookings WHERE customer_id = ?1 OR companion_id = ?1)';
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM conversations WHERE customer_id = ?1 OR companion_id = ?1').bind(id),
@@ -172,9 +176,8 @@ admin.delete('/users/:id', async (c) => {
     // companions, availability, saved, blocks, notifications and photos cascade.
     c.env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(id),
   ]);
-  // Ratings of companions this person reviewed change too.
-  const comps = await c.env.DB.prepare('SELECT user_id FROM companions').all<{ user_id: string }>();
-  await c.env.DB.batch(comps.results.map((x) => c.env.DB.prepare(RATING_SQL).bind(x.user_id)));
+  // D1 rejects an empty batch, so only run it when there is something to update.
+  if (reviewed.results.length) await c.env.DB.batch(reviewed.results.map((x) => c.env.DB.prepare(RATING_SQL).bind(x.companion_id)));
   return c.json({ ok: true, refunded });
 });
 
