@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
 import { notify } from './lib/notify';
-import { fail, hasContactDetails, newId, now, shouldFlag } from './lib/util';
+import { CONTACT_MSG, fail, hasContactDetails, newId, now, shouldFlag } from './lib/util';
 
 /**
  * One Durable Object per conversation. Holds the open WebSockets (hibernation API)
@@ -130,7 +130,7 @@ chat.post('/:id/messages', async (c) => {
   const body = (text ?? '').trim().slice(0, 2000);
   if (!body) fail(400, 'Message is empty.');
   if (!(await chatOpen(c.env, cv.customer_id, cv.companion_id))) fail(403, 'This chat is closed. Chats are open while you have a paid booking, and for 7 days after you meet.');
-  if (hasContactDetails(body)) fail(400, 'For everyone’s safety, phone numbers and email addresses can’t be shared in chat. Keep talking here in ZeitMit.');
+  if (hasContactDetails(body)) fail(400, CONTACT_MSG);
   const other = cv.customer_id === u.id ? cv.companion_id : cv.customer_id;
   const blocked = await c.env.DB.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').bind(other, u.id).first();
   if (blocked) fail(403, 'You can’t message this person.');

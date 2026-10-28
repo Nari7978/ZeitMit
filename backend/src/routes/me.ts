@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { fail, parseJson } from '../lib/util';
+import { CONTACT_MSG, fail, hasContactDetails, parseJson } from '../lib/util';
 
 export type Prefs = {
   pushMessages: boolean; pushBookings: boolean; emailUpdates: boolean; marketing: boolean;
@@ -75,6 +75,7 @@ me.patch('/', async (c) => {
   if (b.name !== undefined && !b.name.trim()) fail(400, 'Name can’t be empty.');
   if (b.name && b.name.length > 60) fail(400, 'Name is too long.');
   if (b.bio && b.bio.length > 400) fail(400, 'About is too long.');
+  if (hasContactDetails(b.bio ?? '') || hasContactDetails(b.name ?? '')) fail(400, CONTACT_MSG);
   await c.env.DB.prepare(
     `UPDATE users SET name = COALESCE(?, name), bio = COALESCE(?, bio),
        age_confirmed = CASE WHEN ? THEN 1 ELSE age_confirmed END,

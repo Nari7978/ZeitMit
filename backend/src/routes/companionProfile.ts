@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
-import { fail } from '../lib/util';
+import { CONTACT_MSG, fail, hasContactDetails } from '../lib/util';
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -15,6 +15,7 @@ type Listing = {
 const LEVELS = ['Native', 'Fluent', 'Conversational', 'Intermediate', 'Basic'];
 
 function validate(b: Listing, full: boolean) {
+  if ([b.name, b.about, b.tagline, b.area, b.pronouns].some((x) => x && hasContactDetails(x))) fail(400, CONTACT_MSG);
   if (full || b.name !== undefined) if (!b.name?.trim() || b.name.length > 40) fail(400, 'Add a display name (up to 40 characters).');
   if (full || b.about !== undefined) if ((b.about ?? '').trim().length < 40) fail(400, 'Write at least 40 characters about yourself.');
   if (b.about && b.about.length > 400) fail(400, 'About is limited to 400 characters.');

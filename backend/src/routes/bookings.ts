@@ -3,7 +3,7 @@ import type { AppEnv, Env } from '../types';
 import { ACT_LABEL, ACTIVITIES, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
 import { berlinToUnix, slotsFor } from '../lib/companions';
 import { notify } from '../lib/notify';
-import { berlinWhen, digits, euros, fail, newId, now, parseJson, safeEqual } from '../lib/util';
+import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
 import { cancelIntent, capture, createCheckout, getSession, intentOf, stripeOn } from '../lib/stripe';
 
 type BookingRow = {
@@ -112,6 +112,7 @@ bookings.post('/', async (c) => {
   const age = await c.env.DB.prepare('SELECT age_confirmed, name, id_status FROM users WHERE id = ?').bind(u.id).first<{ age_confirmed: number; name: string; id_status: string }>();
   if (!age?.age_confirmed) fail(403, 'Confirm you’re 18 or older before booking.');
   if (age!.id_status !== 'approved') fail(403, 'Verify your ID before your first booking.');
+  if (hasContactDetails(b.note ?? '') || hasContactDetails(b.place ?? '')) fail(400, CONTACT_MSG);
   const comp = await c.env.DB.prepare("SELECT user_id, display_name, rate, activities FROM companions WHERE user_id = ? AND status = 'approved'")
     .bind(b.companionId)
     .first<{ user_id: string; display_name: string; rate: number; activities: string }>();

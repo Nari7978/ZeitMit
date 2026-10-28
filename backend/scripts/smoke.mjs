@@ -92,6 +92,8 @@ ok(r.status === 400, 'verification needs own uploaded photos');
   r = await call('GET', '/me', T);
   ok(r.data.idStatus === 'approved', 'customer is verified');
 }
+r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'coffee', date: day.date, time: day.times[0], dur: 1, place: 'Café', note: 'mail me mira@example.com' });
+ok(r.status === 400 && /email/.test(r.data.error), 'contact details blocked in a booking note');
 r = await call('POST', '/conversations', T, { companionId: 'demo_kai' });
 ok(r.status === 403 && /once you’ve booked/.test(r.data.error), 'cannot message a companion before booking');
 r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'date', date: day.date, time: day.times[0], dur: 2, place: 'Museum lobby' });
@@ -148,12 +150,14 @@ r = await call('GET', '/conversations?side=companion', K);
 ok(r.data.find((x) => x.id === conv.id)?.unread === 1, 'companion unread count = 1');
 r = await call('GET', `/conversations/${conv.id}/messages`, K);
 ok(r.data.at(-1).t === 'See you at the lobby!' && !r.data.at(-1).me, 'message history loads');
-for (const text of ['Call me on +49 151 2345678', 'anna (at) gmail (dot) com']) {
+for (const text of ['Call me on +49 151 2345678', 'anna (at) gmail (dot) com', 'add me on insta @mira.berlin']) {
   r = await call('POST', `/conversations/${conv.id}/messages`, T, { text });
   ok(r.status === 400 && /phone numbers/.test(r.data.error), `contact details blocked: “${text}”`);
 }
 r = await call('POST', `/conversations/${conv.id}/messages`, K, { text: 'See you 30.10.2026 at 12:30, it’s €66 for 2 hours.' });
 ok(r.status === 201, 'dates, times and prices still allowed');
+r = await call('PATCH', '/me', T, { bio: 'Text me: 0151 2345 678' });
+ok(r.status === 400 && /phone numbers/.test(r.data.error), 'contact details blocked in a customer bio');
 
 // Cancel + refund
 const slot2 = (await call('GET', '/companions/demo_lena')).data.slots.find((d) => d.times.length);
@@ -228,6 +232,8 @@ r = await call('POST', '/companion/apply', T, { ...apply, age: 27, gender: 'w' }
 ok(r.status === 400, 'application needs an ID photo');
 r = await call('POST', '/companion/apply', T, { ...apply, idPhotoId: idPhoto.id, age: 27, gender: 'w', pronouns: 'she/her' });
 ok(r.status === 201 && r.data.status === 'pending', 'companion application goes to review');
+r = await call('PATCH', '/companion', T, { tagline: 'DM me @mira.berlin' });
+ok(r.status === 400 && /social media/.test(r.data.error), 'contact details blocked in a companion listing');
 r = await call('PATCH', '/companion', T, { tagline: 'Slow museums, fast coffee', interests: ['Art', 'Coffee'], langs: ['German'], levels: { German: 'Native' }, area: 'Neukölln' });
 ok(r.status === 200, 'companion edits listing');
 r = await call('GET', '/companion', T);

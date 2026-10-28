@@ -75,4 +75,6 @@ export const shouldFlag = (text: string) => FLAG_RE.test(text);
 const PHONE_RE = /(?:\+|\b00)?\d(?:[\s().\/-]*\d){7,}/;
 const EMAIL_RE = /[A-Z0-9._%+-]+\s*(?:@|\(at\)|\[at\])\s*[A-Z0-9.-]+\s*(?:\.|\(dot\))\s*[A-Z]{2,}/i;
 const DATE_RE = /\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2})\b/g;
-export const hasContactDetails = (text: string) => PHONE_RE.test(text.replace(DATE_RE, ' ')) || EMAIL_RE.test(text);
+const HANDLE_RE = /(?:^|[\s(:])@[A-Za-z0-9_.]{3,}/;
+export const hasContactDetails = (text: string) => PHONE_RE.test(text.replace(DATE_RE, ' ')) || EMAIL_RE.test(text) || HANDLE_RE.test(text);
+export const CONTACT_MSG = 'For everyone’s safety, phone numbers, email addresses and social media handles can’t be shared on ZeitMit. Keep talking here in the app.';

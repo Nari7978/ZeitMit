@@ -378,7 +378,7 @@ const DE: Record<string, string> = {
   'Chat is open while you have a paid booking, and for 7 days after you meet.': 'Der Chat ist offen, solange du eine bezahlte Buchung hast, und 7 Tage nach eurem Treffen.',
   'Chat opens once you’ve booked. Add a note to your request instead.': 'Der Chat öffnet sich, sobald du gebucht hast. Schreib stattdessen eine Notiz in deine Anfrage.',
   'This chat is closed. Chats are open while you have a paid booking, and for 7 days after you meet.': 'Dieser Chat ist geschlossen. Chats sind offen, solange ihr eine bezahlte Buchung habt, und 7 Tage nach eurem Treffen.',
-  'For everyone’s safety, phone numbers and email addresses can’t be shared in chat. Keep talking here in ZeitMit.': 'Zur Sicherheit aller können Telefonnummern und E-Mail-Adressen im Chat nicht geteilt werden. Schreibt einfach hier in ZeitMit weiter.',
+  'For everyone’s safety, phone numbers, email addresses and social media handles can’t be shared on ZeitMit. Keep talking here in the app.': 'Zur Sicherheit aller können Telefonnummern, E-Mail-Adressen und Social-Media-Namen auf ZeitMit nicht geteilt werden. Schreibt einfach hier in der App weiter.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
