@@ -9,7 +9,7 @@ import { A, ageStr, eur, LANGS, PREF, SORT, WHEN } from '../data';
 import { filtered, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Chip, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
+import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, TextButton } from '../ui/common';
 import { t } from '../i18n';
 
@@ -391,11 +391,14 @@ function GiftSheet() {
     return (
       <Pad>
         <View style={{ alignItems: 'center', gap: 10, paddingTop: 16, paddingBottom: 4 }}>
-          <Enter kind="pop">
-            <Box shadow={4} style={{ width: 84, height: 84, borderRadius: 26, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.violet, alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="gift" size={36} color={colors.white} />
-            </Box>
-          </Enter>
+          <View style={{ width: 84, height: 84, alignItems: 'center', justifyContent: 'center' }}>
+            <Confetti spread={140} />
+            <Enter kind="pop">
+              <Box shadow={4} style={{ width: 84, height: 84, borderRadius: 26, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.violet, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="gift" size={36} color={colors.white} />
+              </Box>
+            </Enter>
+          </View>
           <H size={26} ls={-0.03} align="center">Gift sent to {to}</H>
           <Txt size={14} color={colors.gray600} align="center">Share this gift code with {to}. It’s valid for 12 months on any booking.</Txt>
           <Box shadow={3} style={{ marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.butter }}>

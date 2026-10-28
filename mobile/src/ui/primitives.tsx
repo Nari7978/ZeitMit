@@ -244,12 +244,12 @@ let reduceMotion = false;
 AccessibilityInfo.isReduceMotionEnabled?.().then((v) => { reduceMotion = v; }).catch(() => {});
 
 /** zmFade / zmPop / zmIn entry animations. */
-export function Enter({ kind = 'fade', duration, delay = 0, style, children }: { kind?: 'fade' | 'pop' | 'in' | 'up'; duration?: number; delay?: number; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
+export function Enter({ kind = 'fade', duration, delay = 0, style, children }: { kind?: 'fade' | 'pop' | 'in' | 'up' | 'rise'; duration?: number; delay?: number; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
   const v = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
   useEffect(() => {
     if (reduceMotion) return;
     const easing = kind === 'pop' ? Easing.bezier(0.2, 0.8, 0.2, 1) : kind === 'fade' ? Easing.ease : Easing.bezier(0.2, 0.8, 0.2, 1);
-    Animated.timing(v, { toValue: 1, duration: duration ?? (kind === 'pop' ? 550 : kind === 'fade' ? 300 : 300), delay, easing, useNativeDriver: true }).start();
+    Animated.timing(v, { toValue: 1, duration: duration ?? (kind === 'pop' ? 550 : kind === 'rise' ? 420 : 300), delay, easing, useNativeDriver: true }).start();
   }, [v, kind, duration, delay]);
   let anim: object = { opacity: v };
   if (kind === 'pop') {
@@ -259,6 +259,8 @@ export function Enter({ kind = 'fade', duration, delay = 0, style, children }: {
     };
   } else if (kind === 'in') {
     anim = { opacity: v, transform: [{ translateX: v.interpolate({ inputRange: [0, 1], outputRange: [32, 0] }) }] };
+  } else if (kind === 'rise') {
+    anim = { opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }] };
   } else if (kind === 'up') {
     anim = { transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [800, 0] }) }] };
   }
@@ -314,6 +316,58 @@ export function TypingDots() {
 }
 
 /** Expanding ring behind the booking-sent badge (zmRing). */
+const CONFETTI_COLORS = [colors.pink, colors.violet, colors.mint, colors.ink, colors.rose, '#FFC93C'];
+
+/**
+ * One-shot confetti burst from the centre of its parent (payment success).
+ * Place it inside a box the size of the icon; pieces fly outward, fall and fade. Skipped with reduce motion.
+ */
+export function Confetti({ count = 28, spread = 170, delay = 120 }: { count?: number; spread?: number; delay?: number }) {
+  const pieces = useRef(
+    Array.from({ length: count }, (_, i) => {
+      const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const dist = spread * (0.55 + Math.random() * 0.45);
+      return {
+        v: new Animated.Value(0),
+        dx: Math.cos(angle) * dist,
+        dy: Math.sin(angle) * dist * 0.8 - 40,
+        fall: 90 + Math.random() * 80,
+        spin: (Math.random() < 0.5 ? -1 : 1) * (240 + Math.random() * 360),
+        w: i % 3 === 0 ? 9 : 7,
+        h: i % 3 === 0 ? 9 : 14,
+        round: i % 3 === 0,
+        color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+        duration: 1100 + Math.random() * 500,
+      };
+    }),
+  ).current;
+  useEffect(() => {
+    if (reduceMotion) return;
+    Animated.stagger(8, pieces.map((p) => Animated.timing(p.v, { toValue: 1, duration: p.duration, delay, easing: Easing.out(Easing.quad), useNativeDriver: true }))).start();
+  }, [pieces, delay]);
+  if (reduceMotion) return null;
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+      {pieces.map((p, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            position: 'absolute', width: p.w, height: p.h, borderRadius: p.round ? p.w / 2 : 2, backgroundColor: p.color,
+            opacity: p.v.interpolate({ inputRange: [0, 0.08, 0.7, 1], outputRange: [0, 1, 1, 0] }),
+            transform: [
+              // Burst outward fast, then gravity takes over.
+              { translateX: p.v.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, p.dx * 0.8, p.dx] }) },
+              { translateY: p.v.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, p.dy * 0.8, p.dy + p.fall] }) },
+              { rotate: p.v.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${p.spin}deg`] }) },
+              { scale: p.v.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0.3, 1, 0.8] }) },
+            ],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 export function Ring({ size, color }: { size: number; color: string }) {
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {

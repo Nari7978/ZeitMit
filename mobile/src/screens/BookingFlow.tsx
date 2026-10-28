@@ -10,7 +10,7 @@ const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '2
 import { useStore } from '../store';
 import { toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
-import { Box, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/primitives';
+import { Box, Confetti, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, TextButton, useTopPad } from '../ui/common';
 import { t } from '../i18n';
 
@@ -65,15 +65,21 @@ export default function BookingFlow() {
     return (
       <View style={{ flex: 1, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingHorizontal: 28, paddingBottom: 40, gap: 12 }}>
         <View style={{ width: 100, height: 100, marginBottom: 16, alignItems: 'center', justifyContent: 'center' }}>
-          <Ring size={100} color={colors.ink} />
+          <Ring size={100} color={colors.pink} />
+          <Confetti />
           <Enter kind="pop" style={{ width: 100, height: 100, borderRadius: 50, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
-            <Icon name="send" size={40} color={colors.white} />
+            <Enter kind="pop" delay={260}>
+              <Icon name="check" size={48} color={colors.sun} />
+            </Enter>
           </Enter>
         </View>
-        <H size={28} ls={-0.03} align="center">Paid & request sent</H>
-        <Txt size={15} lh={1.55} color={colors.gray800} align="center">
-          You paid {total}. ZeitMit holds it safely until you meet. If {c.name} declines, you get a full refund. When you meet, share your meet code and the money is released.
-        </Txt>
+        <Enter kind="rise" delay={320}><H size={28} ls={-0.03} align="center">Paid & request sent</H></Enter>
+        <Enter kind="rise" delay={420}>
+          <Txt size={15} lh={1.55} color={colors.gray800} align="center">
+            You paid {total}. ZeitMit holds it safely until you meet. If {c.name} declines, you get a full refund. When you meet, share your meet code and the money is released.
+          </Txt>
+        </Enter>
+        <Enter kind="rise" delay={540} style={{ width: '100%' }}>
         <Box shadow={4} style={{ width: '100%', marginTop: 12, padding: 16, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -82,7 +88,8 @@ export default function BookingFlow() {
           </View>
           <Txt size={15} weight={700}>{total}</Txt>
         </Box>
-        <Txt size={12} color={colors.gray600}>Free cancellation up to 24 hours before.</Txt>
+        </Enter>
+        <Enter kind="fade" delay={700}><Txt size={12} color={colors.gray600}>Free cancellation up to 24 hours before.</Txt></Enter>
         <View style={{ width: '100%', gap: 6, marginTop: 16 }}>
           <PrimaryButton label="View in Bookings" onPress={() => toBookings('pending')} />
           <View style={{ alignItems: 'center' }}>
