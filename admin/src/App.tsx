@@ -216,8 +216,10 @@ function Companions({ say, refresh }: Ctx) {
     try {
       const r = await api<{ refunded: number }>('DELETE', `/admin/companions/${a.id}`);
       say(`${a.name}’s listing removed${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}.`);
-      load(); refresh();
-    } catch (e) { say((e as Error).message); }
+    } catch (e) {
+      say(/not found/i.test((e as Error).message) ? `${a.name}’s listing was already removed.` : (e as Error).message);
+    }
+    load(); refresh();
   };
   return (
     <>
@@ -381,8 +383,10 @@ function Users({ say }: Ctx) {
     try {
       const r = await api<{ refunded: number }>('DELETE', `/admin/users/${u.id}`);
       say(`${u.email} deleted${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}.`);
-      load();
-    } catch (e) { say((e as Error).message); }
+    } catch (e) {
+      say(/not found/i.test((e as Error).message) ? `${u.email} was already deleted.` : (e as Error).message);
+    }
+    load();
   };
   return (
     <>
@@ -418,7 +422,8 @@ function Reviews({ say }: Ctx) {
   useEffect(load, [load]);
   const remove = async (r: ReviewRow) => {
     if (!confirm(`Delete ${r.author_name}’s review of ${r.companion}? The companion’s rating is recalculated.`)) return;
-    try { await api('DELETE', `/admin/reviews/${r.id}`); say('Review deleted.'); load(); } catch (e) { say((e as Error).message); }
+    try { await api('DELETE', `/admin/reviews/${r.id}`); say('Review deleted.'); } catch (e) { say(/not found/i.test((e as Error).message) ? 'That review was already deleted.' : (e as Error).message); }
+    load();
   };
   return (
     <>
