@@ -23,10 +23,14 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - name: Find the D1 database
+        run: |
+          ID=$(npx wrangler d1 list --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const db=JSON.parse(s).find(d=>d.name==='zeitmit');console.log(db?db.uuid:'')})")
+          sed -i "s/^database_id = .*/database_id = \"$ID\"/" wrangler.toml
       - name: Inspect the account (SELECT only)
         run: |
           case "$EMAIL" in *"'"*) echo "::error::Invalid email"; exit 1;; esac
-          q() { npx wrangler d1 execute zeitmit --remote --json --command "$1" 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.stringify(JSON.parse(s)[0].results))}catch{console.log(s.slice(0,300))}})"; }
+          q() { npx wrangler d1 execute zeitmit --remote --json --command "$1" 2>&1 | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.stringify(JSON.parse(s)[0].results))}catch{console.log(s.slice(0,300))}})"; }
           U=$(q "SELECT id, length(id) AS len, hex(id) AS hex, role, suspended, id_status FROM users WHERE lower(email) = lower('$EMAIL')")
           echo "::notice::user row: $U"
           ID=$(echo "$U" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s)[0]?.id??'')}catch{console.log('')}})")
