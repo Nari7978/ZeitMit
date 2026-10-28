@@ -72,6 +72,8 @@ export function followGo(go: string) {
     openChat(go.slice(5));
   } else if (go.startsWith('tab:')) {
     toBookings(go.slice(4) as BTab);
+  } else if (go === 'checkin') {
+    if (useStore.getState().checkin) useStore.getState().openSheet('sos');
   } else if (go === 'verify') {
     openVerify();
   } else if (go.startsWith('comp:')) {

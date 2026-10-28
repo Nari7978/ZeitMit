@@ -286,7 +286,7 @@ function Bookings({ say, refresh }: Ctx) {
 type Reports = {
   reports: { id: string; reason: string; status: string; created_at: number; reporter: string; target: string; target_id: string }[];
   flaggedMessages: { id: string; body: string; created_at: number; sender: string }[];
-  sos: { id: string; status: string; email: string; contact_name: string; contact_phone: string; last_lat: number | null; last_lng: number | null; created_at: number }[];
+  sos: { id: string; status: string; email: string; contact_name: string; contact_phone: string; last_lat: number | null; last_lng: number | null; created_at: number; share_token: string | null; share_base: string | null }[];
 };
 
 function Safety({ say, refresh }: Ctx) {
@@ -306,12 +306,13 @@ function Safety({ say, refresh }: Ctx) {
       <div className="card" style={{ overflowX: 'auto', marginBottom: 22 }}>
         {!d.sos.length ? <p className="muted">None.</p> : (
           <table>
-            <thead><tr><th>Started</th><th>User</th><th>Status</th><th>Trusted contact</th><th>Last location</th></tr></thead>
+            <thead><tr><th>Started</th><th>User</th><th>Status</th><th>Trusted contact</th><th>Last location</th><th>Live page</th></tr></thead>
             <tbody>{d.sos.map((s) => (
               <tr key={s.id}>
                 <td>{when(s.created_at)}</td><td>{s.email}</td><td><b>{s.status === 'sos' ? 'SOS' : 'Missed check-in'}</b></td>
                 <td>{s.contact_name} · <a href={`tel:${s.contact_phone}`}>{s.contact_phone}</a></td>
                 <td>{s.last_lat != null ? <a target="_blank" rel="noreferrer" href={`https://www.openstreetmap.org/?mlat=${s.last_lat}&mlon=${s.last_lng}#map=17/${s.last_lat}/${s.last_lng}`}>Open map</a> : <span className="muted">Not shared</span>}</td>
+                <td>{s.share_token && s.share_base ? <a target="_blank" rel="noreferrer" href={`${s.share_base}/t/${s.share_token}`}>Open</a> : '—'}</td>
               </tr>
             ))}</tbody>
           </table>

@@ -7,6 +7,9 @@ import { colors } from '../theme';
 import { useStore } from '../store';
 import { Icon } from './Icon';
 import { Box, Enter, Txt } from './primitives';
+import { locale, t } from '../i18n';
+
+const clock = (unix: number) => new Intl.DateTimeFormat(locale(), { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(unix * 1000));
 
 /** Distance of the floating nav bar from the bottom edge (22px in the design). */
 export function useNavBottom() {
@@ -103,16 +106,19 @@ export function CheckinBar() {
   const bottom = useNavBottom() + 78;
   if (!checkin || sheet) return null;
   const { checkinOk, openSheet } = useStore.getState();
+  const state = checkin.status;
+  const bg = state === 'sos' ? colors.pink : state === 'alerted' ? '#FFC93C' : colors.mint;
+  const line = state === 'sos' ? 'SOS sent · tap for help' : state === 'alerted' ? 'Missed check-in · tap “I’m OK”' : checkin.nextDue ? 'Next check-in ' + clock(checkin.nextDue) : 'Check in at the end';
   return (
     <Enter style={{ position: 'absolute', left: 14, right: 14, bottom, zIndex: 45 }}>
-      <Box shadow={4} style={{ paddingVertical: 10, paddingRight: 10, paddingLeft: 14, borderRadius: 20, backgroundColor: colors.mint, borderWidth: 2.5, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View accessibilityRole="summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-          <Icon name="shield-check" size={22} />
+      <Box shadow={4} style={{ paddingVertical: 10, paddingRight: 10, paddingLeft: 14, borderRadius: 20, backgroundColor: bg, borderWidth: 2.5, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('Share live link')} onPress={() => openSheet(state === 'active' ? 'checkinShare' : 'sos')} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+          <Icon name={state === 'active' ? 'shield-check' : 'shield-alert'} size={22} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Txt size={14} weight={700} numberOfLines={1}>Check-in on · {checkin.name}</Txt>
-            <Txt size={12}>Next check {checkin.next}</Txt>
+            <Txt size={14} weight={700} numberOfLines={1}>Check-in on · {checkin.otherName}</Txt>
+            <Txt size={12} numberOfLines={1}>{line}</Txt>
           </View>
-        </View>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           onPress={() => void checkinOk()}

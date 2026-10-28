@@ -39,7 +39,7 @@ export type CompBooking = {
 };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'otp' | 'otpin' | 'delete' | 'redeem';
+  | 'safety' | 'sos' | 'checkinShare' | 'otp' | 'otpin' | 'delete' | 'redeem';
 export type SortKey = keyof typeof SORT;
 export type Prefs = {
   pushMessages: boolean; pushBookings: boolean; emailUpdates: boolean; marketing: boolean;
@@ -51,6 +51,11 @@ export type User = {
   avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang;
   /** ID check needed before the first booking. */
   idStatus: IdStatus; idNote: string | null;
+};
+/** A running safety check-in (same shape as the API's). */
+export type Checkin = {
+  id: string; status: 'active' | 'alerted' | 'sos'; every: number; nextDue: number | null; share: boolean;
+  contactName: string; contactPhone: string; shareUrl: string | null; otherName: string; place: string; startsAt: number; endsAt: number;
 };
 export type IdStatus = 'none' | 'pending' | 'approved' | 'rejected';
 export type CompanionStatus = 'none' | 'pending' | 'approved' | 'rejected';
@@ -89,10 +94,11 @@ type State = {
   otpFor: string | null;
   otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
   gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
-  checkin: { id: string; name: string; next: string } | null;
+  checkin: Checkin | null;
   /** A booking waiting for its card payment (Stripe Checkout). */
   pendingCheckout: { key: string; id: string; url: string } | null;
-  safety: { bid: string | null; share: boolean; every: number; contactName: string; contactPhone: string };
+  /** Draft for the check-in sheet. `name` is the other person (companion or customer). */
+  safety: { bid: string | null; name?: string; share: boolean; every: number; contactName: string; contactPhone: string };
 };
 
 type Actions = {
@@ -126,6 +132,7 @@ type Actions = {
   setListing: (patch: { rate?: number; acts?: ActId[] }) => void;
   startCheckin: () => Promise<void>;
   checkinOk: () => Promise<void>;
+  loadCheckin: () => Promise<void>;
   endCheckin: () => Promise<void>;
   sos: () => Promise<void>;
   sendLocation: () => Promise<void>;
@@ -269,6 +276,7 @@ export const useStore = create<State & Actions>()((set, get) => {
       if (bookings.status === 'fulfilled') set({ bookings: bookings.value });
       if (convos.status === 'fulfilled') set({ convos: convos.value });
       if (notifs.status === 'fulfilled') set({ notifs: notifs.value });
+      void get().loadCheckin();
       if (get().companionStatus !== 'none') await get().loadCompanionSide();
     },
     loadCompanionSide: async () => {
@@ -438,23 +446,24 @@ export const useStore = create<State & Actions>()((set, get) => {
 
     // ---------- safety ----------
     startCheckin: async () => {
-      const { bookings, safety } = get();
-      const b = bookings.find((x) => x.id === safety.bid);
+      const { safety } = get();
       if (!safety.contactName.trim() || !safety.contactPhone.trim()) return get().showToast('Add a trusted contact first.');
-      const r = await attempt(() => api<{ id: string }>('POST', '/safety/checkins', {
+      const ck = await attempt(() => api<Checkin>('POST', '/safety/checkins', {
         bookingId: safety.bid, contactName: safety.contactName, contactPhone: safety.contactPhone, share: safety.share, every: safety.every,
       }));
-      if (!r) return;
-      set({ sheet: null, checkin: { id: r.id, name: b?.companionName ?? 'your companion', next: safety.every ? 'in ' + safety.every + ' min' : 'at the end' } });
-      if (safety.share && (await askLocation())) void get().sendLocation();
-      get().showToast(`Check-in on. ${safety.contactName} will be alerted if you miss one.`);
+      if (!ck) return;
+      // Next: send the contact the live link on WhatsApp.
+      set({ checkin: ck, sheet: 'checkinShare' });
+      if (ck.share && (await askLocation())) void get().sendLocation();
     },
     checkinOk: async () => {
-      const { checkin, safety } = get();
+      const { checkin } = get();
       if (!checkin) return;
-      const loc = safety.share ? await currentLocation() : null;
-      const ok = await attempt(() => api('POST', `/safety/checkins/${checkin.id}/ok`, loc ?? {}));
-      if (ok) get().showToast('Thanks! Next check-in ' + (safety.every ? 'in ' + safety.every + ' min' : 'at the end') + '.');
+      const loc = checkin.share ? await currentLocation() : null;
+      const r = await attempt(() => api<{ nextDue: number | null }>('POST', `/safety/checkins/${checkin.id}/ok`, loc ?? {}));
+      if (!r) return;
+      set((s) => ({ sheet: s.sheet === 'sos' ? null : s.sheet, checkin: s.checkin ? { ...s.checkin, status: 'active', nextDue: r.nextDue } : null }));
+      get().showToast(checkin.every ? `Thanks! Next check-in in ${checkin.every} min.` : 'Thanks! Next check-in at the end.');
     },
     endCheckin: async () => {
       const { checkin } = get();
@@ -463,18 +472,24 @@ export const useStore = create<State & Actions>()((set, get) => {
       get().showToast('Check-in ended. Hope it was a good time!');
     },
     sendLocation: async () => {
-      const { checkin, safety } = get();
-      if (!checkin || !safety.share) return;
+      const { checkin } = get();
+      if (!checkin?.share) return;
       const loc = await currentLocation();
       if (loc) await api('POST', `/safety/checkins/${checkin.id}/location`, loc).catch(() => {});
     },
+    loadCheckin: async () => {
+      const ck = await api<Checkin | null>('GET', '/safety/checkins/active').catch(() => undefined);
+      if (ck === undefined) return;
+      set({ checkin: ck });
+      if (ck?.share) void get().sendLocation();
+    },
+    /** Records the SOS for the ZeitMit team (never blocks: the WhatsApp alert opens either way). */
     sos: async () => {
-      const { checkin, safety } = get();
+      const { checkin } = get();
       if (!checkin) return;
-      const loc = await currentLocation();
-      const ok = await attempt(() => api('POST', `/safety/checkins/${checkin.id}/sos`, loc ?? {}));
-      set({ sheet: null });
-      if (ok) get().showToast(`Our safety team has your booking details and will contact ${safety.contactName || 'your trusted contact'}.`);
+      const loc = checkin.share ? await currentLocation() : null;
+      await api('POST', `/safety/checkins/${checkin.id}/sos`, loc ?? {}).catch(() => {});
+      set((s) => ({ checkin: s.checkin ? { ...s.checkin, status: 'sos' } : null }));
     },
 
     // ---------- account ----------

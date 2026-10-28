@@ -5,6 +5,7 @@ import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
+import { t } from '../../i18n';
 
 export default function Calendar() {
   const avail = useStore((s) => s.comp.avail);
@@ -50,6 +51,14 @@ export default function Calendar() {
             <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
             <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('Safety check-in')}
+            onPress={() => openSheet('safety', { safety: { ...useStore.getState().safety, bid: u.id, name: u.who } })}
+            style={{ width: 38, height: 38, borderRadius: 12, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Icon name="shield-check" size={17} />
+          </Pressable>
           <PressBox
             shadow={3}
             shadowColor={colors.mint}

@@ -176,6 +176,34 @@ ok(r.data.find((x) => x.id === lenaConv)?.canSend === false, 'inbox marks the cl
 // Safety, gifts, saved
 r = await call('POST', '/safety/checkins', T, { bookingId, contactName: 'Anna', contactPhone: '+49 151 2345678', every: 30 });
 ok(soon ? r.status === 404 : r.status === 201, 'safety check-in starts for confirmed booking');
+if (r.status === 201) {
+  const ck = r.data;
+  ok(/\/t\/[a-z0-9]{12,}$/.test(ck.shareUrl ?? '') && ck.otherName === 'Kai' && ck.place === 'Museum lobby', 'check-in returns a private live link');
+  const token = ck.shareUrl.split('/t/')[1];
+  const page = async (lang = 'en') => (await fetch(`${BASE}/t/${token}`, { headers: { 'Accept-Language': lang } })).text();
+  let html = await page();
+  ok(html.includes('Safety check-in') && html.includes('Checked in, all OK') && html.includes('Museum lobby') && !html.includes('2345678'), 'live page shows status and booking, never the phone number');
+  ok((await page('de')).includes('Sicherheits-Check-in'), 'live page in German for German phones');
+  ok((await fetch(`${BASE}/t/nottherighttoken1234`)).status === 404, 'unknown live link is 404');
+  r = await call('POST', `/safety/checkins/${ck.id}/location`, T, { lat: 52.52, lng: 13.405 });
+  html = await page();
+  ok(html.includes('openstreetmap.org') && html.includes('maps.google.com/?q=52.52,13.405'), 'live page shows the shared location');
+  r = await call('GET', '/safety/checkins/active', T);
+  ok(r.data?.id === ck.id, 'running check-in comes back after an app restart');
+  r = await call('POST', `/safety/checkins/${ck.id}/sos`, T, { lat: 52.53, lng: 13.41 });
+  html = await page();
+  ok(r.status === 200 && html.includes('SOS pressed') && html.includes('tel:112'), 'SOS shows on the live page with a 112 button');
+  r = await call('POST', `/safety/checkins/${ck.id}/ok`, T);
+  ok((await page()).includes('Checked in, all OK'), 'I am OK clears the SOS');
+  r = await call('POST', `/safety/checkins/${ck.id}/end`, T);
+  html = await page();
+  ok(html.includes('Check-in ended') && !html.includes('openstreetmap') && !html.includes('Museum lobby'), 'ended check-in hides location and place');
+  r = await call('GET', '/safety/checkins/active', T);
+  ok(r.data === null, 'no running check-in after ending');
+  r = await call('POST', '/safety/checkins', K, { bookingId, contactName: 'Jo', contactPhone: '0151 9876543', every: 60 });
+  ok(r.status === 201 && r.data.otherName === 'Mira', 'companion can start a check-in too');
+  await call('POST', `/safety/checkins/${r.data.id}/end`, K);
+}
 r = await call('POST', '/gifts', T, { amount: 100, to: 'Sam' });
 ok(r.status === 201 && /^ZM-\d{4}-\d{4}$/.test(r.data.code), 'gift card issued');
 const giftCode = r.data.code;

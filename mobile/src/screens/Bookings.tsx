@@ -83,7 +83,7 @@ function BookingCard({ b }: { b: Booking }) {
   const actions: Act[] = {
     confirmed: [
       { label: 'Message', fn: msg },
-      { label: 'Check-in', fn: () => openSheet('safety', { safety: { ...safety, bid: b.id } }) },
+      { label: 'Check-in', fn: () => openSheet('safety', { safety: { ...safety, bid: b.id, name: b.companionName } }) },
       { label: 'Meet code', fn: () => openSheet('otp', { otpFor: b.id }), primary: true },
     ],
     pending: [

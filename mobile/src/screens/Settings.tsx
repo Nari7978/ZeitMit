@@ -283,7 +283,7 @@ function Help() {
     ['How does payment work?', 'You pay when you send a request. ZeitMit holds the money and releases it to the companion only when you share your 4-digit meet code in person. If they decline, or you cancel 24+ hours before, you get a full refund.'],
     ['Where can we meet?', 'Always in a public place: a café, park entrance, museum or venue. Home addresses, hotels and private locations are never allowed.'],
     ['What isn’t allowed?', 'Anything sexual, kissing or intimacy, overnight plans, and paying or meeting outside ZeitMit. Report anyone who asks.'],
-    ['How do I stay safe?', 'Start a safety check-in from a confirmed booking. We’ll check on you and alert your trusted contact if you don’t answer. In an emergency, call 112.'],
+    ['How do I stay safe?', 'Start a safety check-in from a confirmed booking and send your trusted contact the private live link on WhatsApp. If you miss a check-in, it shows on their page and our safety team is alerted. SOS sends them a WhatsApp alert. In an emergency, call 112.'],
     ['How do gift codes work?', 'Redeem the code in Profile → Redeem a gift code. The credit is used automatically on your next booking.'],
     ['How do I become a companion?', 'Go to Profile → Become a Companion. We review every profile and check your ID before it goes live.'],
   ];

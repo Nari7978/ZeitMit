@@ -8,7 +8,8 @@ import { me } from './routes/me';
 import { companions } from './routes/companions';
 import { bookings, companionBookings, expirePending, expireUnpaid } from './routes/bookings';
 import { companionProfile } from './routes/companionProfile';
-import { escalateMissedCheckins, gifts, safety } from './routes/safety';
+import { endOldCheckins, escalateMissedCheckins, gifts, liveCheckin, safety } from './routes/safety';
+import { livePage, notFoundPage, pickLang } from './livePage';
 import { admin } from './routes/admin';
 import { chat } from './chat';
 import { photos } from './routes/photos';
@@ -36,6 +37,17 @@ app.get('/payments/return', (c) => {
 <div><h1 style="font-size:28px">${ok ? 'Payment done' : 'Payment cancelled'}</h1><p>Returning to ZeitMit…</p>
 <p><a href="${deep}" style="color:#111;font-weight:700">Tap here if nothing happens</a></p></div>
 <script>location.href=${JSON.stringify(deep)}</script></body>`);
+});
+
+/** Live safety page for a trusted contact (private link from WhatsApp, no login). */
+app.get('/t/:token', async (c) => {
+  const lang = pickLang(c.req.header('Accept-Language'));
+  const live = await liveCheckin(c.env, c.req.param('token'));
+  c.header('Cache-Control', 'no-store');
+  c.header('Referrer-Policy', 'no-referrer');
+  c.header('X-Robots-Tag', 'noindex');
+  if (!live) return c.html(notFoundPage(lang), 404);
+  return c.html(livePage(live, lang));
 });
 
 app.use('/me/*', requireAuth);
@@ -77,6 +89,6 @@ app.notFound((c) => c.json({ error: 'Not found.' }, 404));
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), escalateMissedCheckins(env)]));
+    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), escalateMissedCheckins(env), endOldCheckins(env)]));
   },
 } satisfies ExportedHandler<Env>;

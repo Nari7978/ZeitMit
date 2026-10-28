@@ -24,10 +24,8 @@ export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUnti
   else await send;
 }
 
-/** Sends a login code by email via Resend. Returns false when email isn't configured (dev mode). */
-export async function sendLoginEmail(env: Env, to: string, code: string) {
-  const subject = `${code} is your ${env.APP_NAME} code`;
-  const text = `Your ${env.APP_NAME} login code is ${code}. It expires in 10 minutes. If you didn't ask for it, ignore this email.`;
+/** Sends a plain-text email via Brevo (or Resend). Returns false when email isn't configured (dev mode). */
+export async function sendEmail(env: Env, to: string, subject: string, text: string) {
   if (env.BREVO_API_KEY && env.EMAIL_FROM_ADDRESS) {
     const res = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
@@ -40,12 +38,23 @@ export async function sendLoginEmail(env: Env, to: string, code: string) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: env.EMAIL_FROM,
-      to,
-      subject,
-      text,
-    }),
+    body: JSON.stringify({ from: env.EMAIL_FROM, to, subject, text }),
   });
   return res.ok;
+}
+
+export async function sendLoginEmail(env: Env, to: string, code: string) {
+  return sendEmail(env, to, `${code} is your ${env.APP_NAME} code`,
+    `Your ${env.APP_NAME} login code is ${code}. It expires in 10 minutes. If you didn't ask for it, ignore this email.`);
+}
+
+/** Safety alert for the team: email to every ADMIN_EMAILS address, plus a push to admins signed in on the app. */
+export async function alertAdmins(env: Env, subject: string, text: string) {
+  const emails = (env.ADMIN_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!emails.length) return;
+  const admins = await env.DB.prepare(`SELECT id FROM users WHERE lower(email) IN (${emails.map(() => '?').join(',')})`).bind(...emails).all<{ id: string }>();
+  await Promise.all([
+    ...emails.map((e) => sendEmail(env, e, subject, text).catch(() => false)),
+    ...admins.results.map((a) => notify(env, a.id, { icon: 'shield-alert', tone: 'error', title: subject, body: text.split('\n')[0].slice(0, 160), go: '' }).catch(() => undefined)),
+  ]);
 }

@@ -12,6 +12,8 @@ import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, TextButton } from '../ui/common';
 import { t } from '../i18n';
+import { sendSms, sendWhatsApp } from '../lib/whatsapp';
+import { shareMessage, sosMessage } from '../lib/checkinText';
 
 export function SheetHost() {
   const sheet = useStore((s) => s.sheet);
@@ -65,6 +67,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'gift': return <GiftSheet />;
     case 'safety': return <SafetySheet />;
     case 'sos': return <SosSheet />;
+    case 'checkinShare': return <CheckinShareSheet />;
     case 'otp': return <OtpSheet />;
     case 'otpin': return <OtpInSheet />;
     case 'delete': return <DeleteSheet />;
@@ -437,10 +440,7 @@ function GiftSheet() {
 
 function SafetySheet() {
   const safety = useStore((s) => s.safety);
-  const name = useStore((s) => {
-    const b = s.bookings.find((x) => x.id === s.safety.bid);
-    return b ? b.companionName : 'your companion';
-  });
+  const name = useStore((s) => s.safety.name ?? s.bookings.find((x) => x.id === s.safety.bid)?.companionName ?? 'them');
   const set = (o: Partial<typeof safety>) => useStore.setState({ safety: { ...safety, ...o } });
   return (
     <Pad scroll>
@@ -450,7 +450,7 @@ function SafetySheet() {
         </View>
         <H size={24} ls={-0.03}>Safety check-in</H>
       </Row>
-      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginTop: 8, marginBottom: 16 }}>We’ll ask if you’re OK during your time with {name}. Miss a check-in and your trusted contact gets your booking details and location.</Txt>
+      <Txt size={14} lh={1.5} color={colors.gray600} style={{ marginTop: 8, marginBottom: 16 }}>We’ll ask if you’re OK during your time with {name}. You send your trusted contact a private live link on WhatsApp, and SOS alerts them and the ZeitMit team.</Txt>
       <View style={{ gap: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
         <Row style={{ gap: 12 }}>
           <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.blush, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
@@ -458,7 +458,7 @@ function SafetySheet() {
           </View>
           <View style={{ flex: 1 }}>
             <Txt size={15} weight={700}>Trusted contact</Txt>
-            <Txt size={12} color={colors.gray600}>Someone we can reach if you don’t check in.</Txt>
+            <Txt size={12} color={colors.gray600}>A friend who can check on you. Use their WhatsApp number.</Txt>
           </View>
         </Row>
         <TextInput value={safety.contactName} onChangeText={(t) => set({ contactName: t })} accessibilityLabel="Contact name" placeholder={t("Name, e.g. Anna (sister)")} placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 46 }]} />
@@ -467,7 +467,7 @@ function SafetySheet() {
       <Row style={{ gap: 12, marginTop: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink }}>
         <View style={{ flex: 1 }}>
           <Txt size={15} weight={700}>Share live location</Txt>
-          <Txt size={12} color={colors.gray600}>Only with {safety.contactName.trim() || 'your contact'}, only during the booking.</Txt>
+          <Txt size={12} color={colors.gray600}>Only on {safety.contactName.trim() || 'your contact'}’s private link, only while the app is open during the booking.</Txt>
         </View>
         <Toggle bordered on={safety.share} label="Share live location" onPress={() => set({ share: !safety.share })} />
       </Row>
@@ -483,9 +483,56 @@ function SafetySheet() {
   );
 }
 
+/** After starting a check-in: send the trusted contact the private live link. */
+function CheckinShareSheet() {
+  const ck = useStore((s) => s.checkin);
+  const close = () => useStore.getState().closeSheet();
+  if (!ck) return <Pad><View /></Pad>;
+  const text = shareMessage(ck);
+  const send = async (via: 'wa' | 'sms') => {
+    const ok = via === 'wa' ? await sendWhatsApp(ck.contactPhone, text) : await sendSms(ck.contactPhone, text);
+    if (!ok) useStore.getState().showToast(via === 'wa' ? 'WhatsApp couldn’t be opened. Try SMS.' : 'Couldn’t open your SMS app.');
+  };
+  return (
+    <Pad>
+      <View style={{ gap: 12 }}>
+        <Row style={{ gap: 10, marginTop: 6 }}>
+          <View style={{ width: 40, height: 40, borderRadius: 12, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="shield-check" size={20} />
+          </View>
+          <H size={24} ls={-0.03}>Check-in is on</H>
+        </Row>
+        <Txt size={14} lh={1.5} color={colors.gray800}>Send {ck.contactName} your private live link. They’ll see your check-ins{ck.share ? ' and location' : ''} until the booking ends. No app needed.</Txt>
+        <View style={{ padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.butter }}>
+          <Txt size={13} lh={1.45} color={colors.gray800} selectable>{text}</Txt>
+        </View>
+        <PressBox shadow={4} fx="push" accessibilityLabel="Send on WhatsApp" onPress={() => void send('wa')} style={{ height: 54, borderRadius: 16, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: '#25D366', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Icon name="message-circle" size={19} color={colors.ink} />
+          <Txt size={16} weight={800}>Send on WhatsApp</Txt>
+        </PressBox>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <TextButton label="Send by SMS instead" size={14} onPress={() => void send('sms')} style={{ paddingVertical: 10 }} />
+          <TextButton label="Done" size={14} weight={700} onPress={close} style={{ paddingVertical: 10 }} />
+        </Row>
+      </View>
+    </Pad>
+  );
+}
+
 function SosSheet() {
-  const contact = useStore((s) => s.safety.contactName.trim() || 'your contact');
-  const { sos, endCheckin } = useStore.getState();
+  const ck = useStore((s) => s.checkin);
+  const me = useStore((s) => s.user?.first ?? '');
+  const [sent, setSent] = useState(false);
+  const { sos, checkinOk, endCheckin } = useStore.getState();
+  const contact = ck?.contactName || 'your contact';
+  const alert = async (via: 'wa' | 'sms') => {
+    if (!ck) return;
+    void sos(); // tells the ZeitMit team; WhatsApp opens right away regardless
+    const text = sosMessage(ck, me);
+    const ok = via === 'wa' ? await sendWhatsApp(ck.contactPhone, text) : await sendSms(ck.contactPhone, text);
+    if (!ok) useStore.getState().showToast(via === 'wa' ? 'WhatsApp couldn’t be opened. Try SMS.' : 'Couldn’t open your SMS app.');
+    setSent(true);
+  };
   return (
     <Pad>
       <View style={{ gap: 10 }}>
@@ -494,9 +541,18 @@ function SosSheet() {
           <Icon name="phone" size={18} color={colors.white} />
           <Txt size={16} weight={800} color={colors.white}>Call 112</Txt>
         </PressBox>
-        <SecondaryButton label={`Alert ${contact} now`} height={52} radius={16} size={15} weight={700} shadow={4} border={2.5} onPress={() => void sos()} />
+        <PressBox shadow={4} fx="push" accessibilityLabel={t(`SOS to ${contact} on WhatsApp`)} onPress={() => void alert('wa')} style={{ height: 54, borderRadius: 16, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: '#25D366', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Icon name="message-circle" size={19} color={colors.ink} />
+          <Txt size={16} weight={800}>SOS to {contact} on WhatsApp</Txt>
+        </PressBox>
+        <TextButton label="Send the SOS by SMS instead" size={14} onPress={() => void alert('sms')} style={{ alignSelf: 'center', paddingVertical: 6 }} />
+        <Txt size={12} lh={1.45} color={colors.gray600} align="center">
+          {sent ? 'The ZeitMit safety team has been alerted too.' : 'This also alerts the ZeitMit safety team with your booking and last location.'}
+        </Txt>
+        <View style={{ height: 2, backgroundColor: colors.hairline, marginVertical: 4 }} />
+        <SecondaryButton label="I’m OK" height={48} radius={14} size={15} weight={700} onPress={() => void checkinOk()} />
         <View style={{ alignItems: 'center' }}>
-          <TextButton label="I’m fine, end check-in" size={15} weight={700} style={{ paddingVertical: 12 }} onPress={() => void endCheckin()} />
+          <TextButton label="End check-in" size={14} weight={600} style={{ paddingVertical: 10 }} onPress={() => void endCheckin()} />
         </View>
       </View>
     </Pad>
