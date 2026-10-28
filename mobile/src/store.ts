@@ -46,7 +46,10 @@ export type Lang = 'auto' | 'en' | 'de';
 export type User = {
   id: string; email: string; name: string; first: string; bio: string; ageConfirmed: boolean; createdAt: number;
   avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang;
+  /** ID check needed before the first booking. */
+  idStatus: IdStatus; idNote: string | null;
 };
+export type IdStatus = 'none' | 'pending' | 'approved' | 'rejected';
 export type CompanionStatus = 'none' | 'pending' | 'approved' | 'rejected';
 
 export type NewBooking = { cid: string; act: ActId; date: string; time: string; dur: number; place: string; note: string; boundariesAgreed: boolean };
@@ -115,6 +118,7 @@ type Actions = {
   declineRequest: (id: string) => Promise<void>;
   verifyOtp: () => Promise<void>;
   submitCompanion: (a: CompanionApplication) => Promise<boolean>;
+  submitVerification: (idPhotoId: string, selfiePhotoId: string) => Promise<boolean>;
   setAvail: (day: string, win: string, on: boolean) => void;
   setListing: (patch: { rate?: number; acts?: ActId[] }) => void;
   startCheckin: () => Promise<void>;
@@ -144,7 +148,7 @@ let listingTimer: ReturnType<typeof setTimeout> | undefined;
 
 const msg = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
-type MeResponse = { id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang };
+type MeResponse = { id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang; idStatus: IdStatus; idNote: string | null };
 
 export const useStore = create<State & Actions>()((set, get) => {
   /** Runs a request, toasting the error on failure. */
@@ -167,7 +171,7 @@ export const useStore = create<State & Actions>()((set, get) => {
     set({
       user: {
         id: me.id, email: me.email, name: me.name, first: (me.name || me.email.split('@')[0]).split(' ')[0], bio: me.bio, ageConfirmed: !!me.age_confirmed,
-        createdAt: me.created_at, avatarUrl: me.avatarUrl, credit: me.credit, prefs: me.prefs, language: me.language,
+        createdAt: me.created_at, avatarUrl: me.avatarUrl, credit: me.credit, prefs: me.prefs, language: me.language, idStatus: me.idStatus ?? 'none', idNote: me.idNote ?? null,
       },
       companionStatus: me.companionStatus,
       saved: me.saved,
@@ -404,6 +408,12 @@ export const useStore = create<State & Actions>()((set, get) => {
       if (!ok) return false;
       set({ companionStatus: 'pending', comp: { ...get().comp, rate: a.rate, acts: a.acts } });
       void get().loadCompanionSide();
+      return true;
+    },
+    submitVerification: async (idPhotoId, selfiePhotoId) => {
+      const ok = await attempt(() => api('POST', '/me/verification', { idPhotoId, selfiePhotoId }));
+      if (!ok) return false;
+      set((s) => ({ user: s.user ? { ...s.user, idStatus: 'pending', idNote: null } : s.user }));
       return true;
     },
     setAvail: (day, win, on) => {

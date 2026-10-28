@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, eur, photoSrc, session, when } from './api';
 
-type Page = 'overview' | 'companions' | 'bookings' | 'safety' | 'users';
-type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number };
+type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'safety' | 'users';
+type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -25,6 +25,7 @@ export function App() {
 
   const nav: [Page, string, number?][] = [
     ['overview', 'Overview'],
+    ['ids', 'ID checks', stats?.pendingIds],
     ['companions', 'Companion reviews', stats?.pendingCompanions],
     ['bookings', 'Bookings & payments'],
     ['safety', 'Reports & safety', (stats?.openReports ?? 0) + (stats?.sos ?? 0)],
@@ -48,6 +49,7 @@ export function App() {
       </nav>
       <main className="main">
         {page === 'overview' && <Overview stats={stats} go={setPage} />}
+        {page === 'ids' && <IdChecks {...ctx} />}
         {page === 'companions' && <Companions {...ctx} />}
         {page === 'bookings' && <Bookings {...ctx} />}
         {page === 'safety' && <Safety {...ctx} />}
@@ -102,6 +104,7 @@ function Login({ onIn }: { onIn: (token: string) => void }) {
 
 function Overview({ stats, go }: { stats: Stats | null; go: (p: Page) => void }) {
   const tiles: [string, ReactNode, Page][] = stats ? [
+    ['ID checks waiting', stats.pendingIds, 'ids'],
     ['Companions waiting for review', stats.pendingCompanions, 'companions'],
     ['Open reports', stats.openReports, 'safety'],
     ['SOS / missed check-ins', stats.sos, 'safety'],
@@ -120,6 +123,66 @@ function Overview({ stats, go }: { stats: Stats | null; go: (p: Page) => void })
               <div className="n">{n}</div>
               <div className="l">{l}</div>
             </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+type IdCheck = { id: string; email: string; name: string; status: string; submittedAt: number | null; note: string | null; idPhotoUrl: string | null; selfieUrl: string | null };
+
+function IdChecks({ say, refresh }: Ctx) {
+  const [status, setStatus] = useState<'pending' | 'approved' | 'rejected'>('pending');
+  const [list, setList] = useState<IdCheck[] | null>(null);
+  const load = useCallback(() => { setList(null); api<IdCheck[]>('GET', `/admin/verifications?status=${status}`).then(setList).catch((e) => say(e.message)); }, [status, say]);
+  useEffect(load, [load]);
+  const decide = async (u: IdCheck, d: 'approve' | 'reject') => {
+    let reason: string | undefined;
+    if (d === 'reject') {
+      const r = prompt(`Why can’t ${u.email} be verified? They’ll see this message.`, 'The photos weren’t clear enough to verify you.');
+      if (r === null) return;
+      reason = r;
+    }
+    try {
+      await api('POST', `/admin/verifications/${u.id}/${d}`, { reason });
+      say(d === 'approve' ? `${u.email} can book now. Photos deleted.` : `${u.email} rejected. Photos deleted.`);
+      load(); refresh();
+    } catch (e) { say((e as Error).message); }
+  };
+  return (
+    <>
+      <h1>ID checks</h1>
+      <p className="muted">Customers verify once before their first booking. Approved companions are verified automatically.</p>
+      <div className="tabs">
+        {(['pending', 'approved', 'rejected'] as const).map((s) => <button key={s} className={status === s ? 'on' : ''} onClick={() => setStatus(s)}>{s[0].toUpperCase() + s.slice(1)}</button>)}
+      </div>
+      {!list ? <p className="muted">Loading…</p> : !list.length ? <p className="muted">Nothing here.</p> : (
+        <div className="grid">
+          {list.map((u) => (
+            <div key={u.id} className="card" style={{ display: 'grid', gap: 10 }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <h2 style={{ fontSize: 22 }}>{u.name || '—'}</h2>
+                <span className="muted small">{u.email}{u.submittedAt ? ` · sent ${when(u.submittedAt)}` : ''}</span>
+              </div>
+              {status === 'pending' ? (
+                <>
+                  <div className="row" style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                    {([['ID document', u.idPhotoUrl], ['Selfie with ID', u.selfieUrl]] as const).map(([l, url]) => (
+                      <div key={l} style={{ display: 'grid', gap: 4 }}>
+                        <div className="small" style={{ fontWeight: 700 }}>{l}</div>
+                        {url ? <a href={photoSrc(url, true)} target="_blank" rel="noreferrer"><img className="idphoto" src={photoSrc(url, true)} alt={l} /></a> : <div className="err">Missing</div>}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="small muted">Check: the ID looks genuine, the person is 18+, the face in the selfie matches the ID, and the name matches the account. Click a photo to enlarge it. Both photos are deleted when you decide.</div>
+                  <div className="row">
+                    <button className="btn green" disabled={!u.idPhotoUrl || !u.selfieUrl} onClick={() => void decide(u, 'approve')}>Approve</button>
+                    <button className="btn red" onClick={() => void decide(u, 'reject')}>Reject</button>
+                  </div>
+                </>
+              ) : u.note ? <div className="small muted">Reason: {u.note}</div> : null}
+            </div>
           ))}
         </div>
       )}
@@ -284,7 +347,7 @@ function Safety({ say, refresh }: Ctx) {
   );
 }
 
-type UserRow = { id: string; email: string; name: string; role: string; suspended: number; created_at: number };
+type UserRow = { id: string; email: string; name: string; role: string; suspended: number; id_status: string; created_at: number };
 
 function Users({ say }: Ctx) {
   const [q, setQ] = useState('');
@@ -303,10 +366,10 @@ function Users({ say }: Ctx) {
       <div className="card" style={{ overflowX: 'auto' }}>
         {!list ? <p className="muted">Loading…</p> : (
           <table>
-            <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Joined</th><th /></tr></thead>
+            <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>ID</th><th>Joined</th><th /></tr></thead>
             <tbody>{list.map((u) => (
               <tr key={u.id} style={{ opacity: u.suspended ? 0.55 : 1 }}>
-                <td>{u.email}</td><td>{u.name || '—'}</td><td>{u.role}</td><td>{when(u.created_at)}</td>
+                <td>{u.email}</td><td>{u.name || '—'}</td><td>{u.role}</td><td>{u.id_status}</td><td>{when(u.created_at)}</td>
                 <td>{u.role !== 'admin' ? <button className={`btn ${u.suspended ? '' : 'red'}`} onClick={() => void toggle(u)}>{u.suspended ? 'Reactivate' : 'Suspend'}</button> : null}</td>
               </tr>
             ))}</tbody>

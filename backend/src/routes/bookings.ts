@@ -106,8 +106,9 @@ bookings.get('/', async (c) => {
 bookings.post('/', async (c) => {
   const u = c.get('user');
   const b = await c.req.json<{ companionId: string; act: ActId; date: string; time: string; dur: number; place: string; note?: string; boundariesAgreed?: boolean; useCredit?: boolean }>();
-  const age = await c.env.DB.prepare('SELECT age_confirmed, name FROM users WHERE id = ?').bind(u.id).first<{ age_confirmed: number; name: string }>();
+  const age = await c.env.DB.prepare('SELECT age_confirmed, name, id_status FROM users WHERE id = ?').bind(u.id).first<{ age_confirmed: number; name: string; id_status: string }>();
   if (!age?.age_confirmed) fail(403, 'Confirm you’re 18 or older before booking.');
+  if (age!.id_status !== 'approved') fail(403, 'Verify your ID before your first booking.');
   const comp = await c.env.DB.prepare("SELECT user_id, display_name, rate, activities FROM companions WHERE user_id = ? AND status = 'approved'")
     .bind(b.companionId)
     .first<{ user_id: string; display_name: string; rate: number; activities: string }>();

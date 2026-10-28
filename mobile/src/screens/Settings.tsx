@@ -7,6 +7,7 @@ import { colors } from '../theme';
 import { eur, PREF } from '../data';
 import { api } from '../api';
 import { useStore, type Lang } from '../store';
+import { openVerify } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, H, Row, Toggle, Txt } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, StatusCover } from '../ui/common';
@@ -249,6 +250,20 @@ function Verification() {
           <Txt size={15} weight={600}>Age 18+</Txt>
           <Txt size={12} color={colors.gray600}>{user.ageConfirmed ? 'Confirmed when you signed up.' : 'Not confirmed yet.'}</Txt>
         </View>
+      </Row>
+      <Row style={{ gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: colors.hairline }}>
+        <Icon name="scan-face" size={20} color={user.idStatus === 'approved' ? colors.green : colors.gray400} />
+        <View style={{ flex: 1 }}>
+          <Txt size={15} weight={600}>ID check for booking</Txt>
+          <Txt size={12} color={colors.gray600}>
+            {user.idStatus === 'approved' ? 'Verified. Your photos were deleted after the check.' : user.idStatus === 'pending' ? 'Under review, usually within 24 hours.' : user.idStatus === 'rejected' ? 'Not approved. Please try again with new photos.' : 'Needed once before your first booking.'}
+          </Txt>
+        </View>
+        {user.idStatus === 'none' || user.idStatus === 'rejected' ? (
+          <Pressable accessibilityRole="button" onPress={() => openVerify()} style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, backgroundColor: colors.ink, justifyContent: 'center' }}>
+            <Txt size={13} weight={600} color={colors.white}>Verify now</Txt>
+          </Pressable>
+        ) : null}
       </Row>
       <Row style={{ gap: 12, padding: 16 }}>
         <Icon name="id-card" size={20} color={comp === 'approved' ? colors.green : colors.gray400} />

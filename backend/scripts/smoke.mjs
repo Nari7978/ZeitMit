@@ -1,5 +1,7 @@
 // End-to-end smoke test against a running API (local `npm run dev` or the deployed Worker).
 // Needs DEV_LOGIN_CODES = "true". Usage: node scripts/smoke.mjs [baseUrl]
+// Admin steps sign a session with JWT_SECRET (defaults to the local .dev.vars value).
+import crypto from 'node:crypto';
 const BASE = process.argv[2] ?? 'http://localhost:8787';
 let failures = 0;
 const ok = (cond, label) => {
@@ -21,6 +23,23 @@ async function login(email) {
   const r = await call('POST', '/auth/request-code', null, { email });
   const v = await call('POST', '/auth/verify', null, { email, code: r.data.devCode });
   return v.data;
+}
+
+/** Admin session for an existing user (signed like the API does). */
+function adminToken(userId) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const head = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: userId, email: 'admin@example.com', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 })}`;
+  const sig = crypto.createHmac('sha256', process.env.JWT_SECRET ?? 'local-dev-secret-change-me').update(head).digest('base64url');
+  return `${head}.${sig}`;
+}
+const PIXEL = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+/** Uploads ID + selfie and has an admin approve them. */
+async function verifyId(user) {
+  const doc = await call('POST', '/photos', user.token, { kind: 'id', data: PIXEL });
+  const selfie = await call('POST', '/photos', user.token, { kind: 'id', data: PIXEL });
+  const sub = await call('POST', '/me/verification', user.token, { idPhotoId: doc.data.id, selfiePhotoId: selfie.data.id });
+  const dec = await call('POST', `/admin/verifications/${user.user.id}/approve`, adminToken(user.user.id));
+  return { sub, dec, doc: doc.data, selfie: selfie.data };
 }
 
 const health = await call('GET', '/');
@@ -45,6 +64,33 @@ let r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'date
 ok(r.status === 403, 'booking blocked until 18+ confirmed');
 
 await call('PATCH', '/me', T, { name: 'Mira Hoffmann', ageConfirmed: true });
+r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'date', date: day.date, time: day.times[0], dur: 2, place: 'Museum lobby', boundariesAgreed: true });
+ok(r.status === 403 && /Verify your ID/.test(r.data.error), 'booking blocked until ID verified');
+r = await call('GET', '/me', T);
+ok(r.data.idStatus === 'none', 'new customer starts unverified');
+r = await call('POST', '/me/verification', T, { idPhotoId: 'ph_nope', selfiePhotoId: 'ph_nope2' });
+ok(r.status === 400, 'verification needs own uploaded photos');
+{
+  const doc = await call('POST', '/photos', T, { kind: 'id', data: PIXEL });
+  const selfie = await call('POST', '/photos', T, { kind: 'id', data: PIXEL });
+  r = await call('POST', '/me/verification', T, { idPhotoId: doc.data.id, selfiePhotoId: selfie.data.id });
+  ok(r.status === 200 && r.data.idStatus === 'pending', 'ID + selfie submitted for review');
+  r = await call('GET', '/admin/verifications', T);
+  ok(r.status === 403, 'customer cannot open ID reviews');
+  const A = adminToken(customer.user.id);
+  r = await call('GET', '/admin/verifications', A);
+  const mine = r.data?.find((x) => x.id === customer.user.id);
+  ok(!!mine?.idPhotoUrl && !!mine?.selfieUrl, 'admin sees both ID photos');
+  r = await call('POST', `/admin/verifications/${customer.user.id}/reject`, A, { reason: 'Selfie is blurry.' });
+  r = await call('GET', '/me', T);
+  ok(r.data.idStatus === 'rejected' && r.data.idNote === 'Selfie is blurry.', 'rejection reason reaches the customer');
+  const gone = await fetch(`${BASE}/photos/${doc.data.id}?token=${A}`);
+  ok(gone.status === 404, 'ID photos deleted after the decision');
+  const v = await verifyId(customer);
+  ok(v.sub.status === 200 && v.dec.status === 200, 'resubmitted and approved');
+  r = await call('GET', '/me', T);
+  ok(r.data.idStatus === 'approved', 'customer is verified');
+}
 r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'date', date: day.date, time: day.times[0], dur: 2, place: 'Museum lobby' });
 ok(r.status === 400 && /boundaries/.test(r.data.error), 'date booking requires agreeing to boundaries');
 
@@ -116,6 +162,7 @@ r = await call('POST', '/gifts/redeem', friend.token, { code: giftCode.toLowerCa
 ok(r.status === 200 && r.data.credit === 10000, 'friend redeems €100 credit');
 r = await call('POST', '/gifts/redeem', friend.token, { code: giftCode });
 ok(r.status === 409, 'gift code works only once');
+await verifyId(friend);
 const slot3 = (await call('GET', '/companions/demo_noah')).data.slots.find((d) => d.times.length);
 r = await call('POST', '/bookings', friend.token, { companionId: 'demo_noah', act: 'movies', date: slot3.date, time: slot3.times[0], dur: 2, place: 'Cinema' });
 ok(r.status === 201 && r.data.creditUsed === 4400, 'credit applied to booking (€44)');
@@ -124,7 +171,6 @@ r = await call('GET', '/me', friend.token);
 ok(r.data.credit === 10000, 'cancel returns credit to account');
 
 // Photos
-const PIXEL = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
 r = await call('POST', '/photos', T, { kind: 'avatar', data: PIXEL });
 ok(r.status === 201, 'avatar uploaded');
 const pic = await fetch(BASE + r.data.url);

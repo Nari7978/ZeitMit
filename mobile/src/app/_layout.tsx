@@ -62,6 +62,7 @@ export default function RootLayout() {
           <Stack.Screen name="notifications" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
           <Stack.Screen name="book/[cid]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="become" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="verify" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
         </Stack.Protected>

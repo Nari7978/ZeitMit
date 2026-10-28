@@ -8,8 +8,15 @@ export function openProfile(id: string) {
   router.push({ pathname: '/profile/[id]', params: { id } });
 }
 
+/** Opens the booking flow, or the one-time ID check first if the customer isn't verified yet. */
 export function openBooking(cid: string, day?: number) {
+  if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);
   router.push({ pathname: '/book/[cid]', params: day == null ? { cid } : { cid, day: String(day) } });
+}
+
+export function openVerify(next?: string) {
+  useStore.getState().closeSheet();
+  router.push({ pathname: '/verify', params: next ? { next } : {} });
 }
 
 /** "Book again": profile with the booking flow on top. */
@@ -55,6 +62,8 @@ export function followGo(go: string) {
     openChat(go.slice(5));
   } else if (go.startsWith('tab:')) {
     toBookings(go.slice(4) as BTab);
+  } else if (go === 'verify') {
+    openVerify();
   } else if (go.startsWith('comp:')) {
     const tab = go.slice(5);
     useStore.setState({ sheet: null });

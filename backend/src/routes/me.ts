@@ -16,7 +16,7 @@ export const me = new Hono<AppEnv>();
 me.get('/', async (c) => {
   const u = c.get('user');
   const row = await c.env.DB.prepare(
-    `SELECT u.id, u.email, u.name, u.bio, u.role, u.age_confirmed, u.created_at, u.avatar_id, u.credit, u.prefs, u.language,
+    `SELECT u.id, u.email, u.name, u.bio, u.role, u.age_confirmed, u.created_at, u.avatar_id, u.credit, u.prefs, u.language, u.id_status, u.id_note,
             c.status AS companion_status
      FROM users u LEFT JOIN companions c ON c.user_id = u.id WHERE u.id = ?`,
   ).bind(u.id).first<Record<string, unknown> & { avatar_id: string | null; prefs: string; companion_status: string | null }>();
@@ -26,8 +26,34 @@ me.get('/', async (c) => {
     avatarUrl: row?.avatar_id ? `/photos/${row.avatar_id}` : null,
     prefs: { ...DEFAULT_PREFS, ...parseJson<Partial<Prefs>>(row?.prefs, {}) },
     companionStatus: row?.companion_status ?? 'none',
+    idStatus: row?.id_status ?? 'none',
+    idNote: row?.id_note ?? null,
     saved: saved.results.map((r) => r.companion_id),
   });
+});
+
+/**
+ * ID check before the first booking: a photo of the ID document and a selfie holding it.
+ * Both stay private (admins only) and are deleted after the decision.
+ */
+me.post('/verification', async (c) => {
+  const u = c.get('user');
+  const { idPhotoId, selfiePhotoId } = await c.req.json<{ idPhotoId?: string; selfiePhotoId?: string }>();
+  const cur = await c.env.DB.prepare('SELECT id_status, id_doc_photo_id, id_selfie_photo_id FROM users WHERE id = ?').bind(u.id)
+    .first<{ id_status: string; id_doc_photo_id: string | null; id_selfie_photo_id: string | null }>();
+  if (cur?.id_status === 'approved') fail(409, 'Your ID is already verified.');
+  if (!idPhotoId || !selfiePhotoId || idPhotoId === selfiePhotoId) fail(400, 'Add a photo of your ID and a selfie holding it.');
+  const owned = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM photos WHERE id IN (?, ?) AND owner_id = ? AND kind = 'id'")
+    .bind(idPhotoId, selfiePhotoId, u.id).first<{ n: number }>();
+  if (owned?.n !== 2) fail(400, 'Upload the photos again, please.');
+  // Replace an earlier submission (e.g. after a rejection).
+  const old = [cur?.id_doc_photo_id, cur?.id_selfie_photo_id].filter((x): x is string => !!x && x !== idPhotoId && x !== selfiePhotoId);
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE users SET id_status = 'pending', id_doc_photo_id = ?, id_selfie_photo_id = ?, id_submitted_at = unixepoch(), id_note = NULL WHERE id = ?")
+      .bind(idPhotoId, selfiePhotoId, u.id),
+    ...old.map((id) => c.env.DB.prepare('DELETE FROM photos WHERE id = ? AND owner_id = ?').bind(id, u.id)),
+  ]);
+  return c.json({ idStatus: 'pending' });
 });
 
 /** Personal details, 18+ confirmation and the Expo push token. */
@@ -64,7 +90,10 @@ me.delete('/', async (c) => {
     "SELECT COUNT(*) AS n FROM bookings WHERE (customer_id = ? OR companion_id = ?) AND status IN ('pending', 'confirmed')",
   ).bind(u.id, u.id).first<{ n: number }>();
   if (active && active.n > 0) fail(409, 'Complete or cancel your active bookings first.');
-  await c.env.DB.prepare('UPDATE users SET suspended = 1, push_token = NULL WHERE id = ?').bind(u.id).run();
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE users SET suspended = 1, push_token = NULL, id_doc_photo_id = NULL, id_selfie_photo_id = NULL, id_status = CASE id_status WHEN 'pending' THEN 'none' ELSE id_status END WHERE id = ?").bind(u.id),
+    c.env.DB.prepare("DELETE FROM photos WHERE owner_id = ? AND kind = 'id'").bind(u.id),
+  ]);
   return c.json({ ok: true });
 });
 

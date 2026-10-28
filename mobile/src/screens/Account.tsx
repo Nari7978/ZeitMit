@@ -46,7 +46,7 @@ export default function Account() {
       ['lock', 'Privacy controls', '', page('privacy')],
       ['ban', 'Blocked accounts', '', page('blocked')],
       ['key-round', 'Account security', 'Email code', page('security')],
-      ['shield-check', 'Verification', user.ageConfirmed ? 'Age confirmed' : '', page('verification')],
+      ['shield-check', 'Verification', user.idStatus === 'approved' ? 'ID verified' : user.idStatus === 'pending' ? 'ID in review' : 'Verify ID', page('verification')],
     ] },
     { title: 'Support', rows: [
       ['life-buoy', 'Help centre', '', page('help')],
