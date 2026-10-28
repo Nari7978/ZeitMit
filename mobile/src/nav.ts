@@ -32,9 +32,19 @@ export function openChat(key: string) {
   router.push({ pathname: '/chat/[id]', params: { id: key } });
 }
 
-/** Message a companion, creating an empty conversation if needed. */
-export async function messageCompanion(cid: string) {
-  const id = await useStore.getState().openConversation(cid);
+/** Chat is unlocked by a paid booking that is still pending or confirmed (or recently completed). */
+export function canMessage(cid: string, s = useStore.getState()) {
+  return s.convos.some((c) => c.cid === cid && c.canSend) || s.bookings.some((b) => b.cid === cid && (b.status === 'pending' || b.status === 'confirmed'));
+}
+
+/** Message a companion you've booked; otherwise explain that chat opens after booking. */
+export async function messageCompanion(cid: string, name?: string) {
+  const s = useStore.getState();
+  if (!canMessage(cid)) {
+    s.showToast(name ? `You can message ${name} once you’ve booked. Add a note to your request instead.` : 'Chat opens once you’ve booked. Add a note to your request instead.');
+    return;
+  }
+  const id = await s.openConversation(cid);
   if (id) openChat(id);
 }
 

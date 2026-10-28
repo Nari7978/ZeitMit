@@ -92,6 +92,8 @@ ok(r.status === 400, 'verification needs own uploaded photos');
   r = await call('GET', '/me', T);
   ok(r.data.idStatus === 'approved', 'customer is verified');
 }
+r = await call('POST', '/conversations', T, { companionId: 'demo_kai' });
+ok(r.status === 403 && /once you’ve booked/.test(r.data.error), 'cannot message a companion before booking');
 r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'date', date: day.date, time: day.times[0], dur: 2, place: 'Museum lobby' });
 ok(r.status === 400 && /boundaries/.test(r.data.error), 'date booking requires agreeing to boundaries');
 
@@ -129,7 +131,7 @@ ok(r.data.some((n) => n.title === 'Booking accepted'), 'customer got "Booking ac
 // Chat + realtime
 r = await call('GET', '/conversations', T);
 const conv = r.data.find((x) => x.cid === 'demo_kai');
-ok(!!conv && conv.status === 'confirmed', 'conversation linked to booking');
+ok(!!conv && conv.status === 'confirmed' && conv.canSend === true, 'conversation linked to booking and open');
 const wsUrl = BASE.replace(/^http/, 'ws') + `/conversations/${conv.id}/ws?token=${K}`;
 const ws = new WebSocket(wsUrl);
 const got = new Promise((res) => {
@@ -146,12 +148,26 @@ r = await call('GET', '/conversations?side=companion', K);
 ok(r.data.find((x) => x.id === conv.id)?.unread === 1, 'companion unread count = 1');
 r = await call('GET', `/conversations/${conv.id}/messages`, K);
 ok(r.data.at(-1).t === 'See you at the lobby!' && !r.data.at(-1).me, 'message history loads');
+for (const text of ['Call me on +49 151 2345678', 'anna (at) gmail (dot) com']) {
+  r = await call('POST', `/conversations/${conv.id}/messages`, T, { text });
+  ok(r.status === 400 && /phone numbers/.test(r.data.error), `contact details blocked: “${text}”`);
+}
+r = await call('POST', `/conversations/${conv.id}/messages`, K, { text: 'See you 30.10.2026 at 12:30, it’s €66 for 2 hours.' });
+ok(r.status === 201, 'dates, times and prices still allowed');
 
 // Cancel + refund
 const slot2 = (await call('GET', '/companions/demo_lena')).data.slots.find((d) => d.times.length);
 r = await call('POST', '/bookings', T, { companionId: 'demo_lena', act: 'coffee', date: slot2.date, time: slot2.times[0], dur: 1, place: 'Café' });
-r = await call('POST', `/bookings/${r.data.id}/cancel`, T);
+const lenaBooking = r.data.id;
+r = await call('POST', '/conversations', T, { companionId: 'demo_lena' });
+ok(r.status === 200, 'chat opens once a paid booking exists');
+const lenaConv = r.data.id;
+r = await call('POST', `/bookings/${lenaBooking}/cancel`, T);
 ok(r.status === 200 && r.data.refunded === 3080, 'pending request cancels with full refund (€30.80)');
+r = await call('POST', `/conversations/${lenaConv}/messages`, T, { text: 'Hi again' });
+ok(r.status === 403 && /closed/.test(r.data.error), 'chat closes when the booking is cancelled');
+r = await call('GET', '/conversations', T);
+ok(r.data.find((x) => x.id === lenaConv)?.canSend === false, 'inbox marks the closed chat');
 
 // Safety, gifts, saved
 r = await call('POST', '/safety/checkins', T, { bookingId, contactName: 'Anna', contactPhone: '+49 151 2345678', every: 30 });

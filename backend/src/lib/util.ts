@@ -69,3 +69,10 @@ export const windowOf = (hour: number) => (hour < 12 ? 'am' : hour < 17 ? 'pm' :
 // Flags messages that try to move payment/contact off-platform or ask for sexual services.
 const FLAG_RE = /(paypal|revolut|cash ?app|bank ?transfer|iban|whats ?app|telegram|signal|snapchat|instagram|\+?\d[\d ()-]{7,}\d|\bsex|\bnude|\bescort|hotel room|overnight)/i;
 export const shouldFlag = (text: string) => FLAG_RE.test(text);
+
+// Phone numbers (8+ digits, any spacing) and email addresses can't be sent in chat:
+// bookings, payment and contact stay inside ZeitMit, which is what keeps both sides safe.
+const PHONE_RE = /(?:\+|\b00)?\d(?:[\s().\/-]*\d){7,}/;
+const EMAIL_RE = /[A-Z0-9._%+-]+\s*(?:@|\(at\)|\[at\])\s*[A-Z0-9.-]+\s*(?:\.|\(dot\))\s*[A-Z]{2,}/i;
+const DATE_RE = /\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2})\b/g;
+export const hasContactDetails = (text: string) => PHONE_RE.test(text.replace(DATE_RE, ' ')) || EMAIL_RE.test(text);

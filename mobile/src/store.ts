@@ -28,6 +28,8 @@ export type Booking = {
 export type Convo = {
   id: string; cid: string; customerId: string; name: string; hue: number; photoUrl?: string | null; bookingId: string | null; act: ActId | null; startsAt: number | null;
   status: BookingStatus | 'none'; last: { me: boolean; t: string } | null; lastAt: number; unread: number;
+  /** Chats are open only with a paid booking (and for 7 days after the meeting). */
+  canSend: boolean;
 };
 export type Notif = { id: string; icon: string; tone: Tone; title: string; body: string; go: string; read: number; created_at: number };
 export type CompBooking = {

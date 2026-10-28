@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
 import { notify } from './lib/notify';
-import { fail, newId, now, shouldFlag } from './lib/util';
+import { fail, hasContactDetails, newId, now, shouldFlag } from './lib/util';
 
 /**
  * One Durable Object per conversation. Holds the open WebSockets (hibernation API)
@@ -50,6 +50,21 @@ async function member(env: Env, convId: string, userId: string) {
   return cv!;
 }
 
+/**
+ * Chats open only with a paid booking between the two: while it's pending or confirmed,
+ * and for 7 days after the meeting. Otherwise the history stays readable but nobody can write.
+ */
+const CHAT_DAYS_AFTER = 7;
+const OPEN_SQL = `EXISTS (SELECT 1 FROM bookings ob WHERE ob.customer_id = cv.customer_id AND ob.companion_id = cv.companion_id AND ob.paid = 1
+  AND (ob.status IN ('pending', 'confirmed') OR (ob.status = 'completed' AND ob.starts_at + ob.duration_h * 3600 > ?)))`;
+const closedAfter = () => now() - CHAT_DAYS_AFTER * 86400;
+
+async function chatOpen(env: Env, customerId: string, companionId: string) {
+  const r = await env.DB.prepare(`SELECT ${OPEN_SQL} AS open FROM (SELECT ? AS customer_id, ? AS companion_id) cv`)
+    .bind(closedAfter(), customerId, companionId).first<{ open: number }>(); // OPEN_SQL's cut-off comes first in the text
+  return !!r?.open;
+}
+
 export const chat = new Hono<AppEnv>();
 
 /** Inbox. `side=customer` (default) or `side=companion`. */
@@ -58,7 +73,7 @@ chat.get('/', async (c) => {
   const side = c.req.query('side') === 'companion' ? 'companion' : 'customer';
   const r = await c.env.DB.prepare(
     `SELECT cv.*, cp.display_name AS companion_name, cp.hue, cp.photo_id, cu.name AS customer_name, cu.avatar_id,
-            b.activity, b.starts_at, b.status AS booking_status,
+            b.activity, b.starts_at, b.status AS booking_status, ${OPEN_SQL} AS open,
             (SELECT body FROM messages m WHERE m.conversation_id = cv.id ORDER BY created_at DESC LIMIT 1) AS last_body,
             (SELECT sender_id FROM messages m WHERE m.conversation_id = cv.id ORDER BY created_at DESC LIMIT 1) AS last_sender
      FROM conversations cv
@@ -67,7 +82,7 @@ chat.get('/', async (c) => {
      LEFT JOIN bookings b ON b.id = cv.booking_id
      WHERE ${side === 'customer' ? 'cv.customer_id' : 'cv.companion_id'} = ?
      ORDER BY cv.last_at DESC LIMIT 100`,
-  ).bind(u.id).all<ConvRow & { companion_name: string; hue: number; photo_id: string | null; avatar_id: string | null; customer_name: string; activity: string | null; starts_at: number | null; booking_status: string | null; last_body: string | null; last_sender: string | null }>();
+  ).bind(closedAfter(), u.id).all<ConvRow & { open: number; companion_name: string; hue: number; photo_id: string | null; avatar_id: string | null; customer_name: string; activity: string | null; starts_at: number | null; booking_status: string | null; last_body: string | null; last_sender: string | null }>();
   return c.json(r.results.map((x) => ({
     id: x.id,
     cid: x.companion_id,
@@ -82,15 +97,17 @@ chat.get('/', async (c) => {
     last: x.last_body ? { me: x.last_sender === u.id, t: x.last_body } : null,
     lastAt: x.last_at,
     unread: side === 'customer' ? x.customer_unread : x.companion_unread,
+    canSend: !!x.open,
   })));
 });
 
-/** Start (or reopen) a chat with a companion before booking. */
+/** Opens the chat with a companion you have a paid booking with. */
 chat.post('/', async (c) => {
   const u = c.get('user');
   const { companionId } = await c.req.json<{ companionId: string }>();
-  const comp = await c.env.DB.prepare("SELECT 1 FROM companions WHERE user_id = ? AND status = 'approved'").bind(companionId).first();
+  const comp = await c.env.DB.prepare("SELECT display_name FROM companions WHERE user_id = ? AND status = 'approved'").bind(companionId).first<{ display_name: string }>();
   if (!comp || companionId === u.id) fail(404, 'This companion isn’t available.');
+  if (!(await chatOpen(c.env, u.id, companionId))) fail(403, `You can message ${comp!.display_name} once you’ve booked and paid. Add a note to your booking request instead.`);
   await c.env.DB.prepare('INSERT OR IGNORE INTO conversations (id, customer_id, companion_id) VALUES (?, ?, ?)').bind(newId('cv'), u.id, companionId).run();
   const cv = await c.env.DB.prepare('SELECT id FROM conversations WHERE customer_id = ? AND companion_id = ?').bind(u.id, companionId).first<{ id: string }>();
   return c.json({ id: cv!.id });
@@ -112,6 +129,8 @@ chat.post('/:id/messages', async (c) => {
   const { text } = await c.req.json<{ text?: string }>();
   const body = (text ?? '').trim().slice(0, 2000);
   if (!body) fail(400, 'Message is empty.');
+  if (!(await chatOpen(c.env, cv.customer_id, cv.companion_id))) fail(403, 'This chat is closed. Chats are open while you have a paid booking, and for 7 days after you meet.');
+  if (hasContactDetails(body)) fail(400, 'For everyone’s safety, phone numbers and email addresses can’t be shared in chat. Keep talking here in ZeitMit.');
   const other = cv.customer_id === u.id ? cv.companion_id : cv.customer_id;
   const blocked = await c.env.DB.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').bind(other, u.id).first();
   if (blocked) fail(403, 'You can’t message this person.');

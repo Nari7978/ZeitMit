@@ -373,10 +373,18 @@ const DE: Record<string, string> = {
   'We’re reviewing the first profiles now. Check back soon.': 'Wir prüfen gerade die ersten Profile. Schau bald wieder vorbei.',
   'Confirming your payment…': 'Zahlung wird bestätigt …',
   'We’re still confirming your payment. Check Bookings in a moment.': 'Wir bestätigen deine Zahlung noch. Schau gleich unter Buchungen nach.',
+  // Chat after booking only
+  'This chat is closed. It opens again if they book you.': 'Dieser Chat ist geschlossen. Er öffnet sich wieder, wenn die Person dich bucht.',
+  'Chat is open while you have a paid booking, and for 7 days after you meet.': 'Der Chat ist offen, solange du eine bezahlte Buchung hast, und 7 Tage nach eurem Treffen.',
+  'Chat opens once you’ve booked. Add a note to your request instead.': 'Der Chat öffnet sich, sobald du gebucht hast. Schreib stattdessen eine Notiz in deine Anfrage.',
+  'This chat is closed. Chats are open while you have a paid booking, and for 7 days after you meet.': 'Dieser Chat ist geschlossen. Chats sind offen, solange ihr eine bezahlte Buchung habt, und 7 Tage nach eurem Treffen.',
+  'For everyone’s safety, phone numbers and email addresses can’t be shared in chat. Keep talking here in ZeitMit.': 'Zur Sicherheit aller können Telefonnummern und E-Mail-Adressen im Chat nicht geteilt werden. Schreibt einfach hier in ZeitMit weiter.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^You can message (.+) once you’ve booked\. Add a note to your request instead\.$/, 'Du kannst $1 schreiben, sobald du gebucht hast. Schreib stattdessen eine Notiz in deine Anfrage.'],
+  [/^You can message (.+) once you’ve booked and paid\. Add a note to your booking request instead\.$/, 'Du kannst $1 schreiben, sobald du gebucht und bezahlt hast. Schreib stattdessen eine Notiz in deine Buchungsanfrage.'],
   [/^Paid\. Your gift code: (.+)$/, 'Bezahlt. Dein Geschenkcode: $1'],
   [/^(.+) · Member since (\d+)$/, '{$1} · Mitglied seit $2'],
   [/^Member since (\d+)$/, 'Mitglied seit $1'],

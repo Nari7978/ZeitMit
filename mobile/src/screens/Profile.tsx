@@ -8,7 +8,7 @@ import { colors } from '../theme';
 import { AM, ageStr, eur, LEVEL, NO, ratingStr, reviewsStr, slotDay, type Companion } from '../data';
 import { api } from '../api';
 import { useStore } from '../store';
-import { messageCompanion, openBooking } from '../nav';
+import { canMessage, messageCompanion, openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, useTopPad } from '../ui/common';
@@ -32,6 +32,7 @@ export default function Profile() {
   const top = useTopPad();
   const [scrolled, setScrolled] = useState(false);
   const [allReviews, setAllReviews] = useState(false);
+  const chatOpen = useStore((s) => canMessage(id, s));
   const { showToast, openSheet } = useStore.getState();
   if (!c) return null;
 
@@ -216,7 +217,7 @@ export default function Profile() {
           <Txt size={14} color={colors.gray600} numberOfLines={1}><H size={23} weight={700} ls={-0.02}>{eur(c.rate)}</H> / hour</Txt>
           <Txt size={12} color={colors.gray600} numberOfLines={1}>+ 10% service fee</Txt>
         </View>
-        <SecondaryButton label="Message" icon="message-circle" iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 16 }} onPress={() => messageCompanion(c.id)} />
+        <SecondaryButton label="Message" icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 16 }} onPress={() => messageCompanion(c.id, c.name)} />
         <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 22, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
           <Txt size={15} weight={600} color={colors.white}>Book now</Txt>
         </PressBox>

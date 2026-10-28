@@ -6,10 +6,10 @@ import { colors, font } from '../theme';
 import { BTAB, notifWhen, ST, type BTab } from '../data';
 import { useStore } from '../store';
 import { api, wsUrl } from '../api';
-import { toBookings } from '../nav';
+import { bookAgain, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, Row, Stripes, Txt, TypingDots, Photo } from '../ui/primitives';
-import { CircleButton } from '../ui/common';
+import { CircleButton, PrimaryButton } from '../ui/common';
 import { convoContext } from './Messages';
 import { locale, t } from '../i18n';
 
@@ -29,6 +29,8 @@ export default function Chat() {
   const compSide = useStore((s) => s.compConvos.find((c) => c.id === id));
   const x = cust ?? compSide;
   const isComp = !cust && !!compSide;
+  // The server decides; until the inbox has loaded, assume open (sending is checked again there).
+  const open = x?.canSend ?? true;
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState('');
@@ -155,7 +157,7 @@ export default function Chat() {
         onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
       >
-        {msgs && !msgs.length ? (
+        {msgs && !msgs.length && open ? (
           <Txt size={13} lh={1.5} color={colors.gray600} align="center" style={{ marginVertical: 30, alignSelf: 'center', maxWidth: 260 }}>
             Say hello and suggest a plan. Keep it respectful, public and on ZeitMit.
           </Txt>
@@ -179,6 +181,17 @@ export default function Chat() {
         ) : null}
       </ScrollView>
 
+      {!open ? (
+        <View style={{ paddingTop: 14, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 10 }}>
+          <Row style={{ gap: 10, alignItems: 'flex-start' }}>
+            <Icon name="lock" size={18} color={colors.gray600} />
+            <Txt size={13} lh={1.45} color={colors.gray800} style={{ flex: 1 }}>
+              {isComp ? 'This chat is closed. It opens again if they book you.' : 'Chat is open while you have a paid booking, and for 7 days after you meet.'}
+            </Txt>
+          </Row>
+          {!isComp && x ? <PrimaryButton label="Book again" height={46} radius={14} size={14} onPress={() => bookAgain(x.cid)} /> : null}
+        </View>
+      ) : (
       <Row style={{ paddingTop: 10, paddingHorizontal: 12, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 8 }}>
         <TextInput
           value={draft}
@@ -195,6 +208,7 @@ export default function Chat() {
           <Icon name="arrow-up" size={20} color={canSend ? colors.white : colors.gray500} />
         </Pressable>
       </Row>
+      )}
     </KeyboardAvoidingView>
   );
 }
