@@ -273,6 +273,32 @@ ok(r.data.g === 'nb' && r.data.ageValue === 28 && !r.data.pron, 'gender, age and
 r = await call('GET', '/companions');
 ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not public');
 
+// Admin deleting
+{
+  const A = adminToken(customer.user.id);
+  r = await call('GET', '/admin/reviews', A);
+  const lenaReview = r.data.find((x) => x.companion_id === 'demo_lena');
+  const rows = r.data.filter((x) => x.companion_id === 'demo_lena').length;
+  r = await call('DELETE', `/admin/reviews/${lenaReview.id}`, A);
+  const after = (await call('GET', '/companions/demo_lena')).data;
+  ok(r.status === 200 && after.reviews === rows - 1 && !after.reviewList.some((x) => x.t === lenaReview.text && x.created_at === lenaReview.created_at),
+    `admin deletes a review, count recalculated from real reviews (${rows} → ${after.reviews})`);
+  r = await call('DELETE', `/admin/users/${customer.user.id}`, A);
+  ok(r.status === 400, 'admin cannot delete their own account');
+  r = await call('DELETE', `/admin/companions/${customer.user.id}`, A);
+  ok(r.status === 200, 'admin removes a companion listing');
+  r = await call('GET', '/companion', T);
+  ok(r.data.status === 'none', 'listing is gone, account stays');
+  r = await call('DELETE', `/admin/users/${friend.user.id}`, A);
+  ok(r.status === 200, 'admin deletes an account');
+  r = await call('GET', '/me', friend.token);
+  ok(r.status === 401, 'deleted account is logged out');
+  r = await call('GET', `/admin/users?q=friend+${stamp}`, A);
+  ok(!r.data.some((x) => x.id === friend.user.id), 'deleted account no longer listed');
+  r = await call('DELETE', `/admin/reviews/x`, T);
+  ok(r.status === 403, 'non-admins cannot delete');
+}
+
 // Access control
 r = await call('GET', '/admin/stats', T);
 ok(r.status === 403, 'non-admin blocked from admin API');

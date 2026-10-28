@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, eur, photoSrc, session, when } from './api';
 
-type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'safety' | 'users';
+type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'safety' | 'reviews' | 'users';
 type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -29,6 +29,7 @@ export function App() {
     ['companions', 'Companion reviews', stats?.pendingCompanions],
     ['bookings', 'Bookings & payments'],
     ['safety', 'Reports & safety', (stats?.openReports ?? 0) + (stats?.sos ?? 0)],
+    ['reviews', 'Reviews'],
     ['users', 'Users'],
   ];
   const ctx = { say, refresh: loadStats };
@@ -53,6 +54,7 @@ export function App() {
         {page === 'companions' && <Companions {...ctx} />}
         {page === 'bookings' && <Bookings {...ctx} />}
         {page === 'safety' && <Safety {...ctx} />}
+        {page === 'reviews' && <Reviews {...ctx} />}
         {page === 'users' && <Users {...ctx} />}
       </main>
       {toast ? <div className="toast" role="status">{toast}</div> : null}
@@ -209,6 +211,14 @@ function Companions({ say, refresh }: Ctx) {
       load(); refresh();
     } catch (e) { say((e as Error).message); }
   };
+  const remove = async (a: Applicant) => {
+    if (!confirm(`Remove ${a.name}’s companion listing for good?\n\nTheir profile, reviews, bookings and chats as a companion are deleted. Open bookings are cancelled and refunded. Their customer account stays.`)) return;
+    try {
+      const r = await api<{ refunded: number }>('DELETE', `/admin/companions/${a.id}`);
+      say(`${a.name}’s listing removed${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}.`);
+      load(); refresh();
+    } catch (e) { say((e as Error).message); }
+  };
   return (
     <>
       <h1>Companion reviews</h1>
@@ -239,7 +249,11 @@ function Companions({ say, refresh }: Ctx) {
                       <button className="btn red" onClick={() => void decide(a, 'reject')}>Reject</button>
                     </div>
                   </>
-                ) : null}
+                ) : (
+                  <div className="row" style={{ marginTop: 6 }}>
+                    <button className="btn red" onClick={() => void remove(a)}>Remove listing</button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -361,6 +375,15 @@ function Users({ say }: Ctx) {
     if (s && !confirm(`Suspend ${u.email}?`)) return;
     try { await api('POST', `/admin/users/${u.id}/suspend`, { suspended: s }); say(s ? 'Suspended.' : 'Reactivated.'); load(); } catch (e) { say((e as Error).message); }
   };
+  const remove = async (u: UserRow) => {
+    const typed = prompt(`Delete ${u.email} permanently?\n\nThis removes the account and everything linked to it: profile, companion listing, bookings, chats, reviews and photos. Open bookings are cancelled and refunded. It can’t be undone.\n\nType DELETE to confirm.`);
+    if (typed?.trim().toUpperCase() !== 'DELETE') return;
+    try {
+      const r = await api<{ refunded: number }>('DELETE', `/admin/users/${u.id}`);
+      say(`${u.email} deleted${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}.`);
+      load();
+    } catch (e) { say((e as Error).message); }
+  };
   return (
     <>
       <h1>Users</h1>
@@ -372,7 +395,44 @@ function Users({ say }: Ctx) {
             <tbody>{list.map((u) => (
               <tr key={u.id} style={{ opacity: u.suspended ? 0.55 : 1 }}>
                 <td>{u.email}</td><td>{u.name || '—'}</td><td>{u.role}</td><td>{u.id_status}</td><td>{when(u.created_at)}</td>
-                <td>{u.role !== 'admin' ? <button className={`btn ${u.suspended ? '' : 'red'}`} onClick={() => void toggle(u)}>{u.suspended ? 'Reactivate' : 'Suspend'}</button> : null}</td>
+                <td>{u.role !== 'admin' ? (
+                  <div className="row" style={{ flexWrap: 'nowrap' }}>
+                    <button className={`btn ${u.suspended ? '' : 'red'}`} onClick={() => void toggle(u)}>{u.suspended ? 'Reactivate' : 'Suspend'}</button>
+                    <button className="btn red" onClick={() => void remove(u)}>Delete</button>
+                  </div>
+                ) : null}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+    </>
+  );
+}
+
+type ReviewRow = { id: string; author_name: string; activity: string; stars: number; text: string; created_at: number; companion: string };
+
+function Reviews({ say }: Ctx) {
+  const [list, setList] = useState<ReviewRow[] | null>(null);
+  const load = useCallback(() => { api<ReviewRow[]>('GET', '/admin/reviews').then(setList).catch((e) => say(e.message)); }, [say]);
+  useEffect(load, [load]);
+  const remove = async (r: ReviewRow) => {
+    if (!confirm(`Delete ${r.author_name}’s review of ${r.companion}? The companion’s rating is recalculated.`)) return;
+    try { await api('DELETE', `/admin/reviews/${r.id}`); say('Review deleted.'); load(); } catch (e) { say((e as Error).message); }
+  };
+  return (
+    <>
+      <h1>Reviews</h1>
+      <p className="muted">The newest 200 reviews. Delete anything abusive, fake or off-platform.</p>
+      <div className="card" style={{ overflowX: 'auto' }}>
+        {!list ? <p className="muted">Loading…</p> : !list.length ? <p className="muted">No reviews yet.</p> : (
+          <table>
+            <thead><tr><th>Date</th><th>Companion</th><th>From</th><th>Stars</th><th>Review</th><th /></tr></thead>
+            <tbody>{list.map((r) => (
+              <tr key={r.id}>
+                <td>{when(r.created_at)}</td><td>{r.companion}</td><td>{r.author_name} · {r.activity}</td>
+                <td>{'★'.repeat(r.stars)}</td><td style={{ maxWidth: 360 }}>{r.text || <span className="muted">No text</span>}</td>
+                <td><button className="btn red" onClick={() => void remove(r)}>Delete</button></td>
               </tr>
             ))}</tbody>
           </table>

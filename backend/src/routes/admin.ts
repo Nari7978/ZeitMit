@@ -133,3 +133,84 @@ admin.post('/users/:id/suspend', async (c) => {
   await c.env.DB.prepare('UPDATE users SET suspended = ? WHERE id = ?').bind(suspended ? 1 : 0, c.req.param('id')).run();
   return c.json({ ok: true });
 });
+
+// ---- Deleting ----
+
+const RATING_SQL = `UPDATE companions SET review_count = (SELECT COUNT(*) FROM reviews WHERE companion_id = ?1),
+  rating = CASE WHEN (SELECT COUNT(*) FROM reviews WHERE companion_id = ?1) >= 3
+                THEN ROUND((SELECT AVG(stars) FROM reviews WHERE companion_id = ?1), 1) ELSE NULL END
+  WHERE user_id = ?1`;
+
+/** Refunds every held payment still open on bookings where this person is the customer or the companion. */
+async function refundOpen(env: AppEnv['Bindings'], col: 'customer_id' | 'companion_id' | 'both', id: string) {
+  const where = col === 'both' ? '(customer_id = ?1 OR companion_id = ?1)' : `${col} = ?1`;
+  const open = await env.DB.prepare(`SELECT * FROM bookings WHERE ${where} AND status IN ('pending', 'confirmed') AND pay_status = 'held'`)
+    .bind(id).all<Parameters<typeof refundBooking>[1]>();
+  let n = 0;
+  for (const b of open.results) if (await refundBooking(env, b, (amt) => `Cancelled by ZeitMit support · ${amt} refunded`)) n++;
+  return n;
+}
+
+/** Deletes an account and everything linked to it. Open bookings are cancelled and refunded first. */
+admin.delete('/users/:id', async (c) => {
+  const id = c.req.param('id');
+  if (id === c.get('user').id) fail(400, 'You can’t delete your own account here.');
+  const u = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(id).first<{ id: string; email: string }>();
+  if (!u) fail(404, 'User not found.');
+  const refunded = await refundOpen(c.env, 'both', id);
+  const mine = '(SELECT id FROM bookings WHERE customer_id = ?1 OR companion_id = ?1)';
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM conversations WHERE customer_id = ?1 OR companion_id = ?1').bind(id),
+    c.env.DB.prepare(`DELETE FROM checkins WHERE user_id = ?1 OR booking_id IN ${mine}`).bind(id),
+    c.env.DB.prepare(`DELETE FROM reviews WHERE companion_id = ?1 OR booking_id IN ${mine}`).bind(id),
+    c.env.DB.prepare('DELETE FROM messages WHERE sender_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM bookings WHERE customer_id = ?1 OR companion_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM reports WHERE reporter_id = ?1 OR target_id = ?1').bind(id),
+    c.env.DB.prepare('UPDATE gifts SET redeemed_by = NULL WHERE redeemed_by = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM gifts WHERE sender_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM login_codes WHERE email = ?').bind(u!.email),
+    // companions, availability, saved, blocks, notifications and photos cascade.
+    c.env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(id),
+  ]);
+  // Ratings of companions this person reviewed change too.
+  const comps = await c.env.DB.prepare('SELECT user_id FROM companions').all<{ user_id: string }>();
+  await c.env.DB.batch(comps.results.map((x) => c.env.DB.prepare(RATING_SQL).bind(x.user_id)));
+  return c.json({ ok: true, refunded });
+});
+
+/** Takes a companion listing down for good (the account stays). Open bookings with them are refunded. */
+admin.delete('/companions/:id', async (c) => {
+  const id = c.req.param('id');
+  const cp = await c.env.DB.prepare('SELECT id_photo_id, photo_id FROM companions WHERE user_id = ?').bind(id).first<{ id_photo_id: string | null; photo_id: string | null }>();
+  if (!cp) fail(404, 'Companion not found.');
+  const refunded = await refundOpen(c.env, 'companion_id', id);
+  const theirs = '(SELECT id FROM bookings WHERE companion_id = ?1)';
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM conversations WHERE companion_id = ?1').bind(id),
+    c.env.DB.prepare(`DELETE FROM checkins WHERE booking_id IN ${theirs}`).bind(id),
+    c.env.DB.prepare('DELETE FROM reviews WHERE companion_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM bookings WHERE companion_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM photos WHERE id IN (?, ?)').bind(cp!.id_photo_id ?? '', cp!.photo_id ?? ''),
+    c.env.DB.prepare('DELETE FROM companions WHERE user_id = ?').bind(id), // availability and saved cascade
+  ]);
+  await notify(c.env, id, { icon: 'circle-alert', tone: 'error', title: 'Your companion profile was removed', body: 'ZeitMit took your listing down. Contact support if you have questions.', go: '' }, c.executionCtx);
+  return c.json({ ok: true, refunded });
+});
+
+admin.get('/reviews', async (c) => {
+  const r = await c.env.DB.prepare(
+    `SELECT r.id, r.author_name, r.activity, r.stars, r.text, r.created_at, cp.display_name AS companion, cp.user_id AS companion_id
+     FROM reviews r JOIN companions cp ON cp.user_id = r.companion_id ORDER BY r.created_at DESC LIMIT 200`,
+  ).all();
+  return c.json(r.results);
+});
+
+admin.delete('/reviews/:id', async (c) => {
+  const r = await c.env.DB.prepare('SELECT companion_id FROM reviews WHERE id = ?').bind(c.req.param('id')).first<{ companion_id: string }>();
+  if (!r) fail(404, 'Review not found.');
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM reviews WHERE id = ?').bind(c.req.param('id')),
+    c.env.DB.prepare(RATING_SQL).bind(r!.companion_id),
+  ]);
+  return c.json({ ok: true });
+});
