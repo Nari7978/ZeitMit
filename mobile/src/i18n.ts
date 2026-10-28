@@ -371,10 +371,13 @@ const DE: Record<string, string> = {
   'Become a companion': 'Begleitperson werden',
   'No companions yet': 'Noch keine Begleitpersonen',
   'We’re reviewing the first profiles now. Check back soon.': 'Wir prüfen gerade die ersten Profile. Schau bald wieder vorbei.',
+  'Confirming your payment…': 'Zahlung wird bestätigt …',
+  'We’re still confirming your payment. Check Bookings in a moment.': 'Wir bestätigen deine Zahlung noch. Schau gleich unter Buchungen nach.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^Paid\. Your gift code: (.+)$/, 'Bezahlt. Dein Geschenkcode: $1'],
   [/^(.+) · Member since (\d+)$/, '{$1} · Mitglied seit $2'],
   [/^Member since (\d+)$/, 'Mitglied seit $1'],
   [/^(.+), (\d+) · (Shown|Hidden)$/, '$1, $2 · {$3}'],
