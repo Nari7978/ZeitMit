@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "784968568929",
+    "project_id": "zeitmit-33c64",
+    "storage_bucket": "zeitmit-33c64.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:784968568929:android:1b1ada8ec9d194f6cb9a20",
+        "android_client_info": {
+          "package_name": "com.nari7978.zeitmit"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCrJeCRyhoeUCA-AoBKTFxn-FMcHXwnaGY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
