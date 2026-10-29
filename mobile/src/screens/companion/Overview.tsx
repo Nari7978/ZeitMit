@@ -2,10 +2,10 @@ import { router } from 'expo-router';
 import { View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur, hours } from '../../data';
-import { hueOf, useStore } from '../../store';
+import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
-import { PrimaryButton, SecondaryButton } from '../../ui/common';
+import { PrimaryButton } from '../../ui/common';
 import { initials } from '../Account';
 import { CompShell, Initial } from './Shell';
 import { t } from '../../i18n';
@@ -16,6 +16,9 @@ export default function Overview() {
   const next = upcoming[0];
   const held = earnings.held / 100;
   const live = s.companionStatus === 'approved';
+  // Meet-ups happening now (the code can be entered from 2 hours before): enter the customer's code right here.
+  const nowS = Date.now() / 1000;
+  const meeting = upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600);
 
   return (
     <CompShell title={'Hi, ' + (s.user?.first ?? '')}>
@@ -28,6 +31,21 @@ export default function Overview() {
           </View>
         </Row>
       ) : null}
+      {meeting.map((b) => (
+        <Box key={b.id} shadow={4} shadowColor={colors.greenDeep} style={[card, { backgroundColor: colors.mintSoft }]}>
+          <Row style={{ gap: 12 }}>
+            <Initial who={b.who} hue={hueOf(b.customerId)} url={b.avatarUrl} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Txt size={16} weight={700}>{b.startsAt <= nowS ? `Meeting ${b.who.split(' ')[0]} now` : `Meeting ${b.who.split(' ')[0]} at ${b.time}`}</Txt>
+              <Txt size={13} lh={1.45} color={colors.gray800}>Ask for their 4-digit meet code and enter it to get paid.</Txt>
+            </View>
+          </Row>
+          <PrimaryButton
+            label="Enter meet code" icon="key-round" height={46} radius={12} size={14} shadowColor="transparent"
+            onPress={() => s.openSheet('otpin', { otpIn: { uid: b.id, val: '', err: false, done: false, busy: false } })}
+          />
+        </Box>
+      ))}
       <Row style={{ gap: 12 }}>
         <StatTile n={requests.length} label="New requests" onPress={() => router.navigate('/companion/requests')} />
         <StatTile n={upcoming.length} label="Upcoming" onPress={() => router.navigate('/companion/calendar')} />
@@ -65,10 +83,7 @@ export default function Overview() {
           <Money icon="circle-check" label="Available" value={eur(Math.max(0, earnings.available) / 100)} sub={earnings.pending > 0 ? `+ ${eur(earnings.pending / 100)} pending` : 'Ready to withdraw'} bg={colors.mintSoft} />
         </Row>
         <Txt size={12} lh={1.5} color={colors.gray600}>You earn a booking’s money when you enter the customer’s 4-digit code at the meet-up. It can be withdrawn 2 days later, from €20.</Txt>
-        <Row style={{ gap: 10 }}>
-          <PrimaryButton label="Withdraw" icon="wallet" height={44} radius={12} size={14} weight={700} onPress={() => router.push('/payouts')} style={{ flex: 1, paddingHorizontal: 10 }} />
-          <SecondaryButton label="Meet code" icon="key-round" height={44} radius={12} size={14} onPress={() => router.navigate('/companion/calendar')} style={{ flex: 1, paddingHorizontal: 10 }} />
-        </Row>
+        <PrimaryButton label="Withdraw" icon="wallet" height={44} radius={12} size={14} weight={700} onPress={() => router.push('/payouts')} />
       </Box>
     </CompShell>
   );

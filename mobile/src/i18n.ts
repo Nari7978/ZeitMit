@@ -464,6 +464,7 @@ const DE: Record<string, string> = {
   'Payout not sent': 'Auszahlung nicht überwiesen',
   'A booking was refunded': 'Eine Buchung wurde erstattet',
   'typing…': 'schreibt …',
+  'Ask for their 4-digit meet code and enter it to get paid.': 'Frag nach dem 4-stelligen Treffcode und gib ihn ein, damit du bezahlt wirst.',
   // Moving a booking
   'This booking can’t be moved any more.': 'Diese Buchung kann nicht mehr verschoben werden.',
   'A booking can be moved 3 times. Cancel it and book again instead.': 'Eine Buchung kann 3-mal verschoben werden. Storniere sie stattdessen und buche neu.',
@@ -500,6 +501,9 @@ const DE: Record<string, string> = {
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^Meeting (.+) now$/, 'Treffen mit $1 jetzt'],
+  [/^Meeting (.+) at (\d{2}:\d{2})$/, 'Treffen mit $1 um $2'],
+  [/^Meet code opens (.+)$/, 'Treffcode ab $1'],
   [/^(.+) moved their request$/, '$1 hat die Anfrage verschoben'],
   [/^([^.]+) is now on (.+) \(was (.+)\)\.$/, '{$1} ist jetzt am $2 (vorher $3).'],
   [/^(.+) suggests another time$/, '$1 schlägt eine andere Zeit vor'],

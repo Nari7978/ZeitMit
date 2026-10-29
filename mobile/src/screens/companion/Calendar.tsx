@@ -1,7 +1,7 @@
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, hours, WEEK, WIN } from '../../data';
-import { hueOf, useStore } from '../../store';
+import { AM, hours, WEEK, WIN, whenShort } from '../../data';
+import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
@@ -70,17 +70,25 @@ export default function Calendar() {
               </Pressable>
             ))}
           </Row>
-          <PressBox
-            shadow={3}
-            shadowColor={colors.mint}
-            fx="scale"
-            onPress={() => openSheet('otpin', { otpIn: { uid: u.id, val: '', err: false, done: false, busy: false } })}
-            accessibilityLabel={`Enter ${u.who}’s code`}
-            style={{ height: 44, borderRadius: 12, backgroundColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
-          >
-            <Icon name="key-round" size={15} color={colors.white} />
-            <Txt size={14} weight={700} color={colors.white}>Enter meet code</Txt>
-          </PressBox>
+          {Date.now() / 1000 >= u.startsAt - CODE_OPENS_HOURS * 3600 ? (
+            <PressBox
+              shadow={3}
+              shadowColor={colors.mint}
+              fx="scale"
+              onPress={() => openSheet('otpin', { otpIn: { uid: u.id, val: '', err: false, done: false, busy: false } })}
+              accessibilityLabel={`Enter ${u.who}’s code`}
+              style={{ height: 44, borderRadius: 12, backgroundColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+            >
+              <Icon name="key-round" size={15} color={colors.white} />
+              <Txt size={14} weight={700} color={colors.white}>Enter meet code</Txt>
+            </PressBox>
+          ) : (
+            // The code can only be entered at the meet-up, so it opens 2 hours before.
+            <Row style={{ height: 44, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.gray400, justifyContent: 'center', gap: 7 }}>
+              <Icon name="key-round" size={15} color={colors.gray600} />
+              <Txt size={13} weight={600} color={colors.gray600}>Meet code opens {whenShort(u.startsAt - CODE_OPENS_HOURS * 3600)}</Txt>
+            </Row>
+          )}
           {u.resched?.by !== 'customer' && (u.reschedLeft ?? 1) > 0 ? (
             <TextButton label="Suggest another time" icon="calendar-clock" size={13} weight={700} onPress={() => openReschedule(u.id)} style={{ alignSelf: 'center', marginTop: -4 }} />
           ) : null}

@@ -10,6 +10,8 @@ import { berlinWeekday, eur, firstOpen, type ActId, type BookingStatus, type BTa
 
 /** Same rule as the API: customers cancel for free until this many hours before the start. */
 export const FREE_CANCEL_HOURS = 24;
+/** Companions can enter the customer's meet code from this many hours before the start (same rule as the API). */
+export const CODE_OPENS_HOURS = 2;
 
 export type Filters = {
   type: 'all' | 'date';
