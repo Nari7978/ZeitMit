@@ -8,10 +8,10 @@ export function openProfile(id: string) {
   router.push({ pathname: '/profile/[id]', params: { id } });
 }
 
-/** Opens the booking flow, or the one-time ID check first if the customer isn't verified yet. */
-export function openBooking(cid: string, day?: number) {
+/** Opens the booking flow (optionally on a day, YYYY-MM-DD), or the one-time ID check first if the customer isn't verified yet. */
+export function openBooking(cid: string, date?: string) {
   if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);
-  router.push({ pathname: '/book/[cid]', params: day == null ? { cid } : { cid, day: String(day) } });
+  router.push({ pathname: '/book/[cid]', params: date ? { cid, date } : { cid } });
 }
 
 export function openVerify(next?: string) {

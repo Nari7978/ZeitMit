@@ -32,7 +32,7 @@ async function stripe<T>(env: Env, method: 'GET' | 'POST', path: string, params?
   return data;
 }
 
-export type CheckoutSession = { id: string; url: string; payment_status: 'paid' | 'unpaid' | 'no_payment_required'; payment_intent: string | { id: string; status: string } | null };
+export type CheckoutSession = { id: string; url: string; status?: 'open' | 'complete' | 'expired'; payment_status: 'paid' | 'unpaid' | 'no_payment_required'; payment_intent: string | { id: string; status: string } | null };
 
 /**
  * Hosted Checkout page. Bookings use manual capture (money is authorised and held, then captured
@@ -54,6 +54,10 @@ export function createCheckout(env: Env, o: { amount: number; name: string; ref:
 
 export const getSession = (env: Env, id: string) =>
   stripe<CheckoutSession>(env, 'GET', `/v1/checkout/sessions/${id}`, { expand: { 0: 'payment_intent' } });
+
+/** Closes an open Checkout page so it can't be paid any more. Fails if it's already paid or expired. */
+export const expireSession = (env: Env, id: string) =>
+  stripe<{ status: string }>(env, 'POST', `/v1/checkout/sessions/${id}/expire`, {});
 
 /** Takes the held money when the meet code is confirmed. */
 export const capture = (env: Env, paymentIntent: string) =>

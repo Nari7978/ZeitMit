@@ -2,10 +2,13 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
 import { ACT_LABEL, ACTIVITIES, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
 import { berlinToUnix, slotsFor } from '../lib/companions';
+import { slotsChanged } from '../lib/live';
 import { notify } from '../lib/notify';
 import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
-import { cancelIntent, capture, createCheckout, getSession, intentOf, stripeOn } from '../lib/stripe';
+import { cancelIntent, capture, createCheckout, expireSession, getSession, intentOf, stripeOn } from '../lib/stripe';
 import { balanceOf } from './payouts';
+
+type Ctx = { waitUntil(p: Promise<unknown>): void };
 
 type BookingRow = {
   id: string; customer_id: string; companion_id: string; activity: ActId; starts_at: number; duration_h: number;
@@ -97,7 +100,40 @@ export async function refundBooking(
   }
   await endCheckins(env, b.id);
   await endThread(env, b.id);
+  await slotsChanged(env, b.companion_id); // the time is bookable again
   return true;
+}
+
+/** Deletes a booking whose checkout was never paid and gives back its gift credit. False if it was paid or removed meanwhile. */
+async function dropHold(env: Env, b: BookingRow) {
+  const still = 'EXISTS (SELECT 1 FROM bookings WHERE id = ?1 AND paid = 0)';
+  const res = await env.DB.batch([
+    env.DB.prepare(`UPDATE users SET credit = credit + ?2 WHERE id = ?3 AND ${still}`).bind(b.id, b.credit_used, b.customer_id),
+    env.DB.prepare(`UPDATE conversations SET booking_id = NULL WHERE booking_id = ?1 AND ${still}`).bind(b.id),
+    env.DB.prepare('DELETE FROM bookings WHERE id = ?1 AND paid = 0').bind(b.id),
+  ]);
+  if (!res[2].meta.changes) return false;
+  await slotsChanged(env, b.companion_id);
+  return true;
+}
+
+/**
+ * The customer left Stripe Checkout without paying: closes the checkout page (so it can't be paid later)
+ * and frees the time straight away instead of holding it until the checkout expires.
+ */
+async function releaseHold(env: Env, b: BookingRow, ctx?: Ctx): Promise<'released' | 'paid' | 'processing' | 'gone'> {
+  if (b.paid) return 'paid';
+  if (b.payment_ref?.startsWith('cs_') && stripeOn(env)) {
+    try {
+      await expireSession(env, b.payment_ref);
+    } catch (e) {
+      // Not open any more: paid just now (never give that time away), or expired already.
+      const s = await getSession(env, b.payment_ref);
+      if (s.status === 'open') throw e; // Stripe hiccup: the hold stays, try again later
+      if (s.status === 'complete') return (await settleCheckout(env, b, ctx)) ? 'paid' : 'processing';
+    }
+  }
+  return (await dropHold(env, b)) ? 'released' : 'gone';
 }
 
 /** Tells customer and companion about a new (paid) request. */
@@ -161,8 +197,16 @@ bookings.post('/', async (c) => {
   if (!place) fail(400, 'Add a public meeting place to continue.');
   if (ROMANTIC.includes(b.act) && !b.boundariesAgreed) fail(400, `Please agree to respect ${comp!.display_name}’s boundaries.`);
 
+  // A checkout this customer left unpaid with the same companion mustn't block their new try.
+  const left = await c.env.DB.prepare('SELECT * FROM bookings WHERE customer_id = ? AND companion_id = ? AND paid = 0').bind(u.id, comp!.user_id).all<BookingRow>();
+  for (const old of left.results) await releaseHold(c.env, old, c.executionCtx).catch((e) => console.error('Release failed', old.id, e));
+
   const slots = await slotsFor(c.env, comp!.user_id);
-  if (!slots.some((d) => d.date === b.date && d.times.includes(b.time))) fail(409, 'That time was just taken. Pick another slot.');
+  const day = slots.find((d) => d.date === b.date);
+  const at = day ? day.times.indexOf(b.time) : -1;
+  if (at < 0) fail(409, 'That time was just taken. Pick another slot.');
+  const fits = day!.fit[at];
+  if (fits < b.dur) fail(409, `From ${b.time}, ${comp!.display_name} is only free for ${fits === 1 ? '1 hour' : `${fits} hours`}. Choose a shorter booking or another time.`);
 
   const startsAt = berlinToUnix(b.date, b.time);
   const subtotal = comp!.rate * b.dur * 100;
@@ -184,6 +228,20 @@ bookings.post('/', async (c) => {
     `INSERT INTO bookings (id, customer_id, companion_id, activity, starts_at, duration_h, place, note, boundaries_agreed, rate, subtotal, fee, total, meet_code, credit_used)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, u.id, comp!.user_id, b.act, startsAt, b.dur, place.slice(0, 160), (b.note ?? '').slice(0, 240), b.boundariesAgreed ? 1 : 0, comp!.rate * 100, subtotal, fee, total, digits(4), creditUsed).run();
+  // Two people can pick the same time at the same moment: the booking saved first keeps it.
+  const beaten = await c.env.DB.prepare(
+    `SELECT 1 FROM bookings o JOIN bookings me ON me.id = ?1
+     WHERE o.companion_id = me.companion_id AND o.id <> me.id AND o.status IN ('pending', 'confirmed', 'completed')
+       AND o.starts_at < me.starts_at + me.duration_h * 3600 AND o.starts_at + o.duration_h * 3600 > me.starts_at AND o.rowid < me.rowid LIMIT 1`,
+  ).bind(id).first();
+  if (beaten) {
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM bookings WHERE id = ?').bind(id),
+      c.env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(creditUsed, u.id),
+    ]);
+    fail(409, 'That time was just taken. Pick another slot.');
+  }
+  void slotsChanged(c.env, comp!.user_id, c.executionCtx); // others see the time go at once (held while checkout is open)
   // Card part goes through Stripe Checkout; the request reaches the companion once it's paid.
   const due = total - creditUsed;
   if (stripeOn(c.env) && due > 0) {
@@ -198,6 +256,7 @@ bookings.post('/', async (c) => {
         c.env.DB.prepare('DELETE FROM bookings WHERE id = ?').bind(id),
         c.env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(creditUsed, u.id),
       ]);
+      void slotsChanged(c.env, comp!.user_id, c.executionCtx);
       fail(409, 'The payment couldn’t start. Please try again in a moment.');
     }
   }
@@ -220,6 +279,21 @@ bookings.post('/:id/confirm-payment', async (c) => {
   const row = await c.env.DB.prepare('SELECT b.*, c.display_name AS companion_name, c.hue, c.photo_id FROM bookings b JOIN companions c ON c.user_id = b.companion_id WHERE b.id = ?')
     .bind(b.id).first<BookingRow & { companion_name: string; hue: number; photo_id: string | null }>();
   return c.json({ paid: true, booking: forCustomer(row!) });
+});
+
+/** The customer cancelled or closed Stripe Checkout: the time they picked is free again right away. */
+bookings.post('/:id/release', async (c) => {
+  const b = await c.env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(c.req.param('id')).first<BookingRow>();
+  if (!b) return c.json({ released: false, paid: false }); // already freed (or expired)
+  if (b.customer_id !== c.get('user').id) fail(404, 'Booking not found.');
+  let r: Awaited<ReturnType<typeof releaseHold>>;
+  try {
+    r = await releaseHold(c.env, b, c.executionCtx);
+  } catch (e) {
+    console.error('Release failed', b.id, e);
+    fail(409, 'We couldn’t check the payment yet. Please try again in a moment.');
+  }
+  return c.json({ released: r! === 'released', paid: r! === 'paid' });
 });
 
 /**
@@ -259,6 +333,7 @@ bookings.post('/:id/cancel', async (c) => {
   if (!res.meta.changes) fail(409, 'This booking can’t be cancelled any more.');
   await endCheckins(c.env, b.id);
   await endThread(c.env, b.id, c.executionCtx);
+  void slotsChanged(c.env, b.companion_id, c.executionCtx); // the companion is free then, so others can book it
   await notify(c.env, b.companion_id, { icon: 'calendar-x', tone: 'warning', title: `${who} cancelled late`, body: `${when} was cancelled less than ${FREE_CANCEL_HOURS} hours before. You still get ${euros(b.subtotal)}.`, go: 'comp:calendar' }, c.executionCtx);
   return c.json({ ok: true, refunded: 0, late: true, kept: b.total });
 });
@@ -392,11 +467,7 @@ export async function expireUnpaid(env: Env) {
       console.error('Checkout check failed', b.id, e);
       continue;
     }
-    await env.DB.batch([
-      env.DB.prepare('UPDATE conversations SET booking_id = NULL WHERE booking_id = ?').bind(b.id),
-      env.DB.prepare('DELETE FROM bookings WHERE id = ? AND paid = 0').bind(b.id),
-      env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(b.credit_used, b.customer_id),
-    ]);
+    await dropHold(env, b);
   }
   return r.results.length;
 }

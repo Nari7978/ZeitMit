@@ -10,6 +10,12 @@ import { ensureThread } from './routes/bookings';
  * and fans out new messages and typing indicators. Messages themselves live in D1.
  */
 export class ChatRoom extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // Keep-alive pings are answered without waking the object up.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+  }
+
   async fetch(req: Request) {
     const url = new URL(req.url);
     if (url.pathname === '/broadcast') {
@@ -19,8 +25,9 @@ export class ChatRoom extends DurableObject<Env> {
     }
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
     const userId = url.searchParams.get('uid') ?? '';
+    const kind = url.searchParams.get('kind') === 'live' ? 'live' : 'chat';
     const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1], [userId]);
+    this.ctx.acceptWebSocket(pair[1], [userId, kind]);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -32,14 +39,19 @@ export class ChatRoom extends DurableObject<Env> {
     } catch {
       return;
     }
-    // Only typing indicators travel over the socket; messages are sent via the REST API.
-    if (m.type !== 'typing') return;
-    const [from] = this.ctx.getTags(ws);
+    // Only typing indicators travel over the socket; messages are sent via the REST API. Live rooms only send.
+    const [from, kind] = this.ctx.getTags(ws);
+    if (m.type !== 'typing' || kind === 'live') return;
     for (const other of this.ctx.getWebSockets()) if (other !== ws) other.send(JSON.stringify({ type: 'typing', from }));
   }
 
   async webSocketClose(ws: WebSocket, code: number) {
-    ws.close(code, 'bye');
+    // 1005/1006 ("no status", "connection dropped") are reserved and can't be sent back.
+    try {
+      ws.close(code === 1005 || code === 1006 ? 1000 : code, 'bye');
+    } catch {
+      // Already closed.
+    }
   }
 }
 

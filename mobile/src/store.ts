@@ -101,8 +101,8 @@ type State = {
   otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
   gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
   checkin: Checkin | null;
-  /** A booking waiting for its card payment (Stripe Checkout). */
-  pendingCheckout: { key: string; id: string; url: string } | null;
+  /** A booking waiting for its card payment (Stripe Checkout). Its time is held for others meanwhile. */
+  pendingCheckout: { key: string; id: string; url: string; cid: string } | null;
   /** Draft for the check-in sheet. `name` is the other person (companion or customer). */
   safety: { bid: string | null; name?: string; share: boolean; every: number; contactName: string; contactPhone: string };
 };
@@ -116,6 +116,8 @@ type Actions = {
   finishSignup: (name: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Live "something changed for you" from the API (`go` as in notifications): reloads what it touches. */
+  onLive: (go: string) => void;
   loadCompanionSide: () => Promise<void>;
   toggleSave: (id: string) => void;
   setF: (patch: Partial<Filters>) => void;
@@ -123,6 +125,8 @@ type Actions = {
   openSheet: (sheet: SheetKind, patch?: Partial<State>) => void;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
+  /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
+  releaseCheckout: () => Promise<void>;
   cancelBooking: (id: string, reason?: string | null) => Promise<boolean>;
   companionCancel: (id: string, reason?: string | null) => Promise<boolean>;
   openConversation: (cid: string) => Promise<string | null>;
@@ -165,6 +169,10 @@ let bumpTimer: ReturnType<typeof setTimeout> | undefined;
 let listingTimer: ReturnType<typeof setTimeout> | undefined;
 
 const msg = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+
+// Live updates come in bursts (a booking notifies several things at once): reload once for the lot.
+let liveTimer: ReturnType<typeof setTimeout> | undefined;
+let liveFull = false;
 
 type MeResponse = { id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang; idStatus: IdStatus; idNote: string | null };
 
@@ -288,6 +296,22 @@ export const useStore = create<State & Actions>()((set, get) => {
       void get().loadCheckin();
       if (get().companionStatus !== 'none') await get().loadCompanionSide();
     },
+    onLive: (go) => {
+      // A new message only touches the inboxes; everything else may change bookings, earnings or the profile.
+      if (!go.startsWith('chat:')) liveFull = true;
+      clearTimeout(liveTimer);
+      liveTimer = setTimeout(() => {
+        const full = liveFull;
+        liveFull = false;
+        if (get().session !== 'in') return;
+        if (full) return void get().refresh();
+        void Promise.allSettled([
+          api<Convo[]>('GET', '/conversations').then((convos) => set({ convos })),
+          api<Notif[]>('GET', '/me/notifications').then((notifs) => set({ notifs })),
+          get().companionStatus !== 'none' ? api<Convo[]>('GET', '/conversations?side=companion').then((compConvos) => set({ compConvos })) : null,
+        ]);
+      }, 400);
+    },
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
         api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'earnings'>>('GET', '/companion/bookings'),
@@ -335,24 +359,52 @@ export const useStore = create<State & Actions>()((set, get) => {
           void get().refresh();
           return bk;
         }
-        pending = { key, id: bk.id, url: bk.checkoutUrl };
+        pending = { key, id: bk.id, url: bk.checkoutUrl, cid: b.cid };
         set({ pendingCheckout: pending });
       }
       const outcome = await runCheckout(pending.url);
+      const paidNow = async () => {
+        const r = await api<{ paid: boolean; booking?: Booking }>('POST', `/bookings/${pending!.id}/confirm-payment`);
+        if (!r.paid || !r.booking) return null;
+        set((s) => ({ pendingCheckout: null, bookings: [r.booking!, ...s.bookings.filter((x) => x.id !== r.booking!.id)] }));
+        void get().refresh();
+        return r.booking;
+      };
       try {
-        const r = await api<{ paid: boolean; booking?: Booking }>('POST', `/bookings/${pending.id}/confirm-payment`);
-        if (r.paid && r.booking) {
-          set((s) => ({ pendingCheckout: null, bookings: [r.booking!, ...s.bookings.filter((x) => x.id !== r.booking!.id)] }));
-          void get().refresh();
-          return r.booking;
-        }
+        const bk = await paidNow();
+        if (bk) return bk;
       } catch (e) {
-        if (!(e instanceof ApiError && e.status === 402)) get().showToast(msg(e));
-        else get().showToast(outcome === 'cancel' ? 'Payment cancelled. Your request wasn’t sent.' : 'Payment not finished yet. Tap Pay to continue.');
+        if (!(e instanceof ApiError && e.status === 402)) {
+          get().showToast(msg(e));
+          return null;
+        }
+      }
+      if (outcome === 'success') {
+        // Stripe says it went through but hasn't confirmed it yet: keep the time held, the request follows.
+        get().showToast('We’re still confirming your payment. Check Bookings in a moment.');
         return null;
       }
-      get().showToast('Payment not finished yet. Tap Pay to continue.');
+      // Cancelled or closed without paying: give the time back right away so others (and you) can book it.
+      await get().releaseCheckout();
+      if (!get().pendingCheckout && get().bookings.some((x) => x.id === pending!.id)) return get().bookings.find((x) => x.id === pending!.id)!;
+      get().showToast('Payment cancelled. Your request wasn’t sent.');
       return null;
+    },
+    releaseCheckout: async () => {
+      const p = get().pendingCheckout;
+      if (!p) return;
+      try {
+        const r = await api<{ released: boolean; paid: boolean }>('POST', `/bookings/${p.id}/release`);
+        if (r.paid) {
+          // Paid after all (just before closing): it's a real request now.
+          const c = await api<{ paid: boolean; booking?: Booking }>('POST', `/bookings/${p.id}/confirm-payment`).catch(() => null);
+          if (c?.booking) set((s) => ({ bookings: [c.booking!, ...s.bookings.filter((x) => x.id !== c.booking!.id)] }));
+          void get().refresh();
+        }
+        set({ pendingCheckout: null });
+      } catch {
+        // Couldn't reach the API: the hold stays (tapping Pay again continues it) and expires on its own.
+      }
     },
     cancelBooking: async (id, reason) => {
       set((s) => ({ cancel: { ...s.cancel, busy: true } }));

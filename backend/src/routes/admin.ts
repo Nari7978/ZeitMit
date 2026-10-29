@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
+import { slotsChanged } from '../lib/live';
 import { notify } from '../lib/notify';
 import { berlinWhen, euros, fail } from '../lib/util';
 import { ACT_LABEL } from '../types';
@@ -198,6 +199,8 @@ admin.delete('/users/:id', async (c) => {
   const reviewed = await c.env.DB.prepare(
     'SELECT DISTINCT r.companion_id FROM reviews r JOIN bookings b ON b.id = r.booking_id WHERE b.customer_id = ? AND r.companion_id <> ?',
   ).bind(id, id).all<{ companion_id: string }>();
+  // Checkouts they left unpaid hold times with other companions until deleted below.
+  const holds = await c.env.DB.prepare('SELECT DISTINCT companion_id FROM bookings WHERE customer_id = ? AND paid = 0 AND companion_id <> ?').bind(id, id).all<{ companion_id: string }>();
   const mine = '(SELECT id FROM bookings WHERE customer_id = ?1 OR companion_id = ?1)';
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM conversations WHERE customer_id = ?1 OR companion_id = ?1').bind(id),
@@ -215,6 +218,7 @@ admin.delete('/users/:id', async (c) => {
   ]);
   // D1 rejects an empty batch, so only run it when there is something to update.
   if (reviewed.results.length) await c.env.DB.batch(reviewed.results.map((x) => c.env.DB.prepare(RATING_SQL).bind(x.companion_id)));
+  for (const h of holds.results) void slotsChanged(c.env, h.companion_id, c.executionCtx);
   return c.json({ ok: true, refunded });
 });
 
@@ -233,6 +237,7 @@ admin.delete('/companions/:id', async (c) => {
     c.env.DB.prepare('DELETE FROM saved WHERE companion_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM photos WHERE id = ?').bind(cp!.id_photo_id ?? ''),
   ]);
+  void slotsChanged(c.env, id, c.executionCtx); // open profiles lose their times at once
   await notify(c.env, id, { icon: 'circle-alert', tone: 'error', title: 'Your companion profile was removed', body: 'ZeitMit took your listing down. You can still withdraw what you’ve earned. Contact support if you have questions.', go: 'payouts' }, c.executionCtx);
   return c.json({ ok: true, refunded });
 });

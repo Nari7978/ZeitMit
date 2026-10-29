@@ -10,6 +10,7 @@ import { useStore } from '../store';
 import { Toast, useNavBottom } from '../ui/chrome';
 import { SheetHost } from '../sheets/SheetHost';
 import { onNotificationTap, registerForPush } from '../lib/push';
+import { useLive } from '../lib/live';
 import { followGo } from '../nav';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
@@ -33,6 +34,11 @@ export default function RootLayout() {
     }, 30000);
     return () => { sub.remove(); clearInterval(t); };
   }, []);
+
+  // Live: the API says the moment something changes for you (a request, a cancellation, a message), so screens update at once.
+  useLive(session === 'in' ? '/live' : null, (e) => {
+    if (e.type === 'changed') useStore.getState().onLive(String(e.go ?? ''));
+  });
 
   // Push: register once signed in; follow taps on notifications once the screens exist
   // (a tap can arrive before the navigator is mounted when it opened the app).

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
+import { slotsChanged } from '../lib/live';
 import { CONTACT_MSG, fail, hasContactDetails } from '../lib/util';
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -77,6 +78,7 @@ companionProfile.post('/apply', async (c) => {
     ...b.days!.flatMap((d) => b.wins!.filter((w) => (WINDOWS as readonly string[]).includes(w)).map((w) =>
       c.env.DB.prepare('INSERT OR IGNORE INTO availability (companion_id, day, win) VALUES (?, ?, ?)').bind(u.id, WEEK.indexOf(d), w))),
   ]);
+  void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ status: 'pending' }, 201);
 });
 
@@ -114,5 +116,6 @@ companionProfile.put('/availability', async (c) => {
   if (!has) fail(404, 'You don’t have a companion profile yet.');
   await c.env.DB.prepare(on ? 'INSERT OR IGNORE INTO availability (companion_id, day, win) VALUES (?, ?, ?)' : 'DELETE FROM availability WHERE companion_id = ? AND day = ? AND win = ?')
     .bind(u.id, d, win).run();
+  void slotsChanged(c.env, u.id, c.executionCtx); // open profiles show the new times at once
   return c.json({ ok: true });
 });

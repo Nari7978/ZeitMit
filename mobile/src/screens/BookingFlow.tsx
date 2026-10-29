@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { AM, BSTEPS, eur, hours, NO, ROM, slotDay, type ActId } from '../data';
-import { api } from '../api';
+import { fitAt, useSlots } from '../lib/slots';
 
 const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
 import { useStore } from '../store';
@@ -14,22 +14,48 @@ import { Box, Confetti, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/p
 import { CircleButton, PrimaryButton, TextButton, useTopPad } from '../ui/common';
 import { t } from '../i18n';
 
-type Draft = { act: ActId | null; day: number | null; time: string | null; dur: number | null; place: string; note: string; placeErr: boolean; agree: boolean };
+type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; placeErr: boolean; agree: boolean };
 
 export default function BookingFlow() {
-  const params = useLocalSearchParams<{ cid: string; day?: string }>();
+  const params = useLocalSearchParams<{ cid: string; date?: string }>();
   const c = useStore((s) => s.byId[params.cid]);
-  const [slots, setSlots] = useState<{ date: string; times: string[] }[]>([]);
+  // Open times update live while you book: someone else's booking or cancellation shows up at once.
+  const { slots: liveSlots, reload } = useSlots(params.cid);
+  const slots = liveSlots ?? [];
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    api<{ date: string; times: string[] }[]>('GET', `/companions/${params.cid}/slots`).then(setSlots).catch((e) => useStore.getState().showToast(e.message));
-  }, [params.cid]);
   const top = useTopPad();
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState(1);
   const [done, setDone] = useState(false);
-  const [b, setB] = useState<Draft>({ act: null, day: params.day != null ? Number(params.day) : null, time: null, dur: null, place: '', note: '', placeErr: false, agree: false });
+  const [b, setB] = useState<Draft>({ act: null, date: params.date ?? null, time: null, dur: null, place: '', note: '', placeErr: false, agree: false });
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
+  const di = slots.findIndex((s) => s.date === b.date);
+  const day = di >= 0 ? slots[di] : undefined;
+  const fit = fitAt(day, b.time);
+
+  // A checkout left unpaid earlier (and not released then) would keep this time from showing as free.
+  useEffect(() => {
+    if (useStore.getState().pendingCheckout?.cid === params.cid) void useStore.getState().releaseCheckout().then(() => reload());
+  }, [params.cid, reload]);
+
+  // Someone else just booked the picked time, or the companion changed their availability: say so and step back.
+  // Quiet while your own payment runs (your booking holds the time) and just after it, until the hold is released.
+  const quiet = useRef(0);
+  const lost = !!liveSlots && !!b.time && !busy && !done && (!fit || (!!b.dur && b.dur > fit));
+  useEffect(() => {
+    if (!lost || !c || Date.now() < quiet.current) return;
+    const { showToast } = useStore.getState();
+    if (!fit) {
+      showToast(`${b.time} isn’t available any more. Pick another time.`);
+      upd({ time: null });
+      if (step > 2) setStep(2);
+    } else {
+      showToast(`From ${b.time}, ${c.name} is now only free for ${hours(fit)}. Pick a shorter time.`);
+      upd({ dur: null });
+      if (step > 3) setStep(3);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lost]);
   if (!c) return null;
 
   const sub = b.dur ? c.rate * b.dur : 0;
@@ -38,7 +64,7 @@ export default function BookingFlow() {
   const creditUse = b.dur ? Math.min(credit, sub + fee) : 0;
   const total = b.dur ? eur(sub + fee - creditUse) : '—';
   const isDateAct = !!b.act && ROM.includes(b.act);
-  const valid = [!!b.act, b.day != null && !!b.time, !!b.dur, true, true, !isDateAct || b.agree][step - 1];
+  const valid = [!!b.act, fit > 0, !!b.dur && b.dur <= fit, true, true, !isDateAct || b.agree][step - 1];
 
   const next = () => {
     if (!valid) return;
@@ -47,17 +73,20 @@ export default function BookingFlow() {
     if (busy) return;
     setBusy(true);
     void useStore.getState()
-      .addBooking({ cid: c.id, act: b.act!, date: slots[b.day!].date, time: b.time!, dur: b.dur!, place: b.place, note: b.note, boundariesAgreed: b.agree })
+      .addBooking({ cid: c.id, act: b.act!, date: b.date!, time: b.time!, dur: b.dur!, place: b.place, note: b.note, boundariesAgreed: b.agree })
       .then((bk) => {
-        setBusy(false);
         if (bk) setDone(true);
-        else api<{ date: string; times: string[] }[]>('GET', `/companions/${c.id}/slots`).then(setSlots).catch(() => {});
+        else {
+          quiet.current = Date.now() + 4000;
+          void reload();
+        }
+        setBusy(false);
       });
   };
   const back = () => (step > 1 ? setStep(step - 1) : router.back());
   const close = () => router.back();
   const days = slots.map((s, i) => slotDay(s.date, i));
-  const dayLabel = b.day != null && days[b.day] ? days[b.day].full : '—';
+  const dayLabel = di >= 0 ? days[di].full : '—';
   const durLabel = b.dur ? hours(b.dur) : '—';
   const actLabel = b.act ? AM[b.act].label : '—';
 
@@ -145,9 +174,9 @@ export default function BookingFlow() {
             <Row style={{ gap: 6 }}>
               {days.map((d, i) => {
                 const open = slots[i].times.length > 0;
-                const on = b.day === i;
+                const on = b.date === d.date;
                 return (
-                  <Pressable key={d.date} accessibilityRole="button" accessibilityLabel={d.full} accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ day: i, time: null })} style={{ flex: 1, alignItems: 'center', gap: 4, paddingTop: 10, paddingBottom: 8, borderRadius: 14, borderWidth: 1, borderColor: colors.ink, backgroundColor: on ? colors.ink : open ? colors.white : 'transparent' }}>
+                  <Pressable key={d.date} accessibilityRole="button" accessibilityLabel={d.full} accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ date: d.date, time: null })} style={{ flex: 1, alignItems: 'center', gap: 4, paddingTop: 10, paddingBottom: 8, borderRadius: 14, borderWidth: 1, borderColor: colors.ink, backgroundColor: on ? colors.ink : open ? colors.white : 'transparent' }}>
                     <Txt size={11} weight={500} color={on ? colors.white : open ? colors.ink : colors.gray400} numberOfLines={1}>{d.label}</Txt>
                     <Txt size={18} weight={700} color={on ? colors.white : open ? colors.ink : colors.gray400}>{d.n}</Txt>
                     <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: open ? (on ? colors.sun : colors.green) : 'transparent' }} />
@@ -157,15 +186,15 @@ export default function BookingFlow() {
             </Row>
             {!slots.length ? (
               <Txt size={14} color={colors.gray600} style={{ marginTop: 24 }}>Loading availability…</Txt>
-            ) : b.day != null ? (
+            ) : day ? (
               <>
                 <Txt size={14} weight={600} style={{ marginTop: 24, marginBottom: 10 }}>Available times</Txt>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   {TIMES.map((t) => {
-                    const open = !!slots[b.day!]?.times.includes(t);
+                    const open = day.times.includes(t);
                     const on = b.time === t;
                     return (
-                      <Pressable key={t} accessibilityRole="button" accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ time: t })} style={{ width: '22.5%', flexGrow: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: on || open ? colors.ink : colors.butter, backgroundColor: on ? colors.ink : open ? colors.white : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
+                      <Pressable key={t} accessibilityRole="button" accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ time: t, dur: b.dur && b.dur > fitAt(day, t) ? null : b.dur })} style={{ width: '22.5%', flexGrow: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: on || open ? colors.ink : colors.butter, backgroundColor: on ? colors.ink : open ? colors.white : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
                         <Txt size={14} weight={600} color={on ? colors.white : open ? colors.ink : colors.gray350} style={!open ? { textDecorationLine: 'line-through' } : null}>{t}</Txt>
                       </Pressable>
                     );
@@ -186,14 +215,21 @@ export default function BookingFlow() {
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
               {[1, 2, 3, 4].map((d) => {
                 const on = b.dur === d;
+                const open = d <= fit; // longer would run into someone else's booking
                 return (
-                  <Pressable key={d} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => upd({ dur: d })} style={{ width: '47%', flexGrow: 1, gap: 6, padding: 18, borderRadius: 18, borderWidth: 1.5, borderColor: colors.ink, backgroundColor: on ? colors.butter : colors.white }}>
-                    <Txt size={17} weight={700}>{hours(d)}</Txt>
-                    <Txt size={14} color={on ? colors.ink : colors.gray600}>{eur(c.rate * d)}</Txt>
+                  <Pressable key={d} accessibilityRole="radio" accessibilityState={{ checked: on, disabled: !open }} onPress={() => open && upd({ dur: d })} style={{ width: '47%', flexGrow: 1, gap: 6, padding: 18, borderRadius: 18, borderWidth: 1.5, borderColor: open ? colors.ink : colors.butter, backgroundColor: on ? colors.butter : open ? colors.white : colors.butter }}>
+                    <Txt size={17} weight={700} color={open ? colors.ink : colors.gray350} style={!open ? { textDecorationLine: 'line-through' } : null}>{hours(d)}</Txt>
+                    <Txt size={14} color={!open ? colors.gray350 : on ? colors.ink : colors.gray600}>{eur(c.rate * d)}</Txt>
                   </Pressable>
                 );
               })}
             </View>
+            {fit > 0 && fit < 4 ? (
+              <Row style={{ marginTop: 14, gap: 8, alignItems: 'flex-start' }}>
+                <Icon name="clock" size={15} color={colors.gray600} style={{ marginTop: 2 }} />
+                <Txt size={13} lh={1.5} color={colors.gray600} style={{ flex: 1 }}>{c.name} has another booking later, so from {b.time} you can book up to {hours(fit)}.</Txt>
+              </Row>
+            ) : null}
           </>
         )}
 

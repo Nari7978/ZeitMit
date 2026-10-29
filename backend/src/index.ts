@@ -14,6 +14,7 @@ import { admin } from './routes/admin';
 import { chat } from './chat';
 import { photos } from './routes/photos';
 import { payouts } from './routes/payouts';
+import { live } from './routes/live';
 import { stripeOn } from './lib/stripe';
 
 export { ChatRoom } from './chat';
@@ -71,6 +72,10 @@ app.route('/conversations', chat);
 
 app.use('/safety/*', requireAuth);
 app.route('/safety', safety);
+
+app.use('/live/*', requireAuth);
+app.use('/live', requireAuth);
+app.route('/live', live);
 
 app.use('/gifts/*', requireAuth);
 app.use('/gifts', requireAuth);

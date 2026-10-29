@@ -9,6 +9,7 @@ import { AM, ageStr, eur, LEVEL, NO, ratingStr, reviewsStr, slotDay, type Compan
 import { api } from '../api';
 import { useStore } from '../store';
 import { canMessage, messageCompanion, openBooking } from '../nav';
+import { useSlots, type DaySlots } from '../lib/slots';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, usePullRefresh, useTopPad } from '../ui/common';
@@ -16,7 +17,7 @@ import { locale } from '../i18n';
 
 type Detail = Companion & {
   reviewList: { n: string; a: string; stars: number; t: string; created_at: number }[];
-  slots: { date: string; times: string[] }[];
+  slots: DaySlots[];
   no: string[];
 };
 
@@ -29,7 +30,8 @@ export default function Profile() {
     [id],
   );
   useEffect(() => { void loadDetail(); }, [loadDetail]);
-  const refresh = usePullRefresh(loadDetail);
+  const { slots: liveSlots, reload: reloadSlots } = useSlots(id);
+  const refresh = usePullRefresh(() => Promise.all([loadDetail(), reloadSlots()]));
   const c: Companion | undefined = detail ?? listed;
   const insets = useSafeAreaInsets();
   const top = useTopPad();
@@ -40,7 +42,7 @@ export default function Profile() {
   if (!c) return null;
 
   const reviews = detail?.reviewList ?? [];
-  const slots = detail?.slots ?? [];
+  const slots = liveSlots ?? detail?.slots ?? [];
   const btnBg = scrolled ? colors.white : 'rgba(255,255,255,.88)';
   const btnBd = scrolled ? colors.ink : 'transparent';
 
@@ -156,7 +158,7 @@ export default function Profile() {
                   accessibilityRole="button"
                   accessibilityLabel={d ? `${d.full}, ${n} slots` : 'Loading'}
                   accessibilityState={{ disabled: !n }}
-                  onPress={() => n && openBooking(c.id, i)}
+                  onPress={() => n && openBooking(c.id, slot!.date)}
                   style={{ flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRadius: 14, borderWidth: 1, borderColor: n ? colors.ink : colors.cream, backgroundColor: n ? colors.white : colors.cream }}
                 >
                   <Txt size={11} weight={500} color={n ? colors.ink : colors.gray400}>{d?.d ?? ' '}</Txt>

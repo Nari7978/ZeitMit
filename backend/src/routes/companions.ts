@@ -33,7 +33,11 @@ companions.get('/:id', async (c) => {
     .bind(id)
     .all();
   const slots = await slotsFor(c.env, id);
+  c.header('Cache-Control', 'no-store'); // open times change with every booking
   return c.json({ ...toCompanion(row!), no: NEVER_OFFERED, reviewList: reviews.results, slots, today: slots[0].times.length > 0 });
 });
 
-companions.get('/:id/slots', async (c) => c.json(await slotsFor(c.env, c.req.param('id'))));
+companions.get('/:id/slots', async (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(await slotsFor(c.env, c.req.param('id')));
+});

@@ -468,6 +468,10 @@ const DE: Record<string, string> = {
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^(\d{2}:\d{2}) isn’t available any more\. Pick another time\.$/, '$1 ist nicht mehr frei. Wähle eine andere Zeit.'],
+  [/^From (\d{2}:\d{2}), (.+) is now only free for (.+)\. Pick a shorter time\.$/, 'Ab $1 hat $2 nur noch {$3} Zeit. Wähle eine kürzere Dauer.'],
+  [/^From (\d{2}:\d{2}), (.+) is only free for (\d+) hours?\. Choose a shorter booking or another time\.$/, 'Ab $1 hat $2 nur $3 Std. Zeit. Wähle eine kürzere Dauer oder eine andere Zeit.'],
+  [/^(.+) has another booking later, so from (\d{2}:\d{2}) you can book up to (.+)\.$/, '$1 hat danach eine andere Buchung, daher kannst du ab $2 bis zu {$3} buchen.'],
   [/^(€[\d.]+)\/h · 1 activity$/, '$1/Std. · 1 Aktivität'],
   [/^(€[\d.]+)\/h · (\d+) activities$/, '$1/Std. · $2 Aktivitäten'],
   [/^A refund left (€[\d.]+) to make up\. It comes off your next earnings\.$/, 'Durch eine Erstattung sind $1 offen. Sie werden mit deinen nächsten Einnahmen verrechnet.'],

@@ -83,5 +83,35 @@ ok(r.status === 200 && (await intent(d.id)).status === 'canceled', 'companion ca
 r = await call('POST', `/admin/bookings/${b.id}/refund`, A);
 ok(r.status === 200 && (await intent(b.id)).status === 'refunded', 'support refunds a completed booking');
 
+// 6) Leaving checkout gives the time back at once, and that checkout can't be paid afterwards
+const other = await login(`other+${Date.now()}@example.com`);
+await call('PATCH', '/me', other.token, { name: 'Other', ageConfirmed: true });
+sql(`UPDATE users SET id_status = 'approved' WHERE id = '${other.user.id}'`);
+const at = (token, dur = 1) => call('POST', '/bookings', token, { companionId: 'demo_lena', act: 'coffee', date: lena[0][0], time: lena[0][1], dur, place: 'Café' });
+const e = (await at(T)).data;
+r = await at(other.token);
+ok(r.status === 409, 'an open checkout holds the time for others');
+r = await call('POST', `/bookings/${e.id}/release`, T);
+ok(r.status === 200 && r.data.released === true, 'leaving checkout releases the time at once');
+ok(!!(await pay(e.checkoutUrl)).error, 'that checkout page is closed, so it can’t be paid later');
+r = await at(other.token);
+ok(r.status === 201, 'someone else can book the time straight away');
+await call('POST', `/bookings/${r.data.id}/release`, other.token);
+
+// 7) Paid just before closing the page: release keeps the booking and sends the request
+const f = (await at(T)).data;
+await pay(f.checkoutUrl);
+r = await call('POST', `/bookings/${f.id}/release`, T);
+ok(r.status === 200 && r.data.paid === true && r.data.released === false, 'paid just before leaving: release keeps the booking');
+ok((await call('GET', '/companion/bookings', L)).data.requests.some((x) => x.id === f.id), 'and the request reaches the companion');
+await call('POST', `/bookings/${f.id}/cancel`, T);
+
+// 8) Starting again (another length) replaces your own open checkout
+const g = (await at(T)).data;
+r = await at(T, 2);
+ok(r.status === 201 && !!r.data.checkoutUrl && r.data.id !== g.id, 'the same customer can start again with another length');
+ok(!!(await pay(g.checkoutUrl)).error, 'and their first checkout page was closed');
+await call('POST', `/bookings/${r.data.id}/release`, T);
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll payment checks passed');
 process.exit(failures ? 1 : 0);
