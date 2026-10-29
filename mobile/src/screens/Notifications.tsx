@@ -7,12 +7,13 @@ import { useStore, type Notif } from '../store';
 import { followGo } from '../nav';
 import { Icon } from '../ui/Icon';
 import { H, Row, Txt } from '../ui/primitives';
-import { CircleButton, StatusCover, TextButton } from '../ui/common';
+import { CircleButton, StatusCover, TextButton, usePullRefresh } from '../ui/common';
 
 export default function Notifications() {
   const insets = useSafeAreaInsets();
   const notifs = useStore((s) => s.notifs).map((n) => ({ ...n, ...notifWhen(n.created_at) }));
   const hasUnread = notifs.some((n) => !n.read);
+  const refresh = usePullRefresh();
 
   const fire = (n: Notif & { g: string; time: string }) => {
     useStore.getState().readNotif(n.id);
@@ -22,7 +23,7 @@ export default function Notifications() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.white }}>
       <StatusCover color={colors.white} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ justifyContent: 'space-between', paddingTop: 4, paddingHorizontal: 12 }}>
           <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
           {hasUnread ? <TextButton label="Mark all read" onPress={() => useStore.getState().markAllRead()} style={{ padding: 8 }} /> : null}

@@ -29,14 +29,27 @@ export async function registerForPush() {
   }
 }
 
-/** Calls `onGo` with the notification's target ("chat:…", "tab:…") when the user taps it. */
+/**
+ * Calls `onGo` with the notification's target ("chat:…", "tab:…") when the user taps it, including the tap
+ * that opened the app. Each tap is followed once (the launch tap is cleared after use).
+ */
+const followed = new Set<string>();
 export function onNotificationTap(onGo: (go: string) => void) {
   if (Platform.OS === 'web') return () => {};
   const handle = (r: Notifications.NotificationResponse | null) => {
-    const go = r?.notification.request.content.data?.go;
+    if (!r) return;
+    const key = r.notification.request.identifier + ':' + r.actionIdentifier;
+    if (followed.has(key)) return;
+    followed.add(key);
+    const go = r.notification.request.content.data?.go;
     if (typeof go === 'string' && go) onGo(go);
   };
-  void Notifications.getLastNotificationResponseAsync().then(handle).catch(() => {});
+  try {
+    handle(Notifications.getLastNotificationResponse());
+    Notifications.clearLastNotificationResponse();
+  } catch {
+    // older native module: no launch tap to follow
+  }
   const sub = Notifications.addNotificationResponseReceivedListener(handle);
   return () => sub.remove();
 }

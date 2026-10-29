@@ -1,41 +1,87 @@
-// Payment flow test against a local API configured with a mock Stripe (STRIPE_API_BASE).
-// Usage: node scripts/stripe-flow.mjs http://localhost:8787 http://localhost:9999
+// Payment flows against a LOCAL API that talks to a mock Stripe (STRIPE_API_BASE), e.g.
+//   npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999
+// Moves booking start times in the local database to reach the time-dependent rules.
+// Usage: node scripts/stripe-flow.mjs [api] [mockStripe]
+import { execSync } from 'node:child_process';
+import crypto from 'node:crypto';
+
 const [BASE = 'http://localhost:8787', MOCK = 'http://localhost:9999'] = process.argv.slice(2);
 let failures = 0;
 const ok = (c, l) => { console.log(`${c ? '✓' : '✗'} ${l}`); if (!c) failures++; };
 const call = async (m, p, t, b) => { const r = await fetch(BASE + p, { method: m, headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: b ? JSON.stringify(b) : undefined }); return { status: r.status, data: await r.json().catch(() => null) }; };
-const login = async (e) => { const r = await call('POST', '/auth/request-code', null, { email: e }); return (await call('POST', '/auth/verify', null, { email: e, code: r.data.devCode })).data.token; };
+const login = async (e) => { const r = await call('POST', '/auth/request-code', null, { email: e }); return (await call('POST', '/auth/verify', null, { email: e, code: r.data.devCode })).data; };
+const sql = (q) => execSync(`npx wrangler d1 execute DB --local --command "${q}"`, { stdio: 'pipe' });
 const pay = (url) => fetch(MOCK + new URL(url).pathname).then((r) => r.json());
+const intent = async (bookingId) => {
+  const ref = JSON.parse(execSync(`npx wrangler d1 execute DB --local --json --command "SELECT payment_ref FROM bookings WHERE id = '${bookingId}'"`, { stdio: 'pipe' }).toString())[0].results[0].payment_ref;
+  return (await fetch(MOCK + '/state').then((x) => x.json())).intents[ref];
+};
+const admin = (userId) => {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const head = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: userId, email: 'admin@example.com', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 })}`;
+  return `${head}.${crypto.createHmac('sha256', process.env.JWT_SECRET ?? 'local-dev-secret-change-me').update(head).digest('base64url')}`;
+};
 
-const T = await login(`payer+${Date.now()}@example.com`);
+const payer = await login(`payer+${Date.now()}@example.com`);
+const T = payer.token;
+const A = admin(payer.user.id);
 await call('PATCH', '/me', T, { name: 'Payer', ageConfirmed: true });
-const slot = (await call('GET', '/companions/demo_lena')).data.slots.find((d) => d.times.length);
-let r = await call('POST', '/bookings', T, { companionId: 'demo_lena', act: 'coffee', date: slot.date, time: slot.times[0], dur: 1, place: 'Café' });
+sql(`UPDATE users SET id_status = 'approved' WHERE id = '${payer.user.id}'`);
+const L = (await login('lena@demo.zeitmit.app')).token;
+const J = (await login('jonas@demo.zeitmit.app')).token;
+const far = async (cid, n) => (await call('GET', `/companions/${cid}`)).data.slots.flatMap((d) => d.times.map((t) => [d.date, t])).slice(-n);
+const lena = await far('demo_lena', 3);
+const jonas = await far('demo_jonas', 1);
+
+/** Books, pays through the mock Checkout and returns the paid booking. */
+async function paidBooking(cid, [date, time], act) {
+  const r = await call('POST', '/bookings', T, { companionId: cid, act, date, time, dur: 1, place: 'Café', boundariesAgreed: true });
+  await pay(r.data.checkoutUrl);
+  await call('POST', `/bookings/${r.data.id}/confirm-payment`, T);
+  return r.data;
+}
+
+// 1) Checkout, hidden until paid, then a free cancellation releases the hold
+let r = await call('POST', '/bookings', T, { companionId: 'demo_lena', act: 'coffee', date: lena[0][0], time: lena[0][1], dur: 1, place: 'Café' });
 ok(r.status === 201 && !!r.data.checkoutUrl, 'booking returns a Stripe Checkout URL');
-const id = r.data.id;
-ok(!(await call('GET', '/bookings', T)).data.some((b) => b.id === id), 'unpaid booking hidden from customer list');
-const K = await login('lena@demo.zeitmit.app');
-ok(!(await call('GET', '/companion/bookings', K)).data.requests.some((b) => b.id === id), 'companion does not see unpaid request');
-r = await call('POST', `/bookings/${id}/confirm-payment`, T);
+const a = r.data;
+ok(!(await call('GET', '/bookings', T)).data.some((b) => b.id === a.id), 'unpaid booking hidden from the customer');
+ok(!(await call('GET', '/companion/bookings', L)).data.requests.some((b) => b.id === a.id), 'companion does not see an unpaid request');
+r = await call('POST', `/bookings/${a.id}/confirm-payment`, T);
 ok(r.status === 402 && r.data.paid === false, 'confirm before paying → not paid');
 await pay(r.data.checkoutUrl);
-r = await call('POST', `/bookings/${id}/confirm-payment`, T);
+r = await call('POST', `/bookings/${a.id}/confirm-payment`, T);
 ok(r.status === 200 && r.data.paid && r.data.booking.status === 'pending', 'confirm after paying → request sent');
-ok((await call('GET', '/companion/bookings', K)).data.requests.some((b) => b.id === id), 'companion now sees the request');
-await call('POST', `/companion/bookings/${id}/accept`, K);
-const otp = (await call('GET', '/bookings', T)).data.find((b) => b.id === id).otp;
-r = await call('POST', `/bookings/${id}/cancel`, T);
-const state1 = await fetch(MOCK + '/state').then((x) => x.json());
-const pi = Object.values(state1.intents).at(-1);
-ok(r.status === 200 || r.status === 409, `cancel response ${r.status}`);
-if (r.status === 200) ok(pi.status === 'canceled', 'cancel releases the card hold (PI canceled)');
+await call('POST', `/companion/bookings/${a.id}/accept`, L);
+r = await call('POST', `/bookings/${a.id}/cancel`, T, { reason: 'Plans changed' });
+ok(r.status === 200 && r.data.late === false && (await intent(a.id)).status === 'canceled', 'free cancellation releases the card hold');
 
-// Second booking: release with meet code captures payment
-const slot2 = (await call('GET', '/companions/demo_jonas')).data.slots.find((d) => d.times.length);
-r = await call('POST', '/bookings', T, { companionId: 'demo_jonas', act: 'walks', date: slot2.date, time: slot2.times[0], dur: 2, place: 'Museum' });
-const id2 = r.data.id; await pay(r.data.checkoutUrl); await call('POST', `/bookings/${id2}/confirm-payment`, T);
-const J = await login('jonas@demo.zeitmit.app');
-await call('POST', `/companion/bookings/${id2}/accept`, J);
-console.log('  (set booking start ~now for release test)');
-process.stdout.write(id2 + '\n');
-console.log(failures ? `\n${failures} failed` : '\nAll payment checks passed (part 1)');
+// 2) Meet code captures the payment
+const b = await paidBooking('demo_jonas', jonas[0], 'walks');
+await call('POST', `/companion/bookings/${b.id}/accept`, J);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 3600 WHERE id = '${b.id}'`);
+const otp = (await call('GET', '/bookings', T)).data.find((x) => x.id === b.id).otp;
+r = await call('POST', `/companion/bookings/${b.id}/verify-code`, J, { code: otp });
+ok(r.status === 200 && (await intent(b.id)).status === 'succeeded', 'meet code captures the payment');
+
+// 3) Late cancellation captures too (companion is paid); support can refund it afterwards
+const c = await paidBooking('demo_lena', lena[1], 'coffee');
+await call('POST', `/companion/bookings/${c.id}/accept`, L);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600 WHERE id = '${c.id}'`);
+r = await call('POST', `/bookings/${c.id}/cancel`, T);
+ok(r.status === 200 && r.data.late === true && (await intent(c.id)).status === 'succeeded', 'late cancellation takes the payment');
+r = await call('POST', `/admin/bookings/${c.id}/refund`, A);
+ok(r.status === 200 && (await intent(c.id)).status === 'refunded', 'support refunds a taken payment through Stripe');
+
+// 4) Companion cancels: hold released, customer pays nothing
+const d = await paidBooking('demo_lena', lena[2], 'coffee');
+await call('POST', `/companion/bookings/${d.id}/accept`, L);
+r = await call('POST', `/companion/bookings/${d.id}/cancel`, L, { reason: 'Emergency' });
+ok(r.status === 200 && (await intent(d.id)).status === 'canceled', 'companion cancellation releases the card hold');
+
+// 5) Support refund of a completed booking
+r = await call('POST', `/admin/bookings/${b.id}/refund`, A);
+ok(r.status === 200 && (await intent(b.id)).status === 'refunded', 'support refunds a completed booking');
+
+console.log(failures ? `\n${failures} check(s) failed` : '\nAll payment checks passed');
+process.exit(failures ? 1 : 0);

@@ -7,7 +7,7 @@ import { useStore } from '../store';
 import { openProfile, searchWith } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, PressBox, Row, Shimmer, Stripes, Txt, Photo } from '../ui/primitives';
-import { PrimaryButton, SaveButton, SectionHead, StatusCover, TextButton, useTopPad } from '../ui/common';
+import { PrimaryButton, SaveButton, SectionHead, StatusCover, TextButton, usePullRefresh, useTopPad } from '../ui/common';
 import { openSettings } from './Settings';
 import { useNavBottom } from '../ui/chrome';
 import { oklch } from '../lib/oklch';
@@ -29,6 +29,7 @@ export default function Discover() {
   const openSheet = useStore((s) => s.openSheet);
 
   const C = useStore((s) => s.companions);
+  const refresh = usePullRefresh();
   const saved = useStore((s) => s.saved);
   const featured = C.slice(0, 5);
   // Right after launch there may be no approved companions yet.
@@ -45,7 +46,7 @@ export default function Discover() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           {/* Header */}
           <Row style={{ justifyContent: 'space-between', paddingTop: 8, paddingHorizontal: 20 }}>

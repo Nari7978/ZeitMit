@@ -4,6 +4,7 @@ import { toCompanion, type CompanionRow } from '../lib/companions';
 import { notify } from '../lib/notify';
 import { euros, fail } from '../lib/util';
 import { refundBooking } from './bookings';
+import { refundPayment, stripeOn } from '../lib/stripe';
 
 /** Endpoints for the admin panel (admin/ folder). All require role = admin. */
 export const admin = new Hono<AppEnv>();
@@ -46,7 +47,7 @@ admin.post('/companions/:id/:decision', async (c) => {
   ]);
   await notify(c.env, id, decision === 'approve'
     ? { icon: 'badge-check', tone: 'success', title: 'Your companion profile is live', body: 'You’re verified and visible in search. Requests will appear in companion mode.', go: 'comp:overview' }
-    : { icon: 'circle-alert', tone: 'error', title: 'Companion profile not approved', body: 'We couldn’t approve your profile. Check your email for details.', go: '' }, c.executionCtx);
+    : { icon: 'circle-alert', tone: 'error', title: 'Companion profile not approved', body: 'We couldn’t approve your profile. You can change it and apply again.', go: 'become' }, c.executionCtx);
   return c.json({ ok: true });
 });
 
@@ -80,23 +81,46 @@ admin.post('/verifications/:id/:decision', async (c) => {
     c.env.DB.prepare('DELETE FROM photos WHERE id IN (?, ?)').bind(row!.id_doc_photo_id ?? '', row!.id_selfie_photo_id ?? ''),
   ]);
   await notify(c.env, id, decision === 'approve'
-    ? { icon: 'badge-check', tone: 'success', title: 'You’re verified', body: 'Your ID check is done. You can book companions now.', go: '' }
+    ? { icon: 'badge-check', tone: 'success', title: 'You’re verified', body: 'Your ID check is done. You can book companions now.', go: 'home' }
     : { icon: 'circle-alert', tone: 'error', title: 'ID check not approved', body: note!, go: 'verify' }, c.executionCtx);
   return c.json({ ok: true });
 });
 
 admin.get('/bookings', async (c) => {
   const r = await c.env.DB.prepare(
-    `SELECT b.id, b.status, b.pay_status, b.activity, b.starts_at, b.total, u.email AS customer, cp.display_name AS companion
+    `SELECT b.id, b.status, b.pay_status, b.activity, b.starts_at, b.total, b.cancel_note, b.cancelled_by, b.cancel_reason, u.email AS customer, cp.display_name AS companion
      FROM bookings b JOIN users u ON u.id = b.customer_id JOIN companions cp ON cp.user_id = b.companion_id
      ORDER BY b.created_at DESC LIMIT 200`,
   ).all();
   return c.json(r.results);
 });
 
+/**
+ * Support refund. A held payment is released (never charged); money that was already taken
+ * (completed or late-cancelled bookings) is refunded through Stripe.
+ */
 admin.post('/bookings/:id/refund', async (c) => {
   const b = await c.env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(c.req.param('id')).first<Parameters<typeof refundBooking>[1]>();
-  if (!b || !(await refundBooking(c.env, b, (amt) => `Refunded by ZeitMit support · ${amt}`))) fail(409, 'Only held payments can be refunded.');
+  if (!b) fail(404, 'Booking not found.');
+  if (b!.pay_status === 'held') {
+    if (!(await refundBooking(c.env, b!, (amt) => `Refunded by ZeitMit support · ${amt}`, false, 'support'))) fail(409, 'This payment was just updated. Reload and try again.');
+  } else if (b!.pay_status === 'released') {
+    if (b!.payment_ref?.startsWith('pi_') && stripeOn(c.env)) {
+      try {
+        await refundPayment(c.env, b!.payment_ref);
+      } catch (e) {
+        console.error('Stripe refund failed', b!.id, e);
+        fail(409, `Stripe couldn’t refund this payment: ${(e as Error).message}`);
+      }
+    }
+    const res = await c.env.DB.prepare(
+      "UPDATE bookings SET pay_status = 'refunded', cancel_note = ?, updated_at = unixepoch() WHERE id = ? AND pay_status = 'released'",
+    ).bind(`Refunded by ZeitMit support · ${euros(b!.total)}`, b!.id).run();
+    if (!res.meta.changes) fail(409, 'This payment was just updated. Reload and try again.');
+    if (b!.credit_used) await c.env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(b!.credit_used, b!.customer_id).run();
+  } else {
+    fail(409, 'This booking was already refunded.');
+  }
   await notify(c.env, b!.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Refund issued', body: `ZeitMit support refunded ${euros(b!.total)} for your booking.`, go: 'tab:cancelled' }, c.executionCtx);
   return c.json({ ok: true });
 });
@@ -147,7 +171,7 @@ async function refundOpen(env: AppEnv['Bindings'], col: 'customer_id' | 'compani
   const open = await env.DB.prepare(`SELECT * FROM bookings WHERE ${where} AND status IN ('pending', 'confirmed') AND pay_status = 'held'`)
     .bind(id).all<Parameters<typeof refundBooking>[1]>();
   let n = 0;
-  for (const b of open.results) if (await refundBooking(env, b, (amt) => `Cancelled by ZeitMit support · ${amt} refunded`)) n++;
+  for (const b of open.results) if (await refundBooking(env, b, (amt) => `Cancelled by ZeitMit support · ${amt} refunded`, false, 'support')) n++;
   return n;
 }
 

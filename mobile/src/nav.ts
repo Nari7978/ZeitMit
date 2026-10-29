@@ -65,17 +65,46 @@ export function toCompanionMode() {
   router.dismissTo('/companion');
 }
 
-/** Opens the screen a notification points to: "chat:<id>", "tab:<bookings tab>", "comp:<tab>". */
-export function followGo(go: string) {
+/** Opens a booking's own chat thread (each booking has one). */
+export async function openBookingChat(bookingId: string) {
+  const s = useStore.getState();
+  const known = [...s.convos, ...s.compConvos].find((c) => c.bookingId === bookingId);
+  if (known) return openChat(known.id);
+  const id = await s.openBookingThread(bookingId);
+  if (id) openChat(id);
+}
+
+/**
+ * Opens the screen a notification points to: "chat:<id>", "tab:<bookings tab>", "comp:<tab>",
+ * "checkin", "verify", "home", "become". Loads what it needs first if the app just started.
+ */
+export async function followGo(go: string) {
+  if (!go) return;
+  const s = useStore.getState();
   if (go.startsWith('chat:')) {
-    router.dismissTo('/messages');
-    openChat(go.slice(5));
+    const id = go.slice(5);
+    const side = () => {
+      const st = useStore.getState();
+      return st.compConvos.some((c) => c.id === id) ? 'comp' : st.convos.some((c) => c.id === id) ? 'customer' : null;
+    };
+    if (!side()) await s.refresh();
+    // Companion chats sit under companion mode, so Back leads to the companion inbox.
+    router.dismissTo(side() === 'comp' ? '/companion/inbox' : '/messages');
+    openChat(id);
   } else if (go.startsWith('tab:')) {
     toBookings(go.slice(4) as BTab);
   } else if (go === 'checkin') {
+    if (!s.checkin) await s.loadCheckin();
     if (useStore.getState().checkin) useStore.getState().openSheet('sos');
+    else s.showToast('That check-in has already ended.');
   } else if (go === 'verify') {
     openVerify();
+  } else if (go === 'home') {
+    useStore.setState({ sheet: null });
+    router.dismissTo('/');
+  } else if (go === 'become') {
+    useStore.setState({ sheet: null });
+    router.push('/become');
   } else if (go.startsWith('comp:')) {
     const tab = go.slice(5);
     useStore.setState({ sheet: null });

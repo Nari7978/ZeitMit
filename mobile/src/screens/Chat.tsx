@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View, type ScrollViewInstance } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
@@ -9,7 +9,7 @@ import { api, wsUrl } from '../api';
 import { bookAgain, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, Row, Stripes, Txt, TypingDots, Photo } from '../ui/primitives';
-import { CircleButton, PrimaryButton } from '../ui/common';
+import { CircleButton, PrimaryButton, usePullRefresh } from '../ui/common';
 import { convoContext } from './Messages';
 import { locale, t } from '../i18n';
 
@@ -38,6 +38,20 @@ export default function Chat() {
   const ws = useRef<WebSocket | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastTypingSent = useRef(0);
+  const refresh = usePullRefresh(() => load());
+
+  // Opened from a notification before the inbox loaded: fetch it once, then give up gracefully.
+  const [missing, setMissing] = useState(false);
+  const hasConvo = !!x;
+  useEffect(() => {
+    if (hasConvo) return;
+    let alive = true;
+    void useStore.getState().refresh().then(() => {
+      const st = useStore.getState();
+      if (alive && ![...st.convos, ...st.compConvos].some((c) => c.id === id)) setMissing(true);
+    });
+    return () => { alive = false; };
+  }, [id, hasConvo]);
 
   const load = useCallback(async () => {
     try {
@@ -65,6 +79,9 @@ export default function Chat() {
           setTyping(true);
           clearTimeout(typingTimer.current);
           typingTimer.current = setTimeout(() => setTyping(false), 3000);
+        } else if (ev.type === 'closed') {
+          // The booking was completed or cancelled: reload so both sides see the chat has ended.
+          void useStore.getState().refresh();
         } else if (ev.type === 'message' && ev.from !== me) {
           setTyping(false);
           setMsgs((m) => (m && !m.some((x) => x.id === ev.id) ? [...m, { id: ev.id!, me: false, t: ev.t!, at: ev.at! }] : m));
@@ -78,7 +95,20 @@ export default function Chat() {
     return () => { closed = true; clearTimeout(retry); clearTimeout(typingTimer.current); ws.current?.close(); };
   }, [id, load]);
 
-  if (!x) return null;
+  if (!x) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 28 }}>
+        {missing ? (
+          <>
+            <Txt size={16} weight={700} align="center">This chat isn’t available</Txt>
+            <PrimaryButton label="Back" height={46} radius={14} size={14} onPress={() => router.back()} style={{ alignSelf: 'stretch' }} />
+          </>
+        ) : (
+          <ActivityIndicator color={colors.ink} />
+        )}
+      </View>
+    );
+  }
   const name = x.name;
   const st = x.status !== 'none' ? ST[x.status] : null;
   const canSend = draft.trim().length > 0;
@@ -156,6 +186,7 @@ export default function Chat() {
         contentContainerStyle={{ paddingTop: 14, paddingHorizontal: 14, paddingBottom: 10, gap: 6 }}
         onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
+        refreshControl={refresh}
       >
         {msgs && !msgs.length && open ? (
           <Txt size={13} lh={1.5} color={colors.gray600} align="center" style={{ marginVertical: 30, alignSelf: 'center', maxWidth: 260 }}>
@@ -186,7 +217,7 @@ export default function Chat() {
           <Row style={{ gap: 10, alignItems: 'flex-start' }}>
             <Icon name="lock" size={18} color={colors.gray600} />
             <Txt size={13} lh={1.45} color={colors.gray800} style={{ flex: 1 }}>
-              {isComp ? 'This chat is closed. It opens again if they book you.' : 'Chat is open while you have a paid booking, and for 7 days after you meet.'}
+              {x.status === 'completed' ? 'You’ve met, so this booking’s chat has ended.' : x.status === 'cancelled' ? 'This booking was cancelled, so its chat has ended.' : 'Chat opens with a paid booking. Each booking has its own chat.'}
             </Txt>
           </Row>
           {!isComp && x ? <PrimaryButton label="Book again" height={46} radius={14} size={14} onPress={() => bookAgain(x.cid)} /> : null}

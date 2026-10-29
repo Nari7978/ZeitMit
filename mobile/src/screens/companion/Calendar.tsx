@@ -6,6 +6,7 @@ import { Icon } from '../../ui/Icon';
 import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
 import { t } from '../../i18n';
+import { openBookingChat } from '../../nav';
 
 export default function Calendar() {
   const avail = useStore((s) => s.comp.avail);
@@ -45,30 +46,36 @@ export default function Calendar() {
       </Box>
       <Txt size={15} weight={700} style={{ marginTop: 6 }}>Upcoming</Txt>
       {up.map((u) => (
-        <Box key={u.id} shadow={4} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
-          <Initial who={u.who} hue={hueOf(u.customerId)} size={44} radius={14} fontSize={15} />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
-            <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('Safety check-in')}
-            onPress={() => openSheet('safety', { safety: { ...useStore.getState().safety, bid: u.id, name: u.who } })}
-            style={{ width: 38, height: 38, borderRadius: 12, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Icon name="shield-check" size={17} />
-          </Pressable>
+        <Box key={u.id} shadow={4} style={{ padding: 14, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
+          <Row style={{ gap: 12 }}>
+            <Initial who={u.who} hue={hueOf(u.customerId)} url={u.avatarUrl} size={44} radius={14} fontSize={15} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
+              <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
+              <Txt size={12} color={colors.gray600} numberOfLines={1}>{u.place}</Txt>
+            </View>
+          </Row>
+          <Row style={{ gap: 8 }}>
+            {([
+              ['message-circle', 'Message', () => void openBookingChat(u.id)],
+              ['shield-check', 'Check-in', () => openSheet('safety', { safety: { ...useStore.getState().safety, bid: u.id, name: u.who } })],
+              ['calendar-x', 'Cancel…', () => openSheet('cancel', { cancel: { bid: u.id, side: 'companion', reason: null, busy: false } })],
+            ] as const).map(([, label, fn]) => (
+              <Pressable key={label} accessibilityRole="button" accessibilityLabel={t(label)} onPress={fn} style={{ flex: 1, minWidth: 0, height: 40, paddingHorizontal: 4, borderRadius: 12, borderWidth: 1, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+                <Txt size={13} weight={600} numberOfLines={1}>{label}</Txt>
+              </Pressable>
+            ))}
+          </Row>
           <PressBox
             shadow={3}
             shadowColor={colors.mint}
             fx="scale"
             onPress={() => openSheet('otpin', { otpIn: { uid: u.id, val: '', err: false, done: false, busy: false } })}
             accessibilityLabel={`Enter ${u.who}’s code`}
-            style={{ height: 38, paddingHorizontal: 12, borderRadius: 12, backgroundColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+            style={{ height: 44, borderRadius: 12, backgroundColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
           >
-            <Icon name="key-round" size={14} color={colors.white} />
-            <Txt size={13} weight={700} color={colors.white}>Enter code</Txt>
+            <Icon name="key-round" size={15} color={colors.white} />
+            <Txt size={14} weight={700} color={colors.white}>Enter meet code</Txt>
           </PressBox>
         </Box>
       ))}

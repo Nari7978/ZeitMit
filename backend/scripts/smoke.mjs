@@ -169,7 +169,7 @@ const lenaConv = r.data.id;
 r = await call('POST', `/bookings/${lenaBooking}/cancel`, T);
 ok(r.status === 200 && r.data.refunded === 3080, 'pending request cancels with full refund (€30.80)');
 r = await call('POST', `/conversations/${lenaConv}/messages`, T, { text: 'Hi again' });
-ok(r.status === 403 && /closed/.test(r.data.error), 'chat closes when the booking is cancelled');
+ok(r.status === 403 && /ended/.test(r.data.error), 'chat ends when the booking is cancelled');
 r = await call('GET', '/conversations', T);
 ok(r.data.find((x) => x.id === lenaConv)?.canSend === false, 'inbox marks the closed chat');
 
@@ -273,16 +273,67 @@ ok(r.data.g === 'nb' && r.data.ageValue === 28 && !r.data.pron, 'gender, age and
 r = await call('GET', '/companions');
 ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not public');
 
+// One chat thread per booking; cancelling from both sides
+{
+  const jonas = await login('jonas@demo.zeitmit.app');
+  const J = jonas.token;
+  const det = (await call('GET', '/companions/demo_jonas')).data;
+  const act = det.acts.find((a) => !['date', 'plusone', 'family'].includes(a)) ?? det.acts[0];
+  const pairs = det.slots.flatMap((d) => d.times.map((t) => [d.date, t])).slice(-2); // furthest ahead: more than 24 h away
+  const mk = async ([date, time]) => (await call('POST', '/bookings', T, { companionId: 'demo_jonas', act, date, time, dur: 1, place: 'Café', boundariesAgreed: true })).data;
+  const A = await mk(pairs[0]);
+  const B = await mk(pairs[1]);
+  ok(A.status === 'pending' && B.status === 'pending', 'two bookings with the same companion');
+  const tA = (await call('POST', '/conversations', T, { bookingId: A.id })).data.id;
+  const tB = (await call('POST', '/conversations', T, { bookingId: B.id })).data.id;
+  ok(tA && tB && tA !== tB, 'each booking has its own chat thread');
+  r = await call('POST', '/conversations', J, { bookingId: A.id });
+  ok(r.data.id === tA, 'companion opens the same thread for that booking');
+
+  await call('POST', `/companion/bookings/${A.id}/accept`, J);
+  r = await call('POST', `/bookings/${A.id}/cancel`, T, { reason: 'Not a reason' });
+  ok(r.status === 400, 'cancel needs one of the listed reasons (or none)');
+  r = await call('POST', `/bookings/${A.id}/cancel`, T, { reason: 'Plans changed' });
+  ok(r.status === 200 && r.data.refunded === A.total && r.data.late === false, 'customer cancels a confirmed booking 24 h+ ahead: full refund');
+  r = await call('GET', '/me/notifications', J);
+  ok(r.data.some((n) => n.title === 'Mira cancelled' && n.body.includes('Plans changed') && n.go === 'comp:calendar'), 'companion is told, with the reason');
+  r = await call('GET', '/conversations', T);
+  ok(r.data.find((x) => x.id === tA)?.canSend === false && r.data.find((x) => x.id === tB)?.canSend === true, 'cancelled booking’s chat ends, the other stays open');
+  r = await call('GET', '/conversations?side=companion', J);
+  ok(r.data.find((x) => x.id === tA)?.canSend === false, 'chat ended for the companion too');
+  r = await call('POST', `/conversations/${tA}/messages`, J, { text: 'Hello?' });
+  ok(r.status === 403 && /ended/.test(r.data.error), 'nobody can write in an ended thread');
+
+  await call('POST', `/companion/bookings/${B.id}/accept`, J);
+  r = await call('POST', `/companion/bookings/${B.id}/cancel`, J, { reason: 'Plans changed' });
+  ok(r.status === 400, 'companion reasons are their own list');
+  r = await call('POST', `/companion/bookings/${B.id}/cancel`, J, { reason: 'Feeling unwell' });
+  ok(r.status === 200 && r.data.refunded === B.total, 'companion cancels a confirmed booking: customer refunded in full');
+  r = await call('POST', `/companion/bookings/${B.id}/cancel`, J);
+  ok(r.status === 409, 'a booking can only be cancelled once');
+  r = await call('GET', '/me/notifications', T);
+  ok(r.data.some((n) => n.title === 'Jonas cancelled your booking' && n.body.includes('Feeling unwell') && n.go === 'tab:cancelled'), 'customer is told, with the reason');
+  r = await call('GET', '/bookings', T);
+  const b = r.data.find((x) => x.id === B.id);
+  ok(b.status === 'cancelled' && b.pay === 'refunded' && b.cancelledBy === 'companion' && /Cancelled by Jonas/.test(b.note), 'booking shows who cancelled');
+  r = await call('GET', '/me/notifications', T);
+  ok(r.data.some((n) => n.title === 'You’re verified' && n.go === 'home'), '“You’re verified” opens Discover');
+}
+
 // Admin deleting
 {
   const A = adminToken(customer.user.id);
   r = await call('GET', '/admin/reviews', A);
-  const lenaReview = r.data.find((x) => x.companion_id === 'demo_lena');
-  const rows = r.data.filter((x) => x.companion_id === 'demo_lena').length;
-  r = await call('DELETE', `/admin/reviews/${lenaReview.id}`, A);
-  const after = (await call('GET', '/companions/demo_lena')).data;
-  ok(r.status === 200 && after.reviews === rows - 1 && !after.reviewList.some((x) => x.t === lenaReview.text && x.created_at === lenaReview.created_at),
-    `admin deletes a review, count recalculated from real reviews (${rows} → ${after.reviews})`);
+  // Any demo review will do (each run deletes one).
+  const review = r.data.find((x) => x.companion_id.startsWith('demo_'));
+  if (!review) ok(false, 'no demo reviews left: reseed with npm run seed:demo:local');
+  else {
+    const rows = r.data.filter((x) => x.companion_id === review.companion_id).length;
+    r = await call('DELETE', `/admin/reviews/${review.id}`, A);
+    const after = (await call('GET', `/companions/${review.companion_id}`)).data;
+    ok(r.status === 200 && after.reviews === rows - 1 && !after.reviewList.some((x) => x.t === review.text && x.created_at === review.created_at),
+      `admin deletes a review, count recalculated from real reviews (${rows} → ${after.reviews})`);
+  }
   r = await call('DELETE', `/admin/users/${customer.user.id}`, A);
   ok(r.status === 400, 'admin cannot delete their own account');
   r = await call('DELETE', `/admin/companions/${customer.user.id}`, A);

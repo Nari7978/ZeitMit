@@ -11,6 +11,21 @@ type BookingRow = {
   place: string; note: string; status: 'pending' | 'confirmed' | 'completed' | 'cancelled'; cancel_note: string | null;
   rate: number; subtotal: number; fee: number; total: number; pay_status: 'held' | 'released' | 'refunded';
   meet_code: string; code_attempts: number; reviewed: number; created_at: number; credit_used: number; payment_ref: string | null; paid: number; checkout_url: string | null;
+  cancelled_by: 'customer' | 'companion' | 'support' | 'system' | null; cancel_reason: string | null;
+};
+
+/** Customers cancel for free until this many hours before the start; later the companion keeps their pay. */
+export const FREE_CANCEL_HOURS = 24;
+
+/** Reasons people can pick when cancelling (fixed, so they can be translated and never carry contact details). */
+export const CANCEL_REASONS = {
+  customer: ['Plans changed', 'Booked by mistake', 'Feeling unwell', 'Something else'],
+  companion: ['Feeling unwell', 'Emergency', 'Schedule conflict', 'Safety concern', 'Something else'],
+} as const;
+const reasonFor = (side: keyof typeof CANCEL_REASONS, r: unknown) => {
+  if (r === undefined || r === null || r === '') return null;
+  if (!(CANCEL_REASONS[side] as readonly string[]).includes(String(r))) fail(400, 'Pick one of the reasons.');
+  return String(r);
 };
 
 /** Booking as the customer sees it (includes the meet code). */
@@ -18,6 +33,7 @@ const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; ph
   id: b.id, cid: b.companion_id, companionName: b.companion_name, hue: b.hue, photoUrl: b.photo_id ? `/photos/${b.photo_id}` : null, act: b.activity, startsAt: b.starts_at,
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.cancel_note ?? undefined, status: b.status,
   pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' ? b.meet_code : undefined, reviewed: !!b.reviewed,
+  cancelledBy: b.cancelled_by ?? undefined,
 });
 
 /** Booking as the companion sees it (never includes the meet code). */
@@ -36,23 +52,38 @@ async function load(env: Env, id: string) {
   return b!;
 }
 
-/** Links (or creates) the chat between customer and companion to a booking. */
-async function linkConversation(env: Env, b: Pick<BookingRow, 'id' | 'customer_id' | 'companion_id'>) {
-  await env.DB.prepare(
-    `INSERT INTO conversations (id, customer_id, companion_id, booking_id) VALUES (?, ?, ?, ?)
-     ON CONFLICT (customer_id, companion_id) DO UPDATE SET booking_id = excluded.booking_id`,
-  ).bind(newId('cv'), b.customer_id, b.companion_id, b.id).run();
+/** Every paid booking gets its own chat thread (created once, when the request reaches the companion). */
+export async function ensureThread(env: Env, b: Pick<BookingRow, 'id' | 'customer_id' | 'companion_id'>) {
+  await env.DB.prepare('INSERT INTO conversations (id, customer_id, companion_id, booking_id) VALUES (?, ?, ?, ?) ON CONFLICT (booking_id) DO NOTHING')
+    .bind(newId('cv'), b.customer_id, b.companion_id, b.id).run();
+  return (await env.DB.prepare('SELECT id FROM conversations WHERE booking_id = ?').bind(b.id).first<{ id: string }>())!.id;
 }
+
+/** Tells open chat screens that this booking's thread just ended (booking completed or cancelled). */
+async function endThread(env: Env, bookingId: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
+  const cv = await env.DB.prepare('SELECT id FROM conversations WHERE booking_id = ?').bind(bookingId).first<{ id: string }>();
+  if (!cv) return;
+  const send = env.CHAT.get(env.CHAT.idFromName(cv.id)).fetch('https://chat/broadcast', { method: 'POST', body: JSON.stringify({ type: 'closed' }) }).catch(() => undefined);
+  if (ctx) ctx.waitUntil(send);
+  else await send;
+}
+
+/** Ends a running safety check-in once its booking is over (an SOS stays visible for the team). */
+const endCheckins = (env: Env, bookingId: string) =>
+  env.DB.prepare("UPDATE checkins SET status = 'ended' WHERE booking_id = ? AND status IN ('active', 'alerted')").bind(bookingId).run();
 
 /**
  * Cancels a booking and returns the money: gift credit goes back to the account, the card part is refunded.
  * Returns false if the booking was no longer refundable (e.g. a concurrent update).
  */
-export async function refundBooking(env: Env, b: BookingRow, note: (amount: string) => string, onlyIfPending = false) {
+export async function refundBooking(
+  env: Env, b: BookingRow, note: (amount: string) => string, onlyIfPending = false,
+  by: NonNullable<BookingRow['cancelled_by']> = 'system', reason: string | null = null,
+) {
   const res = await env.DB.prepare(
-    `UPDATE bookings SET status = 'cancelled', pay_status = 'refunded', cancel_note = ?, updated_at = unixepoch()
+    `UPDATE bookings SET status = 'cancelled', pay_status = 'refunded', cancel_note = ?, cancelled_by = ?, cancel_reason = ?, updated_at = unixepoch()
      WHERE id = ? AND pay_status = 'held' ${onlyIfPending ? "AND status = 'pending'" : ''}`,
-  ).bind(note(euros(b.total)), b.id).run();
+  ).bind(note(euros(b.total)), by, reason, b.id).run();
   if (!res.meta.changes) return false;
   if (b.credit_used) await env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(b.credit_used, b.customer_id).run();
   // The card part was only authorised (manual capture), so releasing the hold means it's never charged.
@@ -63,6 +94,8 @@ export async function refundBooking(env: Env, b: BookingRow, note: (amount: stri
       console.error('Stripe cancel failed for', b.id, e);
     }
   }
+  await endCheckins(env, b.id);
+  await endThread(env, b.id);
   return true;
 }
 
@@ -73,7 +106,7 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
      JOIN companions c ON c.user_id = b.companion_id JOIN users u ON u.id = b.customer_id WHERE b.id = ?`,
   ).bind(id).first<BookingRow & { companion_name: string; customer_name: string }>();
   if (!b) return;
-  await linkConversation(env, b);
+  await ensureThread(env, b);
   const when = berlinWhen(b.starts_at);
   await notify(env, b.customer_id, { icon: 'hourglass', tone: 'warning', title: 'Request sent to ' + b.companion_name, body: `${ACT_LABEL[b.activity]} on ${when.day}. ${b.companion_name} has 24 hours to respond.`, go: 'tab:pending' }, ctx);
   await notify(env, b.companion_id, { icon: 'inbox', tone: 'violet', title: 'New booking request', body: `${b.customer_name || 'A customer'} · ${ACT_LABEL[b.activity]} · ${when.full}. ${euros(b.subtotal)} is already paid and held.`, go: 'comp:requests' }, ctx);
@@ -188,16 +221,45 @@ bookings.post('/:id/confirm-payment', async (c) => {
   return c.json({ paid: true, booking: forCustomer(row!) });
 });
 
-/** Customer cancels: pending any time, confirmed up to 24h before. Both refund in full. */
+/**
+ * Customer cancels. Pending requests and bookings more than FREE_CANCEL_HOURS ahead are refunded in full;
+ * later, the booking is cancelled but the companion keeps their pay for the reserved time.
+ */
 bookings.post('/:id/cancel', async (c) => {
   const u = c.get('user');
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
   const b = await load(c.env, c.req.param('id'));
   if (b.customer_id !== u.id) fail(404, 'Booking not found.');
-  if (b.status !== 'pending' && b.status !== 'confirmed') fail(409, 'This booking can’t be cancelled.');
-  if (b.status === 'confirmed' && b.starts_at - now() < 24 * 3600) fail(409, 'Free cancellation ends 24 hours before the booking. Contact support.');
-  if (!(await refundBooking(c.env, b, (amt) => `Cancelled by you · ${amt} refunded in full`))) fail(409, 'This booking can’t be cancelled.');
-  await notify(c.env, b.companion_id, { icon: 'calendar-x', tone: 'error', title: 'Booking cancelled', body: `${ACT_LABEL[b.activity]} on ${berlinWhen(b.starts_at).day} was cancelled by the customer.`, go: 'comp:calendar' }, c.executionCtx);
-  return c.json({ ok: true, refunded: b.total });
+  if ((b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'This booking can’t be cancelled any more.');
+  const reason = reasonFor('customer', body.reason);
+  const who = (await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(u.id).first<{ name: string }>())?.name?.split(' ')[0] || 'The customer';
+  const when = `${ACT_LABEL[b.activity]} on ${berlinWhen(b.starts_at).day}`;
+  const late = b.status === 'confirmed' && b.starts_at - now() < FREE_CANCEL_HOURS * 3600;
+
+  if (!late) {
+    if (!(await refundBooking(c.env, b, (amt) => `Cancelled by you · ${amt} refunded in full`, false, 'customer', reason))) fail(409, 'This booking can’t be cancelled any more.');
+    await notify(c.env, b.companion_id, { icon: 'calendar-x', tone: 'error', title: `${who} cancelled`, body: `${when} was cancelled${reason ? ` · ${reason}` : ''}.`, go: 'comp:calendar' }, c.executionCtx);
+    return c.json({ ok: true, refunded: b.total, late: false });
+  }
+
+  // Late: take the held payment, the companion is paid for the time they reserved.
+  if (b.payment_ref?.startsWith('pi_') && stripeOn(c.env)) {
+    try {
+      await capture(c.env, b.payment_ref);
+    } catch (e) {
+      console.error('Late-cancel capture failed', b.id, e);
+      fail(409, 'The cancellation couldn’t be processed. Please try again in a moment.');
+    }
+  }
+  const res = await c.env.DB.prepare(
+    `UPDATE bookings SET status = 'cancelled', pay_status = 'released', cancel_note = ?, cancelled_by = 'customer', cancel_reason = ?, updated_at = unixepoch()
+     WHERE id = ? AND status = 'confirmed' AND pay_status = 'held'`,
+  ).bind(`Cancelled by you less than ${FREE_CANCEL_HOURS} hours before · no refund`, reason, b.id).run();
+  if (!res.meta.changes) fail(409, 'This booking can’t be cancelled any more.');
+  await endCheckins(c.env, b.id);
+  await endThread(c.env, b.id, c.executionCtx);
+  await notify(c.env, b.companion_id, { icon: 'calendar-x', tone: 'warning', title: `${who} cancelled late`, body: `${when} was cancelled less than ${FREE_CANCEL_HOURS} hours before. You still get ${euros(b.subtotal)}.`, go: 'comp:calendar' }, c.executionCtx);
+  return c.json({ ok: true, refunded: 0, late: true, kept: b.total });
 });
 
 bookings.post('/:id/review', async (c) => {
@@ -266,10 +328,25 @@ companionBookings.post('/:id/accept', async (c) => {
 companionBookings.post('/:id/decline', async (c) => {
   const b = await own(c, c.req.param('id'));
   if (b.status !== 'pending') fail(409, 'This request was already handled.');
-  if (!(await refundBooking(c.env, b, (amt) => `Declined · ${amt} refunded in full`, true))) fail(409, 'This request was already handled.');
+  if (!(await refundBooking(c.env, b, (amt) => `Declined · ${amt} refunded in full`, true, 'companion'))) fail(409, 'This request was already handled.');
   const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;
   await notify(c.env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: `${name} can’t make it`, body: `Your request was declined. ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' }, c.executionCtx);
   return c.json({ ok: true });
+});
+
+/** Companion cancels a request or a confirmed booking: the customer always gets everything back. */
+companionBookings.post('/:id/cancel', async (c) => {
+  const b = await own(c, c.req.param('id'));
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  if ((b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'This booking can’t be cancelled any more.');
+  const reason = reasonFor('companion', body.reason);
+  const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;
+  if (!(await refundBooking(c.env, b, (amt) => `Cancelled by ${name} · ${amt} refunded in full`, false, 'companion', reason))) fail(409, 'This booking can’t be cancelled any more.');
+  await notify(c.env, b.customer_id, {
+    icon: 'calendar-x', tone: 'error', title: `${name} cancelled your booking`,
+    body: `${ACT_LABEL[b.activity]} on ${berlinWhen(b.starts_at).day}${reason ? ` · ${reason}` : ''}. ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled',
+  }, c.executionCtx);
+  return c.json({ ok: true, refunded: b.total });
 });
 
 /** Companion enters the customer's 4-digit meet code at the meet-up: releases the held payment. */
@@ -293,7 +370,8 @@ companionBookings.post('/:id/verify-code', async (c) => {
   }
   // TODO(payouts): transfer `subtotal` to the companion (Stripe Connect) — until then payouts are made manually.
   await c.env.DB.prepare("UPDATE bookings SET status = 'completed', pay_status = 'released', updated_at = unixepoch() WHERE id = ?").bind(b.id).run();
-  await c.env.DB.prepare("UPDATE checkins SET status = 'ended' WHERE booking_id = ? AND status = 'active'").bind(b.id).run();
+  await endCheckins(c.env, b.id);
+  await endThread(c.env, b.id, c.executionCtx); // the booking's chat ends for both once you've met
   const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;
   await notify(c.env, b.customer_id, { icon: 'wallet', tone: 'success', title: 'Payment released to ' + name, body: `Meet code confirmed. ${euros(b.total)} sent from ZeitMit.`, go: 'tab:completed' }, c.executionCtx);
   return c.json({ ok: true, released: b.subtotal });
@@ -323,7 +401,7 @@ export async function expirePending(env: Env) {
   const r = await env.DB.prepare("SELECT * FROM bookings WHERE status = 'pending' AND paid = 1 AND (created_at < ? OR starts_at < ?) LIMIT 200")
     .bind(now() - 24 * 3600, now()).all<BookingRow>();
   for (const b of r.results) {
-    if (!(await refundBooking(env, b, (amt) => `No reply in time · ${amt} refunded in full`, true))) continue;
+    if (!(await refundBooking(env, b, (amt) => `No reply in time · ${amt} refunded in full`, true, 'system'))) continue;
     await notify(env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Request expired', body: `No reply in time, so ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' });
   }
   return r.results.length;

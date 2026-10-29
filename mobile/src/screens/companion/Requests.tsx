@@ -1,4 +1,4 @@
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur, memberSince } from '../../data';
 import { hueOf, useStore } from '../../store';
@@ -6,6 +6,8 @@ import { Icon } from '../../ui/Icon';
 import { Box, Enter, Row, Txt } from '../../ui/primitives';
 import { Pill, PrimaryButton, SecondaryButton } from '../../ui/common';
 import { actLine, CompShell, Initial } from './Shell';
+import { openBookingChat } from '../../nav';
+import { t } from '../../i18n';
 
 export default function Requests() {
   const requests = useStore((s) => s.comp.requests);
@@ -27,6 +29,9 @@ export default function Requests() {
                   <Txt size={13} color={colors.gray600}>{actLine(r.act, r.dur)}</Txt>
                 </Row>
               </View>
+              <Pressable accessibilityRole="button" accessibilityLabel={t(`Message ${r.who}`)} onPress={() => void openBookingChat(r.id)} style={{ width: 38, height: 38, borderRadius: 12, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="message-circle" size={17} />
+              </Pressable>
               <Pill label="New" bg={colors.blush} fg={colors.ink} height={24} />
             </Row>
             {r.customer ? (

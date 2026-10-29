@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import { Animated, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Animated, Pressable, RefreshControl, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, type Weight } from '../theme';
 import { useStore } from '../store';
@@ -13,6 +13,25 @@ export function StatusCover({ color }: { color: string }) {
 }
 
 /** Top padding used by the design (54px = 50px status bar + 4). */
+/**
+ * Drag down to refresh: pass the result as a ScrollView's `refreshControl`. Reloads everything from the API
+ * (companion side and check-in included), plus `extra` for screen-specific data.
+ */
+export function usePullRefresh(extra?: () => Promise<unknown> | void, tint: string = colors.ink) {
+  const [refreshing, setRefreshing] = useState(false);
+  const extraRef = useRef(extra);
+  extraRef.current = extra;
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([useStore.getState().refresh(), extraRef.current?.()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+  return <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={tint} colors={[colors.ink]} progressBackgroundColor={colors.white} />;
+}
+
 export function useTopPad(extra = 4) {
   return useSafeAreaInsets().top + extra;
 }

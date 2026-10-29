@@ -5,7 +5,7 @@ import { useStore, type Convo } from '../store';
 import { openChat } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { StatusCover, useTopPad } from '../ui/common';
+import { StatusCover, usePullRefresh, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 
 /** "City Walks · Tue 27 Oct, 14:00", or "No booking yet". */
@@ -31,11 +31,16 @@ export function ConvoRow({ x }: { x: Convo }) {
         </Row>
         <Row style={{ gap: 6 }}>
           <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: st ? st.dot : colors.gray400 }} />
-          <Txt size={12} color={colors.gray800}>{convoContext(x)}</Txt>
+          <Txt size={12} color={colors.gray800} numberOfLines={1} style={{ flexShrink: 1 }}>{convoContext(x)}</Txt>
+          {!x.canSend ? (
+            <View style={{ height: 18, paddingHorizontal: 7, borderRadius: 999, backgroundColor: colors.track, justifyContent: 'center' }}>
+              <Txt size={10.5} weight={600} color={colors.gray600}>Chat ended</Txt>
+            </View>
+          ) : null}
         </Row>
         <Row style={{ gap: 8 }}>
           <Txt size={14} color={unread ? colors.ink : colors.gray600} numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
-            {x.last ? (x.last.me ? 'You: ' : '') + x.last.t : 'Say hello and suggest a plan'}
+            {x.last ? (x.last.me ? 'You: ' : '') + x.last.t : x.canSend ? 'Say hello and suggest a plan' : 'No messages'}
           </Txt>
           {unread ? (
             <View style={{ minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 999, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
@@ -52,10 +57,11 @@ export default function Messages() {
   const top = useTopPad();
   const bottom = useNavBottom() + 90;
   const convos = useStore((s) => s.convos);
+  const refresh = usePullRefresh();
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           <View style={{ paddingTop: 8, paddingHorizontal: 20 }}><H size={30} ls={-0.035}>Messages</H></View>
           <Row style={{ marginTop: 14, marginHorizontal: 20, marginBottom: 8, gap: 10, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.lilac }}>
@@ -65,7 +71,7 @@ export default function Messages() {
           {convos.map((x) => <ConvoRow key={x.id} x={x} />)}
           {!convos.length ? (
             <Txt size={14} lh={1.5} color={colors.gray600} align="center" style={{ marginTop: 32, marginHorizontal: 36 }}>
-              No messages yet. Open a companion’s profile and tap Message to say hello.
+              No chats yet. A chat opens when you book a companion, one for each booking.
             </Txt>
           ) : null}
         </Enter>

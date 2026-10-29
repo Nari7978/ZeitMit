@@ -7,7 +7,7 @@ import { filterCount, filtered, toggleIn, useStore, type Filters } from '../stor
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Chip, Enter, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { EmptyState, SaveButton, SecondaryButton, StatusCover, TextButton, useTopPad } from '../ui/common';
+import { EmptyState, SaveButton, SecondaryButton, StatusCover, TextButton, useTopPad, usePullRefresh } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 import { t } from '../i18n';
 
@@ -39,6 +39,7 @@ export default function Search() {
   }, [params.focus]);
 
   const list = useStore((s) => s.companions);
+  const refresh = usePullRefresh();
   const loading = useStore((s) => s.loading);
   const results = filtered(list, query, f, sort);
   const count = filterCount(f);
@@ -47,7 +48,7 @@ export default function Search() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           <View style={{ paddingTop: 8, paddingHorizontal: 20, gap: 14 }}>
             <Row style={{ justifyContent: 'space-between' }}>

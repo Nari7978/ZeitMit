@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -11,7 +11,7 @@ import { useStore } from '../store';
 import { canMessage, messageCompanion, openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { CircleButton, SaveButton, SecondaryButton, useTopPad } from '../ui/common';
+import { CircleButton, SaveButton, SecondaryButton, usePullRefresh, useTopPad } from '../ui/common';
 import { locale } from '../i18n';
 
 type Detail = Companion & {
@@ -24,9 +24,12 @@ export default function Profile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const listed = useStore((s) => s.byId[id]);
   const [detail, setDetail] = useState<Detail | null>(null);
-  useEffect(() => {
-    api<Detail>('GET', `/companions/${id}`).then(setDetail).catch((e) => useStore.getState().showToast(e.message));
-  }, [id]);
+  const loadDetail = useCallback(
+    () => api<Detail>('GET', `/companions/${id}`).then(setDetail).catch((e) => useStore.getState().showToast(e.message)),
+    [id],
+  );
+  useEffect(() => { void loadDetail(); }, [loadDetail]);
+  const refresh = usePullRefresh(loadDetail);
   const c: Companion | undefined = detail ?? listed;
   const insets = useSafeAreaInsets();
   const top = useTopPad();
@@ -46,6 +49,7 @@ export default function Profile() {
       <StatusBar style={scrolled ? 'dark' : 'light'} />
       <ScrollView
         showsVerticalScrollIndicator={false}
+        refreshControl={refresh}
         scrollEventThrottle={32}
         onScroll={(e) => {
           const v = e.nativeEvent.contentOffset.y > 380;

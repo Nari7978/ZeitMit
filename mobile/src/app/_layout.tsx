@@ -34,12 +34,16 @@ export default function RootLayout() {
     return () => { sub.remove(); clearInterval(t); };
   }, []);
 
-  // Push: register once signed in; follow taps on notifications.
+  // Push: register once signed in; follow taps on notifications once the screens exist
+  // (a tap can arrive before the navigator is mounted when it opened the app).
   useEffect(() => {
-    if (session !== 'in') return;
+    if (session !== 'in' || !fontsLoaded) return;
     void registerForPush();
-    return onNotificationTap((go) => { void useStore.getState().refresh(); followGo(go); });
-  }, [session]);
+    return onNotificationTap((go) => {
+      void useStore.getState().refresh();
+      setTimeout(() => void followGo(go), 60);
+    });
+  }, [session, fontsLoaded]);
 
   const path = usePathname();
   const checkin = useStore((s) => !!s.checkin);

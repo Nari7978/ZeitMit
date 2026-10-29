@@ -5,8 +5,8 @@ import Slider from '@react-native-community/slider';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, ageStr, eur, LANGS, PREF, SORT, WHEN } from '../data';
-import { filtered, priceOf, toggleIn, useStore, type SheetKind } from '../store';
+import { A, AM, ageStr, eur, LANGS, PREF, SORT, WHEN } from '../data';
+import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
@@ -68,6 +68,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'safety': return <SafetySheet />;
     case 'sos': return <SosSheet />;
     case 'checkinShare': return <CheckinShareSheet />;
+    case 'cancel': return <CancelSheet />;
     case 'otp': return <OtpSheet />;
     case 'otpin': return <OtpInSheet />;
     case 'delete': return <DeleteSheet />;
@@ -479,6 +480,68 @@ function SafetySheet() {
       </Row>
       <PrimaryButton label="Start check-in" weight={700} shadowColor={colors.mint} dim={!safety.contactName.trim() || !safety.contactPhone.trim()} style={{ marginTop: 18 }} onPress={() => void useStore.getState().startCheckin()} />
       <Txt size={12} color={colors.gray600} align="center" style={{ marginTop: 12 }}>In an emergency, always call 112.</Txt>
+    </Pad>
+  );
+}
+
+// ---------- Cancel a paid booking (customer or companion) ----------
+
+const CANCEL_REASONS = {
+  customer: ['Plans changed', 'Booked by mistake', 'Feeling unwell', 'Something else'],
+  companion: ['Feeling unwell', 'Emergency', 'Schedule conflict', 'Safety concern', 'Something else'],
+} as const;
+
+function CancelSheet() {
+  const draft = useStore((s) => s.cancel);
+  const mine = useStore((s) => s.bookings.find((x) => x.id === s.cancel.bid));
+  const theirs = useStore((s) => [...s.comp.requests, ...s.comp.upcoming].find((x) => x.id === s.cancel.bid));
+  const set = (o: Partial<typeof draft>) => useStore.setState({ cancel: { ...draft, ...o } });
+  const close = () => useStore.getState().closeSheet();
+  const companion = draft.side === 'companion';
+  const b = companion ? theirs : mine;
+  if (!b) return <Pad><View /></Pad>;
+  const pending = b.status === 'pending';
+  const other = companion ? (theirs?.who ?? 'Your customer') : (mine?.companionName ?? 'your companion');
+  const late = !companion && b.status === 'confirmed' && b.startsAt - Date.now() / 1000 < FREE_CANCEL_HOURS * 3600;
+
+  const policy = companion
+    ? { icon: 'rotate-ccw', bg: colors.lilac, text: `${other} gets everything back. You won’t receive the ${eur((theirs?.payout ?? 0) / 100)}.` }
+    : late
+      ? { icon: 'circle-alert', bg: '#FDF3E2', text: `It’s less than ${FREE_CANCEL_HOURS} hours before, so there’s no refund. ${other} is paid for the time they reserved.` }
+      : { icon: 'circle-check', bg: colors.mintSoft, text: `Free cancellation: you get ${eur((mine?.total ?? 0) / 100)} back in full.` };
+
+  const confirm = () => {
+    if (draft.busy) return;
+    const st = useStore.getState();
+    void (companion ? st.companionCancel(b.id, draft.reason) : st.cancelBooking(b.id, draft.reason));
+  };
+
+  return (
+    <Pad>
+      <View style={{ gap: 12 }}>
+        <BigTitle>{pending ? 'Cancel this request?' : 'Cancel this booking?'}</BigTitle>
+        <View style={{ padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, gap: 4 }}>
+          <Txt size={15} weight={700}>{other} · {AM[b.act].label}</Txt>
+          <Txt size={13} color={colors.gray600}>{b.day} · {b.time} · {b.place}</Txt>
+        </View>
+        <Row style={{ gap: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: policy.bg, alignItems: 'flex-start' }}>
+          <Icon name={policy.icon} size={18} />
+          <Txt size={14} lh={1.45} style={{ flex: 1 }}>{policy.text}</Txt>
+        </Row>
+        <Txt size={14} weight={700} style={{ marginTop: 4 }}>Why are you cancelling? <Txt size={13} weight={400} color={colors.gray600}>Optional</Txt></Txt>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {CANCEL_REASONS[draft.side].map((r) => (
+            <Chip key={r} label={r} height={38} size={13} on={draft.reason === r} onPress={() => set({ reason: draft.reason === r ? null : r })} />
+          ))}
+        </View>
+        {companion && draft.reason === 'Safety concern' ? (
+          <Txt size={12} lh={1.45} color={colors.gray600}>Please also report them from the chat menu so our safety team can look into it.</Txt>
+        ) : null}
+        <PressBox shadow={4} fx="push" accessibilityLabel={t(pending ? 'Cancel request' : 'Cancel booking')} onPress={confirm} style={{ marginTop: 6, height: 54, borderRadius: 16, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: colors.rose, alignItems: 'center', justifyContent: 'center', opacity: draft.busy ? 0.6 : 1 }}>
+          <Txt size={16} weight={800} color={colors.white}>{draft.busy ? 'Cancelling…' : pending ? 'Cancel request' : 'Cancel booking'}</Txt>
+        </PressBox>
+        <TextButton label={pending ? 'Keep request' : 'Keep booking'} size={15} weight={700} onPress={close} style={{ alignSelf: 'center', paddingVertical: 10 }} />
+      </View>
     </Pad>
   );
 }

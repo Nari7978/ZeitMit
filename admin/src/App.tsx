@@ -265,15 +265,22 @@ function Companions({ say, refresh }: Ctx) {
   );
 }
 
-type BookingRow = { id: string; status: string; pay_status: string; activity: string; starts_at: number; total: number; customer: string; companion: string };
+type BookingRow = {
+  id: string; status: string; pay_status: string; activity: string; starts_at: number; total: number; customer: string; companion: string;
+  cancel_note: string | null; cancelled_by: string | null; cancel_reason: string | null;
+};
 
 function Bookings({ say, refresh }: Ctx) {
   const [list, setList] = useState<BookingRow[] | null>(null);
   const load = useCallback(() => { api<BookingRow[]>('GET', '/admin/bookings').then(setList).catch((e) => say(e.message)); }, [say]);
   useEffect(load, [load]);
   const refund = async (b: BookingRow) => {
-    if (!confirm(`Refund ${eur(b.total)} to ${b.customer} and cancel the booking?`)) return;
-    try { await api('POST', `/admin/bookings/${b.id}/refund`); say('Refunded.'); load(); refresh(); } catch (e) { say((e as Error).message); }
+    const msg = b.pay_status === 'held'
+      ? `Refund ${eur(b.total)} to ${b.customer} and cancel the booking?`
+      : `${eur(b.total)} was already paid out for this booking. Refund it to ${b.customer} through Stripe anyway (e.g. a no-show or a complaint)?`;
+    if (!confirm(msg)) return;
+    try { await api('POST', `/admin/bookings/${b.id}/refund`); say('Refunded.'); } catch (e) { say((e as Error).message); }
+    load(); refresh();
   };
   return (
     <>
@@ -281,14 +288,15 @@ function Bookings({ say, refresh }: Ctx) {
       <div className="card" style={{ overflowX: 'auto' }}>
         {!list ? <p className="muted">Loading…</p> : (
           <table>
-            <thead><tr><th>When</th><th>Customer</th><th>Companion</th><th>Activity</th><th>Status</th><th>Payment</th><th>Total</th><th /></tr></thead>
+            <thead><tr><th>When</th><th>Customer</th><th>Companion</th><th>Activity</th><th>Status</th><th>Payment</th><th>Total</th><th>Cancelled</th><th /></tr></thead>
             <tbody>
               {list.map((b) => (
                 <tr key={b.id}>
                   <td>{when(b.starts_at)}</td><td>{b.customer}</td><td>{b.companion}</td><td>{b.activity}</td>
                   <td><span className={`status s-${b.status}`}>{b.status}</span></td>
                   <td>{b.pay_status}</td><td>{eur(b.total)}</td>
-                  <td>{b.pay_status === 'held' ? <button className="btn" onClick={() => void refund(b)}>Refund</button> : null}</td>
+                  <td className="small">{b.cancelled_by ? <><b>by {b.cancelled_by}</b>{b.cancel_reason ? ` · ${b.cancel_reason}` : ''}</> : <span className="muted">—</span>}</td>
+                  <td>{b.pay_status !== 'refunded' ? <button className={`btn ${b.pay_status === 'released' ? '' : 'red'}`} onClick={() => void refund(b)}>Refund</button> : null}</td>
                 </tr>
               ))}
             </tbody>

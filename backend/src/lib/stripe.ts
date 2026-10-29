@@ -63,6 +63,10 @@ export const capture = (env: Env, paymentIntent: string) =>
 export const cancelIntent = (env: Env, paymentIntent: string) =>
   stripe<{ status: string }>(env, 'POST', `/v1/payment_intents/${paymentIntent}/cancel`, {}, `cancel-${paymentIntent}`);
 
+/** Refunds money that was already taken (e.g. support refunds a completed or late-cancelled booking). */
+export const refundPayment = (env: Env, paymentIntent: string) =>
+  stripe<{ status: string }>(env, 'POST', '/v1/refunds', { payment_intent: paymentIntent }, `refund-${paymentIntent}`);
+
 /** Status of the PaymentIntent behind a Checkout session: 'requires_capture' / 'succeeded' means paid. */
 export function intentOf(s: CheckoutSession) {
   const pi = s.payment_intent;

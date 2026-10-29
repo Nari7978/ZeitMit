@@ -8,7 +8,7 @@ import { AM, hours, type ActId } from '../../data';
 import { toCustomerMode } from '../../nav';
 import { Icon } from '../../ui/Icon';
 import { Enter, H, Row, tint, Txt } from '../../ui/primitives';
-import { StatusCover } from '../../ui/common';
+import { StatusCover, usePullRefresh } from '../../ui/common';
 import { photoUri } from '../../lib/photos';
 import { useNavBottom } from '../../ui/chrome';
 
@@ -17,11 +17,12 @@ export function CompShell({ title, children, pad = true }: { title: string; chil
   const insets = useSafeAreaInsets();
   const bottom = useNavBottom() + 90;
   const focused = useIsFocused();
+  const refresh = usePullRefresh(undefined, colors.white);
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       {focused ? <StatusBar style="light" /> : null}
       <StatusCover color={colors.ink} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingBottom: bottom }}>
         <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 20, paddingBottom: 26, backgroundColor: colors.ink, borderBottomLeftRadius: 28, borderBottomRightRadius: 28, gap: 14 }}>
           <Row style={{ justifyContent: 'space-between' }}>
             <Row style={{ gap: 8, height: 30, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,.1)' }}>

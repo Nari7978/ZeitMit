@@ -17,17 +17,25 @@ Every push that changes `backend/` runs `.github/workflows/backend.yml`, which c
 ```bash
 cd backend
 npm install
-echo 'JWT_SECRET=local-dev-secret' > .dev.vars
+echo 'JWT_SECRET=local-dev-secret-change-me' > .dev.vars   # the test scripts sign admin sessions with this
 npm run db:migrate:local
+npm run seed:demo:local        # the eight demo companions the tests book
 npm run dev                    # http://localhost:8787
 node scripts/smoke.mjs         # end-to-end checks against the local API
+node scripts/local-flows.mjs   # time-dependent flows (meet code, late cancel); edits the local DB
 ```
+`scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
+`npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
 
-## Test-mode features (switch off before real users)
-- **`DEV_LOGIN_CODES = "true"`** in `wrangler.toml`: login codes come back in the API response instead of by email, and admin access is disabled. Add a free [Resend](https://resend.com) key (`npx wrangler secret put RESEND_API_KEY`) and set it to `"false"` to go live.
-- **Payments are simulated:** bookings are marked "held" without charging anyone. Places to wire in Stripe are marked `TODO(payments)`.
+## Test-mode features
+- **`DEV_LOGIN_CODES = "true"`**: login codes come back in the API response instead of by email, and admin access is disabled. The deploy workflow switches this off once `BREVO_API_KEY` and `EMAIL_FROM_ADDRESS` are set.
+- **Payments:** without `STRIPE_SECRET_KEY`, bookings and gifts are marked paid without charging anyone. With a Stripe test key they go through Stripe Checkout (bookings are authorised, captured with the meet code or a late cancellation, released otherwise).
 - **Demo companions:** `migrations/0002_seed_demo.sql` adds eight sample companions (logins `<name>@demo.zeitmit.app`) and `0006_remove_demo_companions.sql` removes them again, so the live app starts empty. For local testing add them back with `npm run seed:demo:local` (the smoke test needs them).
-- **Safety SMS:** missed check-ins and SOS raise in-app alerts and show in the admin API; texting the trusted contact is `TODO(sms)`.
+- **Safety:** the trusted contact gets a private live page (`/t/<token>`) over WhatsApp, sent from the user's phone; SOS and missed check-ins email and push the admins. There is no automatic SMS.
+
+## Booking rules
+- Each paid booking has its own chat thread, open while the booking is pending or confirmed. It ends for both sides when the meet code is entered or the booking is cancelled.
+- Customers cancel for free until `FREE_CANCEL_HOURS` (24) before the start; later the booking is cancelled without a refund and the companion keeps their pay. Companions can cancel any time before the meeting; the customer always gets everything back. Support can refund any booking from the admin panel.
 
 ## API overview
 | Area | Endpoints |
@@ -35,8 +43,8 @@ node scripts/smoke.mjs         # end-to-end checks against the local API
 | Login | `POST /auth/request-code`, `POST /auth/verify` |
 | Me | `GET/PATCH/DELETE /me`, `PUT/DELETE /me/saved/:cid`, `GET /me/notifications`, `POST /me/notifications/read`, `POST /me/reports`, `POST /me/blocks` |
 | Browse | `GET /companions`, `GET /companions/:id`, `GET /companions/:id/slots` |
-| Customer bookings | `GET/POST /bookings`, `POST /bookings/:id/cancel`, `POST /bookings/:id/review` |
-| Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/availability`, `GET /companion/bookings`, `POST /companion/bookings/:id/accept·decline·verify-code` |
-| Chat | `GET/POST /conversations`, `GET/POST /conversations/:id/messages`, `GET /conversations/:id/ws` (WebSocket, `?token=`) |
-| Safety & gifts | `POST /safety/checkins`, `POST /safety/checkins/:id/ok·end·sos`, `POST /gifts` |
-| Admin | `/admin/stats`, `/admin/companions`, `/admin/bookings`, `/admin/reports`, `/admin/users` |
+| Customer bookings | `GET/POST /bookings`, `POST /bookings/:id/confirm-payment·cancel·review` |
+| Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/availability`, `GET /companion/bookings`, `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
+| Chat | `GET /conversations`, `POST /conversations` (`{ bookingId }` or `{ companionId }`), `GET/POST /conversations/:id/messages`, `GET /conversations/:id/ws` (WebSocket, `?token=`) |
+| Safety & gifts | `POST /safety/checkins`, `GET /safety/checkins/active`, `POST /safety/checkins/:id/ok·end·sos·location`, `GET /t/:token` (live page), `POST /gifts`, `POST /gifts/redeem` |
+| Admin | `/admin/stats`, `/admin/verifications`, `/admin/companions`, `/admin/bookings` (+ refund), `/admin/reports`, `/admin/reviews`, `/admin/users` (+ suspend, delete) |

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
 import { notify } from './lib/notify';
 import { CONTACT_MSG, fail, hasContactDetails, newId, now, shouldFlag } from './lib/util';
+import { ensureThread } from './routes/bookings';
 
 /**
  * One Durable Object per conversation. Holds the open WebSockets (hibernation API)
@@ -51,17 +52,13 @@ async function member(env: Env, convId: string, userId: string) {
 }
 
 /**
- * Chats open only with a paid booking between the two: while it's pending or confirmed,
- * and for 7 days after the meeting. Otherwise the history stays readable but nobody can write.
+ * Every paid booking has its own thread. It's open while the booking is pending or confirmed and ends for
+ * both sides once the meet code is entered (or the booking is cancelled). History stays readable.
  */
-const CHAT_DAYS_AFTER = 7;
-const OPEN_SQL = `EXISTS (SELECT 1 FROM bookings ob WHERE ob.customer_id = cv.customer_id AND ob.companion_id = cv.companion_id AND ob.paid = 1
-  AND (ob.status IN ('pending', 'confirmed') OR (ob.status = 'completed' AND ob.starts_at + ob.duration_h * 3600 > ?)))`;
-const closedAfter = () => now() - CHAT_DAYS_AFTER * 86400;
+const OPEN_SQL = `EXISTS (SELECT 1 FROM bookings ob WHERE ob.id = cv.booking_id AND ob.paid = 1 AND ob.status IN ('pending', 'confirmed'))`;
 
-async function chatOpen(env: Env, customerId: string, companionId: string) {
-  const r = await env.DB.prepare(`SELECT ${OPEN_SQL} AS open FROM (SELECT ? AS customer_id, ? AS companion_id) cv`)
-    .bind(closedAfter(), customerId, companionId).first<{ open: number }>(); // OPEN_SQL's cut-off comes first in the text
+async function threadOpen(env: Env, convId: string) {
+  const r = await env.DB.prepare(`SELECT ${OPEN_SQL} AS open FROM conversations cv WHERE cv.id = ?`).bind(convId).first<{ open: number }>();
   return !!r?.open;
 }
 
@@ -82,7 +79,7 @@ chat.get('/', async (c) => {
      LEFT JOIN bookings b ON b.id = cv.booking_id
      WHERE ${side === 'customer' ? 'cv.customer_id' : 'cv.companion_id'} = ?
      ORDER BY cv.last_at DESC LIMIT 100`,
-  ).bind(closedAfter(), u.id).all<ConvRow & { open: number; companion_name: string; hue: number; photo_id: string | null; avatar_id: string | null; customer_name: string; activity: string | null; starts_at: number | null; booking_status: string | null; last_body: string | null; last_sender: string | null }>();
+  ).bind(u.id).all<ConvRow & { open: number; companion_name: string; hue: number; photo_id: string | null; avatar_id: string | null; customer_name: string; activity: string | null; starts_at: number | null; booking_status: string | null; last_body: string | null; last_sender: string | null }>();
   return c.json(r.results.map((x) => ({
     id: x.id,
     cid: x.companion_id,
@@ -101,16 +98,31 @@ chat.get('/', async (c) => {
   })));
 });
 
-/** Opens the chat with a companion you have a paid booking with. */
+/**
+ * Finds the thread to open: `{ bookingId }` for a specific booking (either side), or `{ companionId }` for the
+ * customer's current booking with that companion. Chat starts only with a paid booking.
+ */
 chat.post('/', async (c) => {
   const u = c.get('user');
-  const { companionId } = await c.req.json<{ companionId: string }>();
-  const comp = await c.env.DB.prepare("SELECT display_name FROM companions WHERE user_id = ? AND status = 'approved'").bind(companionId).first<{ display_name: string }>();
+  const { companionId, bookingId } = await c.req.json<{ companionId?: string; bookingId?: string }>();
+  if (bookingId) {
+    const b = await c.env.DB.prepare('SELECT id, customer_id, companion_id, status, paid FROM bookings WHERE id = ?').bind(bookingId)
+      .first<{ id: string; customer_id: string; companion_id: string; status: string; paid: number }>();
+    if (!b || (b.customer_id !== u.id && b.companion_id !== u.id) || !b.paid) fail(404, 'Booking not found.');
+    const existing = await c.env.DB.prepare('SELECT id FROM conversations WHERE booking_id = ?').bind(b!.id).first<{ id: string }>();
+    if (existing) return c.json({ id: existing.id });
+    // Bookings from before threads existed get one on first open, if they're still running.
+    if (b!.status !== 'pending' && b!.status !== 'confirmed') fail(404, 'This booking has no chat.');
+    return c.json({ id: await ensureThread(c.env, b!) });
+  }
+  const comp = await c.env.DB.prepare("SELECT display_name FROM companions WHERE user_id = ? AND status = 'approved'").bind(companionId ?? '').first<{ display_name: string }>();
   if (!comp || companionId === u.id) fail(404, 'This companion isn’t available.');
-  if (!(await chatOpen(c.env, u.id, companionId))) fail(403, `You can message ${comp!.display_name} once you’ve booked and paid. Add a note to your booking request instead.`);
-  await c.env.DB.prepare('INSERT OR IGNORE INTO conversations (id, customer_id, companion_id) VALUES (?, ?, ?)').bind(newId('cv'), u.id, companionId).run();
-  const cv = await c.env.DB.prepare('SELECT id FROM conversations WHERE customer_id = ? AND companion_id = ?').bind(u.id, companionId).first<{ id: string }>();
-  return c.json({ id: cv!.id });
+  const open = await c.env.DB.prepare(
+    `SELECT b.id, b.customer_id, b.companion_id FROM bookings b WHERE b.customer_id = ? AND b.companion_id = ? AND b.paid = 1 AND b.status IN ('pending', 'confirmed')
+     ORDER BY b.starts_at LIMIT 1`,
+  ).bind(u.id, companionId).first<{ id: string; customer_id: string; companion_id: string }>();
+  if (!open) fail(403, `You can message ${comp!.display_name} once you’ve booked and paid. Add a note to your booking request instead.`);
+  return c.json({ id: await ensureThread(c.env, open!) });
 });
 
 chat.get('/:id/messages', async (c) => {
@@ -129,7 +141,7 @@ chat.post('/:id/messages', async (c) => {
   const { text } = await c.req.json<{ text?: string }>();
   const body = (text ?? '').trim().slice(0, 2000);
   if (!body) fail(400, 'Message is empty.');
-  if (!(await chatOpen(c.env, cv.customer_id, cv.companion_id))) fail(403, 'This chat is closed. Chats are open while you have a paid booking, and for 7 days after you meet.');
+  if (!(await threadOpen(c.env, cv.id))) fail(403, 'This chat has ended. Each booking has its own chat, open until you meet.');
   if (hasContactDetails(body)) fail(400, CONTACT_MSG);
   const other = cv.customer_id === u.id ? cv.companion_id : cv.customer_id;
   const blocked = await c.env.DB.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').bind(other, u.id).first();

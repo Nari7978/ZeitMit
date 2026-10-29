@@ -8,6 +8,9 @@ import { runCheckout } from './lib/checkout';
 import { resolveLang, setLang } from './i18n';
 import { berlinWeekday, eur, firstOpen, type ActId, type BookingStatus, type BTab, type Companion, type SORT, type Tone } from './data';
 
+/** Same rule as the API: customers cancel for free until this many hours before the start. */
+export const FREE_CANCEL_HOURS = 24;
+
 export type Filters = {
   type: 'all' | 'date';
   acts: ActId[];
@@ -24,6 +27,7 @@ export type Pay = 'held' | 'released' | 'refunded';
 export type Booking = {
   id: string; cid: string; companionName: string; hue: number; photoUrl?: string | null; creditUsed?: number; act: ActId; startsAt: number; day: string; time: string; full: string;
   dur: number; place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
+  cancelledBy?: 'customer' | 'companion' | 'support' | 'system';
 };
 export type Convo = {
   id: string; cid: string; customerId: string; name: string; hue: number; photoUrl?: string | null; bookingId: string | null; act: ActId | null; startsAt: number | null;
@@ -39,7 +43,7 @@ export type CompBooking = {
 };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'checkinShare' | 'otp' | 'otpin' | 'delete' | 'redeem';
+  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem';
 export type SortKey = keyof typeof SORT;
 export type Prefs = {
   pushMessages: boolean; pushBookings: boolean; emailUpdates: boolean; marketing: boolean;
@@ -92,6 +96,8 @@ type State = {
   sheetChat: string | null;
   sheet: SheetKind | null;
   otpFor: string | null;
+  /** Draft for the cancel sheet: which booking, from whose side, and the reason picked. */
+  cancel: { bid: string | null; side: 'customer' | 'companion'; reason: string | null; busy: boolean };
   otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
   gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
   checkin: Checkin | null;
@@ -117,8 +123,10 @@ type Actions = {
   openSheet: (sheet: SheetKind, patch?: Partial<State>) => void;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
-  cancelBooking: (id: string) => Promise<boolean>;
+  cancelBooking: (id: string, reason?: string | null) => Promise<boolean>;
+  companionCancel: (id: string, reason?: string | null) => Promise<boolean>;
   openConversation: (cid: string) => Promise<string | null>;
+  openBookingThread: (bookingId: string) => Promise<string | null>;
   markConvoRead: (id: string) => void;
   readNotif: (id: string) => void;
   markAllRead: () => void;
@@ -201,6 +209,7 @@ export const useStore = create<State & Actions>()((set, get) => {
     review: { bid: null, stars: 5, text: '' },
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
+    cancel: { bid: null, side: 'customer', reason: null, busy: false },
     otpFor: null, otpIn: { uid: null, val: '', err: false, done: false, busy: false },
     gift: { amt: 100, to: '', msg: '', done: false },
     checkin: null,
@@ -345,11 +354,25 @@ export const useStore = create<State & Actions>()((set, get) => {
       get().showToast('Payment not finished yet. Tap Pay to continue.');
       return null;
     },
-    cancelBooking: async (id) => {
-      const r = await attempt(() => api<{ refunded: number }>('POST', `/bookings/${id}/cancel`));
+    cancelBooking: async (id, reason) => {
+      set((s) => ({ cancel: { ...s.cancel, busy: true } }));
+      const r = await attempt(() => api<{ refunded: number; late: boolean }>('POST', `/bookings/${id}/cancel`, { reason: reason ?? undefined }));
+      set((s) => ({ cancel: { ...s.cancel, busy: false } }));
       if (!r) return false;
-      get().showToast('Request cancelled. ' + eur(r.refunded / 100) + ' refunded in full.');
+      set({ sheet: null });
+      get().showToast(r.late ? `Booking cancelled. No refund, as it was less than ${FREE_CANCEL_HOURS} hours before.` : `Cancelled. ${eur(r.refunded / 100)} refunded in full.`);
       await get().refresh();
+      return true;
+    },
+    companionCancel: async (id, reason) => {
+      const b = [...get().comp.requests, ...get().comp.upcoming].find((x) => x.id === id);
+      set((s) => ({ cancel: { ...s.cancel, busy: true } }));
+      const r = await attempt(() => api<{ refunded: number }>('POST', `/companion/bookings/${id}/cancel`, { reason: reason ?? undefined }));
+      set((s) => ({ cancel: { ...s.cancel, busy: false } }));
+      if (!r) return false;
+      set({ sheet: null });
+      get().showToast(`Booking cancelled. ${b?.who ?? 'Your customer'} gets ${eur(r.refunded / 100)} back.`);
+      await get().loadCompanionSide();
       return true;
     },
     submitReview: async () => {
@@ -362,11 +385,21 @@ export const useStore = create<State & Actions>()((set, get) => {
 
     // ---------- chat ----------
     openConversation: async (cid) => {
-      const existing = get().convos.find((c) => c.cid === cid);
+      const existing = get().convos.find((c) => c.cid === cid && c.canSend);
       if (existing) return existing.id;
       const r = await attempt(() => api<{ id: string }>('POST', '/conversations', { companionId: cid }));
       if (!r) return null;
       void api<Convo[]>('GET', '/conversations').then((convos) => set({ convos })).catch(() => {});
+      return r.id;
+    },
+    openBookingThread: async (bookingId) => {
+      const r = await attempt(() => api<{ id: string }>('POST', '/conversations', { bookingId }));
+      if (!r) return null;
+      // Load the inbox so the chat screen finds the new thread (customer or companion side).
+      await Promise.allSettled([
+        api<Convo[]>('GET', '/conversations').then((convos) => set({ convos })),
+        get().companionStatus !== 'none' ? api<Convo[]>('GET', '/conversations?side=companion').then((compConvos) => set({ compConvos })) : Promise.resolve(),
+      ]);
       return r.id;
     },
     markConvoRead: (id) =>

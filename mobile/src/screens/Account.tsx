@@ -7,7 +7,7 @@ import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Photo, Row, Txt } from '../ui/primitives';
 import { eur } from '../data';
 import { openSettings, type SettingsPage } from './Settings';
-import { PrimaryButton, SecondaryButton, StatusCover, TextButton, useTopPad } from '../ui/common';
+import { PrimaryButton, SecondaryButton, StatusCover, TextButton, useTopPad, usePullRefresh } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 import { t } from '../i18n';
 
@@ -15,6 +15,7 @@ export const initials = (name: string) => name.split(' ').map((w) => w[0]).join(
 
 export default function Account() {
   const top = useTopPad();
+  const refresh = usePullRefresh();
   const bottom = useNavBottom() + 90;
   const user = useStore((s) => s.user);
   const savedCount = useStore((s) => s.saved.length);
@@ -66,7 +67,7 @@ export default function Account() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           <Row style={{ paddingTop: 16, paddingHorizontal: 20, gap: 16 }}>
             <Pressable accessibilityRole="button" accessibilityLabel="Change profile photo" onPress={changePhoto} style={{ width: 76, height: 76, borderRadius: 26, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>

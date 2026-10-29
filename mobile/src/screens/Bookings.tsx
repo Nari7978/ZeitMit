@@ -1,12 +1,12 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { AM, BTAB, eur, hours, ST, type BTab } from '../data';
-import { priceOf, useStore, type Booking } from '../store';
-import { bookAgain, messageCompanion, openProfile } from '../nav';
+import { AM, BTAB, eur, hours, ST, whenShort, type BTab } from '../data';
+import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
+import { bookAgain, openBookingChat, openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { EmptyState, Pill, PrimaryButton, StatusCover, useTopPad } from '../ui/common';
+import { EmptyState, Pill, PrimaryButton, StatusCover, TextButton, usePullRefresh, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 
 const TABS: BTab[] = ['upcoming', 'pending', 'completed', 'cancelled'];
@@ -19,6 +19,7 @@ const EMPTY: Record<BTab, [string, string]> = {
 
 export default function Bookings() {
   const top = useTopPad();
+  const refresh = usePullRefresh();
   const bottom = useNavBottom() + 90;
   const btab = useStore((s) => s.btab);
   const bookings = useStore((s) => s.bookings);
@@ -27,7 +28,7 @@ export default function Bookings() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           <View style={{ paddingTop: 8, paddingHorizontal: 20 }}><H size={30} ls={-0.035}>Bookings</H></View>
           <View accessibilityRole="tablist" style={{ marginTop: 16, marginHorizontal: 20, marginBottom: 18, padding: 4, borderRadius: 14, backgroundColor: 'rgba(17,17,17,.1)', flexDirection: 'row', gap: 2 }}>
@@ -72,11 +73,15 @@ function BookingCard({ b }: { b: Booking }) {
   const c = { id: b.cid, name: b.companionName, hue: b.hue, photoUrl: b.photoUrl };
   const st = ST[b.status];
   const price = eur(priceOf(b));
-  const { cancelBooking, openSheet, safety } = useStore.getState();
+  const { openSheet, safety } = useStore.getState();
   const msg = () => {
     router.navigate('/messages');
-    void messageCompanion(b.cid);
+    void openBookingChat(b.id);
   };
+  const cancel = () => openSheet('cancel', { cancel: { bid: b.id, side: 'customer', reason: null, busy: false } });
+  // Free cancellation until FREE_CANCEL_HOURS before the start (shown on confirmed bookings).
+  const freeUntil = b.startsAt - FREE_CANCEL_HOURS * 3600;
+  const freeNow = Date.now() / 1000 < freeUntil;
 
   type Act = { label: string; fn: () => void; primary?: boolean };
   const again: Act = { label: 'Book again', fn: () => bookAgain(c.id) };
@@ -88,7 +93,7 @@ function BookingCard({ b }: { b: Booking }) {
     ],
     pending: [
       { label: 'Message', fn: msg },
-      { label: 'Cancel request', fn: () => void cancelBooking(b.id) },
+      { label: 'Cancel request', fn: cancel },
     ],
     completed: b.reviewed
       ? [{ ...again, primary: true }]
@@ -98,7 +103,9 @@ function BookingCard({ b }: { b: Booking }) {
 
   const pay = {
     held: { icon: 'lock', text: price + ' held by ZeitMit', sub: b.status === 'pending' ? 'Refunded in full if ' + c.name + ' declines' : 'Released when ' + c.name + ' enters your meet code', bg: colors.lilac },
-    released: { icon: 'circle-check', text: price + ' released to ' + c.name, sub: 'Confirmed with meet code', bg: colors.mintSoft },
+    released: b.status === 'cancelled'
+      ? { icon: 'circle-check', text: price + ' paid to ' + c.name, sub: `Cancelled less than ${FREE_CANCEL_HOURS} hours before`, bg: colors.butter }
+      : { icon: 'circle-check', text: price + ' released to ' + c.name, sub: 'Confirmed with meet code', bg: colors.mintSoft },
     refunded: { icon: 'rotate-ccw', text: price + ' refunded to you', sub: 'Back on your card in 3–5 days', bg: colors.butter },
   }[b.pay];
 
@@ -156,6 +163,14 @@ function BookingCard({ b }: { b: Booking }) {
             </Pressable>
           ))}
         </Row>
+        {b.status === 'confirmed' ? (
+          <Row style={{ justifyContent: 'space-between', gap: 10, marginTop: -4 }}>
+            <Txt size={12} color={colors.gray600} style={{ flex: 1 }} numberOfLines={2}>
+              {freeNow ? `Free cancellation until ${whenShort(freeUntil)}` : 'No refund if you cancel now'}
+            </Txt>
+            <TextButton label="Cancel booking" size={13} weight={700} color={colors.roseDeep} onPress={cancel} style={{ paddingVertical: 6 }} />
+          </Row>
+        ) : null}
       </Box>
     </Enter>
   );

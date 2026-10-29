@@ -8,6 +8,7 @@ import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
 import { PrimaryButton } from '../../ui/common';
 import { initials } from '../Account';
 import { CompShell, Initial } from './Shell';
+import { t } from '../../i18n';
 
 export default function Overview() {
   const s = useStore();
@@ -24,7 +25,7 @@ export default function Overview() {
           <Icon name="hourglass" size={20} color="#B37112" style={{ marginTop: 1 }} />
           <View style={{ flex: 1, gap: 4 }}>
             <Txt size={14} weight={700} color="#5E3D08">{s.companionStatus === 'rejected' ? 'Profile not approved' : 'Profile under review'}</Txt>
-            <Txt size={13} lh={1.45} color="#7A5413">{s.companionStatus === 'rejected' ? 'Check your email for details. You can update your answers and apply again.' : 'Usually 1–3 working days. Your profile isn’t public yet, so requests start once it’s approved.'}</Txt>
+            <Txt size={13} lh={1.45} color="#7A5413">{s.companionStatus === 'rejected' ? 'You can update your answers and apply again.' : 'Usually 1–3 working days. Your profile isn’t public yet, so requests start once it’s approved.'}</Txt>
           </View>
         </Row>
       ) : null}
@@ -33,16 +34,17 @@ export default function Overview() {
         <StatTile n={upcoming.length} label="Upcoming" onPress={() => router.navigate('/companion/calendar')} />
       </Row>
       {next ? (
-        <Box shadow={4} style={card}>
+        <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/calendar')} accessibilityLabel={t('Next up')} style={card}>
           <Txt size={13} weight={600} color={colors.gray600}>Next up</Txt>
           <Row style={{ gap: 12 }}>
-            <Initial who={next.who} hue={hueOf(next.customerId)} />
+            <Initial who={next.who} hue={hueOf(next.customerId)} url={next.avatarUrl} />
             <View style={{ flex: 1 }}>
               <Txt size={16} weight={700}>{next.who} · {AM[next.act].label}</Txt>
               <Txt size={13} color={colors.gray600}>{next.day} · {next.time} · {hours(next.dur)}</Txt>
             </View>
+            <Icon name="chevron-right" size={18} color={colors.gray400} />
           </Row>
-        </Box>
+        </PressBox>
       ) : null}
       <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/listing')} accessibilityLabel="Your listing" style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
         <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center' }}>
