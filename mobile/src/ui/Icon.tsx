@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import {
-  AlarmClock, ArrowRight, ArrowUp, ArrowUpDown, BadgeCheck, Ban, Bell, Calendar, CalendarCheck, CalendarDays,
+  AlarmClock, ArrowRight, ArrowUp, ArrowUpDown, BadgeCheck, Ban, Bell, Calendar, CalendarCheck, CalendarClock, CalendarDays,
   CalendarHeart, CalendarPlus, CalendarRange, CalendarX, Check, ChevronDown, ChevronLeft, ChevronRight, Circle,
   CircleAlert, CircleCheck, CircleUser, Clapperboard, Clock, Coffee, Compass, CreditCard, Dumbbell, Ellipsis, Euro,
   EyeOff, FileText, Flag, Footprints, Gamepad2, Gift, Globe, Heart, History, Hourglass, Inbox, Info, KeyRound,
@@ -15,7 +15,7 @@ import { colors } from '../theme';
 // Kebab-case names match the `icon-*` classes used by the design.
 const ICONS: Record<string, ComponentType<LucideProps>> = {
   'alarm-clock': AlarmClock, 'arrow-right': ArrowRight, 'arrow-up': ArrowUp, 'arrow-up-down': ArrowUpDown,
-  'badge-check': BadgeCheck, ban: Ban, bell: Bell, calendar: Calendar, 'calendar-check': CalendarCheck,
+  'badge-check': BadgeCheck, ban: Ban, bell: Bell, calendar: Calendar, 'calendar-check': CalendarCheck, 'calendar-clock': CalendarClock,
   'calendar-days': CalendarDays, 'calendar-heart': CalendarHeart, 'calendar-plus': CalendarPlus,
   'calendar-range': CalendarRange, 'calendar-x': CalendarX, check: Check, 'chevron-down': ChevronDown,
   'chevron-left': ChevronLeft, 'chevron-right': ChevronRight, circle: Circle, 'circle-alert': CircleAlert,

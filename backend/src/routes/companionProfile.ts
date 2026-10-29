@@ -3,7 +3,7 @@ import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
-import { CONTACT_MSG, fail, hasContactDetails } from '../lib/util';
+import { berlinWhen, CONTACT_MSG, fail, hasContactDetails, parseJson } from '../lib/util';
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -118,4 +118,27 @@ companionProfile.put('/availability', async (c) => {
     .bind(u.id, d, win).run();
   void slotsChanged(c.env, u.id, c.executionCtx); // open profiles show the new times at once
   return c.json({ ok: true });
+});
+
+/**
+ * The profile of someone who booked you, so you know who you're meeting. Only for companions they've booked,
+ * and only what's meant to be shown: never the email, phone or ID documents.
+ */
+companionProfile.get('/customers/:id', async (c) => {
+  const id = c.req.param('id');
+  const together = await c.env.DB.prepare(
+    'SELECT id, activity, starts_at, duration_h, status FROM bookings WHERE companion_id = ? AND customer_id = ? AND paid = 1 ORDER BY starts_at DESC LIMIT 20',
+  ).bind(c.get('user').id, id).all<{ id: string; activity: string; starts_at: number; duration_h: number; status: string }>();
+  if (!together.results.length) fail(404, 'You can see someone’s profile once they’ve booked you.');
+  const u = await c.env.DB.prepare('SELECT name, bio, avatar_id, id_status, created_at, gender, age, languages, interests FROM users WHERE id = ?').bind(id)
+    .first<{ name: string; bio: string | null; avatar_id: string | null; id_status: string; created_at: number; gender: string | null; age: number | null; languages: string; interests: string }>();
+  if (!u) fail(404, 'This account no longer exists.');
+  const met = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE customer_id = ? AND status = 'completed'").bind(id).first<{ n: number }>();
+  return c.json({
+    id, name: u!.name || 'Customer', bio: u!.bio ?? '', avatarUrl: u!.avatar_id ? `/photos/${u!.avatar_id}` : null,
+    verified: u!.id_status === 'approved', since: u!.created_at, gender: u!.gender, age: u!.age,
+    languages: parseJson<string[]>(u!.languages, []), interests: parseJson<string[]>(u!.interests, []),
+    meetups: met?.n ?? 0,
+    together: together.results.map((b) => ({ id: b.id, act: b.activity, startsAt: b.starts_at, dur: b.duration_h, status: b.status, ...berlinWhen(b.starts_at) })),
+  });
 });

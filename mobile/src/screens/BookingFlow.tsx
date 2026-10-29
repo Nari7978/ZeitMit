@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
@@ -11,7 +11,7 @@ import { useStore } from '../store';
 import { toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Confetti, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { CircleButton, PrimaryButton, TextButton, useTopPad } from '../ui/common';
+import { CircleButton, PrimaryButton, TextButton, useKeyboardShown, useTopPad } from '../ui/common';
 import { t } from '../i18n';
 
 type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; placeErr: boolean; agree: boolean };
@@ -25,6 +25,7 @@ export default function BookingFlow() {
   const [busy, setBusy] = useState(false);
   const top = useTopPad();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardShown();
   const [step, setStep] = useState(1);
   const [done, setDone] = useState(false);
   const [b, setB] = useState<Draft>({ act: null, date: params.date ?? null, time: null, dur: null, place: '', note: '', placeErr: false, agree: false });
@@ -130,7 +131,7 @@ export default function BookingFlow() {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colors.sun }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.sun }}>
       <Row style={{ paddingTop: top, paddingHorizontal: 16, gap: 10 }}>
         <CircleButton icon="chevron-left" label="Back" onPress={back} />
         <Row style={{ flex: 1, gap: 10, minWidth: 0 }}>
@@ -342,7 +343,7 @@ export default function BookingFlow() {
         )}
       </ScrollView>
 
-      <Row style={{ paddingTop: 14, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 14 }}>
+      <Row style={{ paddingTop: 14, paddingHorizontal: 20, paddingBottom: keyboard ? 12 : Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 14 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Txt size={12} color={colors.gray600}>{b.dur ? 'Total incl. fees' : 'Select a duration'}</Txt>
           <H size={21} ls={-0.02}>{total}</H>

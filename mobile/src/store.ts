@@ -6,7 +6,7 @@ import { pickAndUpload } from './lib/photos';
 import { askLocation, currentLocation } from './lib/location';
 import { runCheckout } from './lib/checkout';
 import { resolveLang, setLang } from './i18n';
-import { berlinWeekday, eur, firstOpen, type ActId, type BookingStatus, type BTab, type Companion, type SORT, type Tone } from './data';
+import { berlinWeekday, eur, firstOpen, type ActId, type BookingStatus, type BTab, type Companion, type Gender, type SORT, type Tone } from './data';
 
 /** Same rule as the API: customers cancel for free until this many hours before the start. */
 export const FREE_CANCEL_HOURS = 24;
@@ -24,10 +24,13 @@ export type Filters = {
 export const EMPTY_FILTERS: Filters = { type: 'all', acts: [], when: 'any', max: 60, langs: [], rating: 0, pref: 'any', lgbtq: false };
 
 export type Pay = 'held' | 'released' | 'refunded';
+/** A suggested new time for a booking, waiting for the other side's answer. */
+export type Resched = { at: number; by: 'customer' | 'companion'; day: string; time: string; full: string };
 export type Booking = {
   id: string; cid: string; companionName: string; hue: number; photoUrl?: string | null; creditUsed?: number; act: ActId; startsAt: number; day: string; time: string; full: string;
   dur: number; place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system';
+  resched?: Resched | null; reschedLeft?: number;
 };
 export type Convo = {
   id: string; cid: string; customerId: string; name: string; hue: number; photoUrl?: string | null; bookingId: string | null; act: ActId | null; startsAt: number | null;
@@ -40,6 +43,7 @@ export type CompBooking = {
   id: string; who: string; customerId: string; avatarUrl?: string | null; act: ActId; startsAt: number; day: string; time: string; full: string;
   dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number;
   customer?: { bio: string; verified: boolean; since: number | null };
+  resched?: Resched | null; reschedLeft?: number;
 };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
@@ -55,6 +59,8 @@ export type User = {
   avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang;
   /** ID check needed before the first booking. */
   idStatus: IdStatus; idNote: string | null;
+  /** Optional details companions see when you book them. */
+  gender: Gender | null; age: number | null; languages: string[]; interests: string[];
 };
 /** A running safety check-in (same shape as the API's). */
 export type Checkin = {
@@ -87,7 +93,7 @@ type State = {
   notifs: Notif[];
   toast: string | null;
   comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[] };
-  edit: { name: string; bio: string } | null;
+  edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
   reportReason: string | null;
   /** User the report / block sheet refers to. */
@@ -127,6 +133,8 @@ type Actions = {
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
   releaseCheckout: () => Promise<void>;
+  /** Answers a suggested new time (accept / decline), or withdraws your own. */
+  answerReschedule: (bookingId: string, answer: 'accept' | 'decline' | 'withdraw') => Promise<boolean>;
   cancelBooking: (id: string, reason?: string | null) => Promise<boolean>;
   companionCancel: (id: string, reason?: string | null) => Promise<boolean>;
   openConversation: (cid: string) => Promise<string | null>;
@@ -174,7 +182,12 @@ const msg = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.mes
 let liveTimer: ReturnType<typeof setTimeout> | undefined;
 let liveFull = false;
 
-type MeResponse = { id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null; credit: number; prefs: Prefs; language: Lang; idStatus: IdStatus; idNote: string | null };
+type MeResponse = {
+  id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null;
+  credit: number; prefs: Prefs; language: Lang; idStatus: IdStatus; idNote: string | null; gender: Gender | null; age: number | null; languages: string[]; interests: string[];
+};
+/** Draft for the "Personal details" sheet. */
+export type ProfileEdit = { name: string; bio: string; gender: Gender | null; age: string; languages: string[]; interests: string[] };
 
 export const useStore = create<State & Actions>()((set, get) => {
   /** Runs a request, toasting the error on failure. */
@@ -198,6 +211,7 @@ export const useStore = create<State & Actions>()((set, get) => {
       user: {
         id: me.id, email: me.email, name: me.name, first: (me.name || me.email.split('@')[0]).split(' ')[0], bio: me.bio, ageConfirmed: !!me.age_confirmed,
         createdAt: me.created_at, avatarUrl: me.avatarUrl, credit: me.credit, prefs: me.prefs, language: me.language, idStatus: me.idStatus ?? 'none', idNote: me.idNote ?? null,
+        gender: me.gender ?? null, age: me.age ?? null, languages: me.languages ?? [], interests: me.interests ?? [],
       },
       companionStatus: me.companionStatus,
       saved: me.saved,
@@ -406,6 +420,17 @@ export const useStore = create<State & Actions>()((set, get) => {
         // Couldn't reach the API: the hold stays (tapping Pay again continues it) and expires on its own.
       }
     },
+    answerReschedule: async (bookingId, answer) => {
+      const r = await attempt(() => (answer === 'accept'
+        ? api<{ full?: string; confirmed?: boolean }>('POST', `/bookings/${bookingId}/reschedule/accept`)
+        : api<{ full?: string; confirmed?: boolean }>('DELETE', `/bookings/${bookingId}/reschedule`)));
+      if (!r) return false;
+      get().showToast(answer === 'accept'
+        ? `Moved to ${r.full}.${r.confirmed ? ' Your booking is confirmed.' : ''}`
+        : answer === 'withdraw' ? 'Suggestion withdrawn. The booking keeps its time.' : 'Declined. The booking keeps its time.');
+      await get().refresh();
+      return true;
+    },
     cancelBooking: async (id, reason) => {
       set((s) => ({ cancel: { ...s.cancel, busy: true } }));
       const r = await attempt(() => api<{ refunded: number; late: boolean }>('POST', `/bookings/${id}/cancel`, { reason: reason ?? undefined }));
@@ -597,9 +622,12 @@ export const useStore = create<State & Actions>()((set, get) => {
       const e = get().edit;
       if (!e) return;
       if (!e.name.trim()) return get().showToast('Name can’t be empty');
-      const ok = await attempt(() => api('PATCH', '/me', { name: e.name.trim(), bio: e.bio }));
+      const age = e.age.trim() ? Number(e.age) : null;
+      if (age !== null && !(Number.isInteger(age) && age >= 18 && age <= 99)) return get().showToast('Enter an age between 18 and 99.');
+      const patch = { name: e.name.trim(), bio: e.bio, gender: e.gender, age, languages: e.languages, interests: e.interests };
+      const ok = await attempt(() => api('PATCH', '/me', patch));
       if (!ok) return;
-      set((s) => ({ user: s.user ? { ...s.user, name: e.name.trim(), first: e.name.trim().split(' ')[0], bio: e.bio } : s.user, sheet: null }));
+      set((s) => ({ user: s.user ? { ...s.user, ...patch, first: patch.name.split(' ')[0] } : s.user, sheet: null }));
       get().showToast('Profile updated');
     },
     deleteAccount: async () => {

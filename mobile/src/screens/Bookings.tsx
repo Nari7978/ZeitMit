@@ -3,11 +3,12 @@ import { router } from 'expo-router';
 import { colors } from '../theme';
 import { AM, BTAB, eur, hours, ST, whenShort, type BTab } from '../data';
 import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
-import { bookAgain, openBookingChat, openProfile } from '../nav';
+import { bookAgain, openBookingChat, openProfile, openReschedule } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { EmptyState, Pill, PrimaryButton, StatusCover, TextButton, usePullRefresh, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
+import { ReschedBox } from '../ui/ReschedBox';
 
 const TABS: BTab[] = ['upcoming', 'pending', 'completed', 'cancelled'];
 const EMPTY: Record<BTab, [string, string]> = {
@@ -82,6 +83,13 @@ function BookingCard({ b }: { b: Booking }) {
   // Free cancellation until FREE_CANCEL_HOURS before the start (shown on confirmed bookings).
   const freeUntil = b.startsAt - FREE_CANCEL_HOURS * 3600;
   const freeNow = Date.now() / 1000 < freeUntil;
+  // Moving to another time: up to 24 h before a confirmed booking (a request can move any time), never while
+  // the companion's own suggestion waits for an answer, and at most a few times per booking.
+  const open = b.status === 'pending' || b.status === 'confirmed';
+  const canMove = open && (b.reschedLeft ?? 1) > 0 && b.resched?.by !== 'companion';
+  const move = () => (b.status === 'confirmed' && !freeNow
+    ? useStore.getState().showToast(`You can change the time up to ${FREE_CANCEL_HOURS} hours before. Send ${c.name} a message instead.`)
+    : openReschedule(b.id));
 
   type Act = { label: string; fn: () => void; primary?: boolean };
   const again: Act = { label: 'Book again', fn: () => bookAgain(c.id) };
@@ -151,6 +159,8 @@ function BookingCard({ b }: { b: Booking }) {
 
         {b.note ? <Txt size={13} color={colors.gray600} style={{ marginTop: -4 }}>{b.note}</Txt> : null}
 
+        {open && b.resched ? <ReschedBox bookingId={b.id} resched={b.resched} mine={b.resched.by === 'customer'} other={c.name} current={`${b.day} · ${b.time}`} /> : null}
+
         <Row style={{ gap: 8 }}>
           {actions.map((a) => (
             <Pressable
@@ -164,11 +174,14 @@ function BookingCard({ b }: { b: Booking }) {
           ))}
         </Row>
         {b.status === 'confirmed' ? (
-          <Row style={{ justifyContent: 'space-between', gap: 10, marginTop: -4 }}>
-            <Txt size={12} color={colors.gray600} style={{ flex: 1 }} numberOfLines={2}>
-              {freeNow ? `Free cancellation until ${whenShort(freeUntil)}` : 'No refund if you cancel now'}
-            </Txt>
-            <TextButton label="Cancel booking" size={13} weight={700} color={colors.roseDeep} onPress={cancel} style={{ paddingVertical: 6 }} />
+          <Txt size={12} color={colors.gray600} style={{ marginTop: -4 }}>
+            {freeNow ? `Free cancellation until ${whenShort(freeUntil)}` : 'No refund if you cancel now'}
+          </Txt>
+        ) : null}
+        {open && (canMove || b.status === 'confirmed') ? (
+          <Row style={{ justifyContent: 'space-between', gap: 10, marginTop: -8 }}>
+            {canMove ? <TextButton label="Change time" icon="calendar-clock" size={13} weight={700} onPress={move} style={{ paddingVertical: 6 }} /> : <View />}
+            {b.status === 'confirmed' ? <TextButton label="Cancel booking" size={13} weight={700} color={colors.roseDeep} onPress={cancel} style={{ paddingVertical: 6 }} /> : null}
           </Row>
         ) : null}
       </Box>

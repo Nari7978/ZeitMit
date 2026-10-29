@@ -24,6 +24,7 @@ npm run dev                    # http://localhost:8787
 node scripts/smoke.mjs         # end-to-end checks against the local API
 node scripts/local-flows.mjs   # time-dependent flows (meet code, late cancel); edits the local DB
 node scripts/slots.mjs         # open times: lengths, every kind of cancellation, live updates; edits the local DB
+node scripts/reschedule.mjs    # moving bookings and the customer profile companions see; edits the local DB
 ```
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
@@ -38,6 +39,8 @@ node scripts/slots.mjs         # open times: lengths, every kind of cancellation
 - Open times (`GET /companions/:id/slots`) are the companion's weekly windows minus bookings, at least an hour ahead. Each time comes with `fit`, the longest booking (1–4 h) that fits before the next one; a longer request is refused. Requests, confirmed bookings and meet-ups under way block their time; any cancellation frees it at once.
 - While someone is on Stripe Checkout their time is held for others. Leaving checkout releases it straight away (`POST /bookings/:id/release` closes the checkout page first, so it can't be paid later); trying again with other details replaces your own open checkout. Abandoned ones expire after 35 minutes. If two people book the same time at the same moment, the first one saved keeps it.
 - Live updates go over WebSockets (`?token=`), through the chat Durable Object: `/live/slots/:id` sends a companion's new open times whenever they change, and `/live` tells your open app to reload when something changes for you (every notification does).
+- Either side can move a booking to another open time of the same length. The customer moves a request the companion hasn't answered straight away; otherwise it's a suggestion the other side accepts or declines, and until then the booking keeps its time while the suggested one is held for others (a companion's suggestion on a request also confirms it once accepted). Customers can change a confirmed booking up to 24 hours before; a booking moves at most `MAX_RESCHEDULES` (3) times.
+- Companions see the profile of whoever booked them (name, photo, optional age, gender, languages, interests, About, ID-verified badge, meet-ups so far), never their email, phone or documents.
 - Each paid booking has its own chat thread, open while the booking is pending or confirmed. It ends for both sides when the meet code is entered or the booking is cancelled.
 - Customers cancel for free until `FREE_CANCEL_HOURS` (24) before the start; later the booking is cancelled without a refund and the companion keeps their pay. Companions can cancel any time before the meeting; the customer always gets everything back. Support can refund any booking from the admin panel.
 
@@ -54,7 +57,8 @@ node scripts/slots.mjs         # open times: lengths, every kind of cancellation
 | Me | `GET/PATCH/DELETE /me`, `PUT/DELETE /me/saved/:cid`, `GET /me/notifications`, `POST /me/notifications/read`, `POST /me/reports`, `POST /me/blocks` |
 | Browse | `GET /companions`, `GET /companions/:id`, `GET /companions/:id/slots` |
 | Customer bookings | `GET/POST /bookings`, `POST /bookings/:id/confirm-payment·release·cancel·review` |
-| Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/availability`, `GET /companion/bookings`, `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
+| Moving a booking (either side) | `GET/POST/DELETE /bookings/:id/reschedule`, `POST /bookings/:id/reschedule/accept` |
+| Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/availability`, `GET /companion/customers/:id`, `GET /companion/bookings`, `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
 | Payouts | `GET/POST /companion/payouts`, `PUT /companion/payouts/account` |
 | Chat | `GET /conversations`, `POST /conversations` (`{ bookingId }` or `{ companionId }`), `GET/POST /conversations/:id/messages`, `GET /conversations/:id/ws` (WebSocket, `?token=`) |
 | Live | `GET /live` (your updates), `GET /live/slots/:id` (a companion's open times); WebSockets, `?token=` |

@@ -64,14 +64,18 @@ export type DaySlots = { date: string; times: string[]; fit: number[] };
 /**
  * Open slots for the next 7 days: weekly windows minus existing bookings, at least 1h from now.
  * `fit[i]` is the longest booking (1–4 hours) that can start at `times[i]` without running into another one.
- * Requests (including a checkout in progress), confirmed bookings and meet-ups already under way block their time;
- * cancelled ones don't, so a cancelled time is bookable again straight away.
+ * Requests (including a checkout in progress), confirmed bookings, meet-ups already under way and suggested new times
+ * block their time; cancelled ones don't, so a cancelled time is bookable again straight away.
+ * `except` leaves one booking out (its own time and suggestion), for picking a new time for it.
  */
-export async function slotsFor(env: Env, companionId: string): Promise<DaySlots[]> {
+export async function slotsFor(env: Env, companionId: string, except = ''): Promise<DaySlots[]> {
   const [win, busy] = await Promise.all([
     env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(companionId).all<{ day: number; win: string }>(),
-    env.DB.prepare("SELECT starts_at, duration_h FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed', 'completed') AND starts_at > ?")
-      .bind(companionId, now() - MAX_HOURS * 3600)
+    env.DB.prepare(
+      `SELECT starts_at, duration_h FROM bookings WHERE companion_id = ?1 AND id <> ?3 AND status IN ('pending', 'confirmed', 'completed') AND starts_at > ?2
+       UNION ALL
+       SELECT resched_at, duration_h FROM bookings WHERE companion_id = ?1 AND id <> ?3 AND status IN ('pending', 'confirmed') AND resched_at > ?2`,
+    ).bind(companionId, now() - MAX_HOURS * 3600, except)
       .all<{ starts_at: number; duration_h: number }>(),
   ]);
   const open = new Set(win.results.map((w) => `${w.day}-${w.win}`));

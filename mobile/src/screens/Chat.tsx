@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View, type ScrollViewInstance } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { BTAB, notifWhen, ST, type BTab } from '../data';
 import { useStore } from '../store';
 import { api, wsUrl } from '../api';
-import { bookAgain, toBookings } from '../nav';
+import { bookAgain, openCustomer, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, Row, Stripes, Txt, TypingDots, Photo } from '../ui/primitives';
-import { CircleButton, PrimaryButton, usePullRefresh } from '../ui/common';
+import { CircleButton, PrimaryButton, useKeyboardShown, usePullRefresh } from '../ui/common';
 import { convoContext } from './Messages';
 import { locale, t } from '../i18n';
 
@@ -39,6 +39,8 @@ export default function Chat() {
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastTypingSent = useRef(0);
   const refresh = usePullRefresh(() => load());
+  const keyboard = useKeyboardShown();
+  const barBottom = keyboard ? 10 : Math.max(30, insets.bottom + 8);
 
   // Opened from a notification before the inbox loaded: fetch it once, then give up gracefully.
   const [missing, setMissing] = useState(false);
@@ -76,6 +78,7 @@ export default function Chat() {
         try { ev = JSON.parse(String(e.data)); } catch { return; }
         const me = useStore.getState().user?.id;
         if (ev.type === 'typing') {
+          if (ev.from === me) return; // your own typing on another device
           setTyping(true);
           clearTimeout(typingTimer.current);
           typingTimer.current = setTimeout(() => setTyping(false), 3000);
@@ -156,14 +159,20 @@ export default function Chat() {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colors.cream }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.cream }}>
       <Row style={{ paddingTop: insets.top + 4, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: colors.white, borderBottomWidth: 2, borderBottomColor: colors.ink, gap: 10 }}>
         <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
+        <Pressable accessibilityRole="button" accessibilityLabel={t(`View ${name}’s profile`)} disabled={!isComp} onPress={() => openCustomer(x.customerId)} style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 40, height: 40, borderRadius: 14, overflow: 'hidden' }}><Photo hue={x.hue} url={x.photoUrl} /></View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Txt size={16} weight={700}>{name}</Txt>
-          <Txt size={12} color={colors.gray600}>{isComp ? 'Customer · booking via ZeitMit' : 'Usually replies within 2 hours'}</Txt>
+          {typing ? (
+            <Txt size={12} weight={600} color={colors.greenDeep}>typing…</Txt>
+          ) : (
+            <Txt size={12} color={colors.gray600}>{isComp ? 'Customer · tap to see their profile' : 'Usually replies within 2 hours'}</Txt>
+          )}
         </View>
+        </Pressable>
         <CircleButton icon="ellipsis" label="More options" size={40} iconSize={22} border={0} bg="transparent" onPress={() => useStore.getState().openSheet('chatmenu', { sheetChat: id })} />
       </Row>
 
@@ -206,14 +215,15 @@ export default function Chat() {
           ),
         )}
         {typing ? (
-          <Box shadow={4} style={{ alignSelf: 'flex-start', paddingVertical: 14, paddingHorizontal: 16, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomRightRadius: 20, borderBottomLeftRadius: 6, borderRadius: 20, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
+          // Same shape as a received message, sized to the dots (a shadowed Box would stretch here on Android).
+          <View accessibilityLabel={t(`${name} is typing`)} style={{ alignSelf: 'flex-start', height: 40, justifyContent: 'center', paddingHorizontal: 16, borderWidth: 1, borderColor: colors.ink, backgroundColor: colors.white, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomRightRadius: 20, borderBottomLeftRadius: 6 }}>
             <TypingDots />
-          </Box>
+          </View>
         ) : null}
       </ScrollView>
 
       {!open ? (
-        <View style={{ paddingTop: 14, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 10 }}>
+        <View style={{ paddingTop: 14, paddingHorizontal: 20, paddingBottom: barBottom, backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 10 }}>
           <Row style={{ gap: 10, alignItems: 'flex-start' }}>
             <Icon name="lock" size={18} color={colors.gray600} />
             <Txt size={13} lh={1.45} color={colors.gray800} style={{ flex: 1 }}>
@@ -223,7 +233,7 @@ export default function Chat() {
           {!isComp && x ? <PrimaryButton label="Book again" height={46} radius={14} size={14} onPress={() => bookAgain(x.cid)} /> : null}
         </View>
       ) : (
-      <Row style={{ paddingTop: 10, paddingHorizontal: 12, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 8 }}>
+      <Row style={{ paddingTop: 10, paddingHorizontal: 12, paddingBottom: barBottom, backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 8 }}>
         <TextInput
           value={draft}
           onChangeText={onDraft}

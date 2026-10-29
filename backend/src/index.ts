@@ -6,7 +6,7 @@ import { requireAdmin, requireAuth } from './lib/auth';
 import { auth } from './routes/auth';
 import { me } from './routes/me';
 import { companions } from './routes/companions';
-import { bookings, companionBookings, expirePending, expireUnpaid } from './routes/bookings';
+import { bookings, companionBookings, expirePending, expireReschedules, expireUnpaid } from './routes/bookings';
 import { companionProfile } from './routes/companionProfile';
 import { endOldCheckins, escalateMissedCheckins, gifts, liveCheckin, safety } from './routes/safety';
 import { livePage, notFoundPage, pickLang } from './livePage';
@@ -96,6 +96,6 @@ app.notFound((c) => c.json({ error: 'Not found.' }, 404));
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), escalateMissedCheckins(env), endOldCheckins(env)]));
+    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), expireReschedules(env), escalateMissedCheckins(env), endOldCheckins(env)]));
   },
 } satisfies ExportedHandler<Env>;

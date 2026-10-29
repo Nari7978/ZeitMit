@@ -1,13 +1,12 @@
-import type { ReactNode } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useState, type ReactNode } from 'react';
+import { Image, KeyboardAvoidingView, ScrollView, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useIsFocused } from 'expo-router';
+import { useFocusEffect, useIsFocused } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../../theme';
 import { AM, hours, type ActId } from '../../data';
-import { toCustomerMode } from '../../nav';
-import { Icon } from '../../ui/Icon';
-import { Enter, H, Row, tint, Txt } from '../../ui/primitives';
+import { toCompanionMode, toCustomerMode } from '../../nav';
+import { Enter, H, Row, tint, Toggle, Txt } from '../../ui/primitives';
 import { StatusCover, usePullRefresh } from '../../ui/common';
 import { photoUri } from '../../lib/photos';
 import { useNavBottom } from '../../ui/chrome';
@@ -19,27 +18,38 @@ export function CompShell({ title, children, pad = true }: { title: string; chil
   const focused = useIsFocused();
   const refresh = usePullRefresh(undefined, colors.white);
   return (
-    <View style={{ flex: 1, backgroundColor: colors.sun }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.sun }}>
       {focused ? <StatusBar style="light" /> : null}
       <StatusCover color={colors.ink} />
-      <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingBottom: bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshControl={refresh} contentContainerStyle={{ paddingBottom: bottom }}>
         <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 20, paddingBottom: 26, backgroundColor: colors.ink, borderBottomLeftRadius: 28, borderBottomRightRadius: 28, gap: 14 }}>
           <Row style={{ justifyContent: 'space-between' }}>
             <Row style={{ gap: 8, height: 30, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(255,255,255,.1)' }}>
               <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.sun }} />
               <Txt size={12} weight={600} color={colors.white}>Companion mode</Txt>
             </Row>
-            <Pressable accessibilityRole="button" onPress={toCustomerMode} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,.2)' }}>
-              <Icon name="repeat" size={13} color={colors.white} />
-              <Txt size={12} weight={600} color={colors.white}>Customer view</Txt>
-            </Pressable>
+            <ModeSwitch on dark />
           </Row>
           <H size={30} ls={-0.035} color={colors.white}>{title}</H>
         </View>
         <Enter style={pad ? { padding: 20, gap: 14 } : { paddingVertical: 12 }}>{children}</Enter>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
+}
+
+/**
+ * Switch between customer and companion mode: it flips, then the app changes side (and it shows the right
+ * position again when you come back).
+ */
+export function ModeSwitch({ on, dark }: { on: boolean; dark?: boolean }) {
+  const [shown, setShown] = useState(on);
+  useFocusEffect(useCallback(() => setShown(on), [on]));
+  const flip = () => {
+    setShown(!on);
+    setTimeout(() => (on ? toCustomerMode() : toCompanionMode()), 220);
+  };
+  return <Toggle on={shown} onPress={flip} label="Companion mode" dark={dark} />;
 }
 
 /** Customer initial in a tinted rounded square. */

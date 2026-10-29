@@ -16,6 +16,7 @@ type BookingRow = {
   rate: number; subtotal: number; fee: number; total: number; pay_status: 'held' | 'released' | 'refunded';
   meet_code: string; code_attempts: number; reviewed: number; created_at: number; credit_used: number; payment_ref: string | null; paid: number; checkout_url: string | null;
   cancelled_by: 'customer' | 'companion' | 'support' | 'system' | null; cancel_reason: string | null;
+  resched_at: number | null; resched_by: 'customer' | 'companion' | null; resched_asked: number | null; resched_count: number;
 };
 
 /** Customers cancel for free until this many hours before the start; later the companion keeps their pay. */
@@ -32,12 +33,18 @@ const reasonFor = (side: keyof typeof CANCEL_REASONS, r: unknown) => {
   return String(r);
 };
 
+/** A booking's time can be changed this many times, always with the other side's agreement. */
+export const MAX_RESCHEDULES = 3;
+/** Clears a suggested new time (part of every update that ends or answers a booking). */
+const NO_RESCHED = 'resched_at = NULL, resched_by = NULL, resched_asked = NULL';
+const reschedOf = (b: BookingRow) => (b.resched_at ? { at: b.resched_at, by: b.resched_by!, ...berlinWhen(b.resched_at) } : null);
+
 /** Booking as the customer sees it (includes the meet code). */
 const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; photo_id?: string | null }) => ({
   id: b.id, cid: b.companion_id, companionName: b.companion_name, hue: b.hue, photoUrl: b.photo_id ? `/photos/${b.photo_id}` : null, act: b.activity, startsAt: b.starts_at,
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.cancel_note ?? undefined, status: b.status,
   pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' ? b.meet_code : undefined, reviewed: !!b.reviewed,
-  cancelledBy: b.cancelled_by ?? undefined,
+  cancelledBy: b.cancelled_by ?? undefined, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
 });
 
 /** Booking as the companion sees it (never includes the meet code). */
@@ -47,7 +54,7 @@ const forCompanion = (b: BookingRow & CustomerInfo) => ({
   // What a companion may know about who is booking: never the email or documents.
   customer: { bio: b.customer_bio ?? '', verified: b.customer_id_status === 'approved', since: b.customer_since ?? null },
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.note, status: b.status, pay: b.pay_status,
-  payout: b.subtotal,
+  payout: b.subtotal, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
 });
 
 async function load(env: Env, id: string) {
@@ -85,7 +92,7 @@ export async function refundBooking(
   by: NonNullable<BookingRow['cancelled_by']> = 'system', reason: string | null = null,
 ) {
   const res = await env.DB.prepare(
-    `UPDATE bookings SET status = 'cancelled', pay_status = 'refunded', cancel_note = ?, cancelled_by = ?, cancel_reason = ?, updated_at = unixepoch()
+    `UPDATE bookings SET status = 'cancelled', pay_status = 'refunded', cancel_note = ?, cancelled_by = ?, cancel_reason = ?, ${NO_RESCHED}, updated_at = unixepoch()
      WHERE id = ? AND pay_status = 'held' ${onlyIfPending ? "AND status = 'pending'" : ''}`,
   ).bind(note(euros(b.total)), by, reason, b.id).run();
   if (!res.meta.changes) return false;
@@ -229,10 +236,14 @@ bookings.post('/', async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, u.id, comp!.user_id, b.act, startsAt, b.dur, place.slice(0, 160), (b.note ?? '').slice(0, 240), b.boundariesAgreed ? 1 : 0, comp!.rate * 100, subtotal, fee, total, digits(4), creditUsed).run();
   // Two people can pick the same time at the same moment: the booking saved first keeps it.
+  // A suggested new time is a hold too: it was set after our slot check, so it wins.
   const beaten = await c.env.DB.prepare(
     `SELECT 1 FROM bookings o JOIN bookings me ON me.id = ?1
-     WHERE o.companion_id = me.companion_id AND o.id <> me.id AND o.status IN ('pending', 'confirmed', 'completed')
-       AND o.starts_at < me.starts_at + me.duration_h * 3600 AND o.starts_at + o.duration_h * 3600 > me.starts_at AND o.rowid < me.rowid LIMIT 1`,
+     WHERE o.companion_id = me.companion_id AND o.id <> me.id AND (
+       (o.status IN ('pending', 'confirmed', 'completed') AND o.rowid < me.rowid
+         AND o.starts_at < me.starts_at + me.duration_h * 3600 AND o.starts_at + o.duration_h * 3600 > me.starts_at)
+       OR (o.status IN ('pending', 'confirmed') AND o.resched_at IS NOT NULL
+         AND o.resched_at < me.starts_at + me.duration_h * 3600 AND o.resched_at + o.duration_h * 3600 > me.starts_at)) LIMIT 1`,
   ).bind(id).first();
   if (beaten) {
     await c.env.DB.batch([
@@ -296,6 +307,140 @@ bookings.post('/:id/release', async (c) => {
   return c.json({ released: r! === 'released', paid: r! === 'paid' });
 });
 
+// ---------------- Moving a booking (either side) ----------------
+
+/** Which side of the booking this person is on (anyone else gets "not found"). */
+function sideOf(b: BookingRow, userId: string): 'customer' | 'companion' {
+  if (b.customer_id === userId) return 'customer';
+  if (b.companion_id !== userId) fail(404, 'Booking not found.');
+  return 'companion';
+}
+
+async function namesOf(env: Env, b: BookingRow) {
+  const r = await env.DB.prepare('SELECT (SELECT name FROM users WHERE id = ?) AS customer, (SELECT display_name FROM companions WHERE user_id = ?) AS companion')
+    .bind(b.customer_id, b.companion_id).first<{ customer: string | null; companion: string | null }>();
+  return { customer: r?.customer?.split(' ')[0] || 'Your customer', companion: r?.companion || 'Your companion' };
+}
+
+/** Where a notification about this booking takes each side. */
+const goFor = (status: BookingRow['status'], to: 'customer' | 'companion') =>
+  to === 'customer' ? (status === 'pending' ? 'tab:pending' : 'tab:upcoming') : status === 'pending' ? 'comp:requests' : 'comp:calendar';
+
+// No other booking or suggested time of companion ?4 overlaps [?1, ?1 + ?2), leaving booking ?3 out.
+const FREE_SQL = `NOT EXISTS (SELECT 1 FROM bookings o WHERE o.companion_id = ?4 AND o.id <> ?3 AND o.status IN ('pending', 'confirmed', 'completed')
+      AND o.starts_at < ?1 + ?2 AND o.starts_at + o.duration_h * 3600 > ?1)
+  AND NOT EXISTS (SELECT 1 FROM bookings o WHERE o.companion_id = ?4 AND o.id <> ?3 AND o.status IN ('pending', 'confirmed')
+      AND o.resched_at IS NOT NULL AND o.resched_at < ?1 + ?2 AND o.resched_at + o.duration_h * 3600 > ?1)`;
+
+/** What's needed to pick a new time: the companion's open times with this booking left out. */
+bookings.get('/:id/reschedule', async (c) => {
+  const b = await load(c.env, c.req.param('id'));
+  const side = sideOf(b, c.get('user').id);
+  const names = await namesOf(c.env, b);
+  return c.json({
+    id: b.id, side, cid: b.companion_id, act: b.activity, dur: b.duration_h, status: b.status, startsAt: b.starts_at, ...berlinWhen(b.starts_at),
+    other: side === 'customer' ? names.companion : names.customer, resched: reschedOf(b), left: MAX_RESCHEDULES - b.resched_count,
+    slots: await slotsFor(c.env, b.companion_id, b.id),
+  });
+});
+
+/**
+ * Suggests a new time; the other side accepts or declines, and until then the booking keeps its time while the new one
+ * is held for others. A request the companion hasn't answered yet is simply moved by the customer.
+ */
+bookings.post('/:id/reschedule', async (c) => {
+  const body = await c.req.json<{ date?: string; time?: string }>();
+  const b = await load(c.env, c.req.param('id'));
+  const side = sideOf(b, c.get('user').id);
+  if (!b.paid || (b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'This booking can’t be moved any more.');
+  if (b.resched_count >= MAX_RESCHEDULES) fail(409, `A booking can be moved ${MAX_RESCHEDULES} times. Cancel it and book again instead.`);
+  if (b.resched_at && b.resched_by !== side) fail(409, 'Answer the suggested time first.');
+  if (side === 'customer' && b.status === 'confirmed' && b.starts_at - now() < FREE_CANCEL_HOURS * 3600) {
+    fail(409, `You can change the time up to ${FREE_CANCEL_HOURS} hours before. Send a message or cancel instead.`);
+  }
+  const date = String(body.date ?? '');
+  const time = String(body.time ?? '');
+  const day = (await slotsFor(c.env, b.companion_id, b.id)).find((d) => d.date === date);
+  const at = day ? day.times.indexOf(time) : -1;
+  if (at < 0) fail(409, 'That time isn’t free. Pick another one.');
+  const fits = day!.fit[at];
+  if (fits < b.duration_h) fail(409, `From ${time} there’s only room for ${fits === 1 ? '1 hour' : `${fits} hours`}. Pick another time.`);
+  const startsAt = berlinToUnix(date, time);
+  if (startsAt === b.starts_at) fail(400, 'That’s the current time. Pick a different one.');
+  const names = await namesOf(c.env, b);
+  const when = berlinWhen(startsAt);
+  const was = berlinWhen(b.starts_at);
+  const act = ACT_LABEL[b.activity];
+
+  if (side === 'customer' && b.status === 'pending') {
+    const res = await c.env.DB.prepare(
+      `UPDATE bookings SET starts_at = ?1, ${NO_RESCHED}, resched_count = resched_count + 1, updated_at = unixepoch()
+       WHERE id = ?3 AND status = 'pending' AND pay_status = 'held' AND ${FREE_SQL}`,
+    ).bind(startsAt, b.duration_h * 3600, b.id, b.companion_id).run();
+    if (!res.meta.changes) fail(409, 'That time was just taken. Pick another one.');
+    void slotsChanged(c.env, b.companion_id, c.executionCtx);
+    await notify(c.env, b.companion_id, { icon: 'calendar-clock', tone: 'violet', title: `${names.customer} moved their request`, body: `${act} is now on ${when.full} (was ${was.full}).`, go: 'comp:requests' }, c.executionCtx);
+    return c.json({ moved: true, ...when });
+  }
+
+  const res = await c.env.DB.prepare(
+    `UPDATE bookings SET resched_at = ?1, resched_by = ?5, resched_asked = unixepoch(), updated_at = unixepoch()
+     WHERE id = ?3 AND status IN ('pending', 'confirmed') AND pay_status = 'held' AND (resched_by IS NULL OR resched_by = ?5) AND ${FREE_SQL}`,
+  ).bind(startsAt, b.duration_h * 3600, b.id, b.companion_id, side).run();
+  if (!res.meta.changes) fail(409, 'That time was just taken. Pick another one.');
+  void slotsChanged(c.env, b.companion_id, c.executionCtx);
+  const other = side === 'customer' ? 'companion' : 'customer';
+  await notify(c.env, other === 'companion' ? b.companion_id : b.customer_id, {
+    icon: 'calendar-clock', tone: 'violet', title: `${names[side]} suggests another time`,
+    body: `${act}: ${when.full} instead of ${was.full}. You can accept or decline.`, go: goFor(b.status, other),
+  }, c.executionCtx);
+  return c.json({ moved: false, ...when });
+});
+
+/** The other side accepts the suggested time: the booking moves (a companion's suggestion on a request also confirms it). */
+bookings.post('/:id/reschedule/accept', async (c) => {
+  const b = await load(c.env, c.req.param('id'));
+  const side = sideOf(b, c.get('user').id);
+  if (!b.resched_at || (b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'There’s no new time to answer.');
+  if (b.resched_by === side) fail(409, 'The other side has to answer your suggestion.');
+  if (b.resched_at! < now() + 3600) fail(409, 'That time is too close now. Suggest another one.');
+  const res = await c.env.DB.prepare(
+    `UPDATE bookings SET starts_at = resched_at, status = CASE WHEN status = 'pending' AND resched_by = 'companion' THEN 'confirmed' ELSE status END,
+       ${NO_RESCHED}, resched_count = resched_count + 1, updated_at = unixepoch()
+     WHERE id = ? AND resched_at = ? AND status IN ('pending', 'confirmed') AND pay_status = 'held'`,
+  ).bind(b.id, b.resched_at).run();
+  if (!res.meta.changes) fail(409, 'This booking just changed. Pull down to refresh.');
+  void slotsChanged(c.env, b.companion_id, c.executionCtx);
+  const names = await namesOf(c.env, b);
+  const when = berlinWhen(b.resched_at!);
+  const confirmed = b.status === 'pending' && b.resched_by === 'companion';
+  const other = side === 'customer' ? 'companion' : 'customer';
+  await notify(c.env, other === 'companion' ? b.companion_id : b.customer_id, {
+    icon: 'calendar-check', tone: 'success', title: `${names[side]} accepted the new time`,
+    body: `${ACT_LABEL[b.activity]} is now on ${when.full}${confirmed ? '. Your booking is confirmed' : ''}.`, go: goFor(confirmed ? 'confirmed' : b.status, other),
+  }, c.executionCtx);
+  return c.json({ ok: true, confirmed, ...when });
+});
+
+/** Declines the suggested time (the other side) or withdraws your own. The booking keeps its time either way. */
+bookings.delete('/:id/reschedule', async (c) => {
+  const b = await load(c.env, c.req.param('id'));
+  const side = sideOf(b, c.get('user').id);
+  if (!b.resched_at) return c.json({ ok: true, withdrawn: false }); // already answered
+  const res = await c.env.DB.prepare(`UPDATE bookings SET ${NO_RESCHED}, updated_at = unixepoch() WHERE id = ? AND resched_at = ?`).bind(b.id, b.resched_at).run();
+  if (!res.meta.changes) return c.json({ ok: true, withdrawn: false });
+  void slotsChanged(c.env, b.companion_id, c.executionCtx);
+  const names = await namesOf(c.env, b);
+  const mine = b.resched_by === side;
+  const other = side === 'customer' ? 'companion' : 'customer';
+  const stays = `${ACT_LABEL[b.activity]} stays on ${berlinWhen(b.starts_at).full}.`;
+  await notify(c.env, other === 'companion' ? b.companion_id : b.customer_id, mine
+    ? { icon: 'calendar', tone: 'neutral', title: `${names[side]} kept the original time`, body: stays, go: goFor(b.status, other) }
+    : { icon: 'calendar-x', tone: 'neutral', title: `${names[side]} can’t make the new time`, body: `${stays} You can suggest another time or send a message.`, go: goFor(b.status, other) },
+    c.executionCtx);
+  return c.json({ ok: true, withdrawn: mine });
+});
+
 /**
  * Customer cancels. Pending requests and bookings more than FREE_CANCEL_HOURS ahead are refunded in full;
  * later, the booking is cancelled but the companion keeps their pay for the reserved time.
@@ -327,7 +472,7 @@ bookings.post('/:id/cancel', async (c) => {
     }
   }
   const res = await c.env.DB.prepare(
-    `UPDATE bookings SET status = 'cancelled', pay_status = 'released', released_at = unixepoch(), cancel_note = ?, cancelled_by = 'customer', cancel_reason = ?, updated_at = unixepoch()
+    `UPDATE bookings SET status = 'cancelled', pay_status = 'released', released_at = unixepoch(), cancel_note = ?, cancelled_by = 'customer', cancel_reason = ?, ${NO_RESCHED}, updated_at = unixepoch()
      WHERE id = ? AND status = 'confirmed' AND pay_status = 'held'`,
   ).bind(`Cancelled by you less than ${FREE_CANCEL_HOURS} hours before · no refund`, reason, b.id).run();
   if (!res.meta.changes) fail(409, 'This booking can’t be cancelled any more.');
@@ -399,7 +544,8 @@ companionBookings.post('/:id/accept', async (c) => {
     "SELECT 1 FROM bookings WHERE companion_id = ? AND status = 'confirmed' AND id != ? AND starts_at < ? AND starts_at + duration_h * 3600 > ?",
   ).bind(b.companion_id, b.id, b.starts_at + b.duration_h * 3600, b.starts_at).first();
   if (clash) fail(409, 'You already have a confirmed booking at that time.');
-  await c.env.DB.prepare("UPDATE bookings SET status = 'confirmed', updated_at = unixepoch() WHERE id = ?").bind(b.id).run();
+  await c.env.DB.prepare(`UPDATE bookings SET status = 'confirmed', ${NO_RESCHED}, updated_at = unixepoch() WHERE id = ?`).bind(b.id).run();
+  if (b.resched_at) void slotsChanged(c.env, b.companion_id, c.executionCtx);
   const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;
   await notify(c.env, b.customer_id, { icon: 'calendar-check', tone: 'success', title: 'Booking accepted', body: `${name} accepted your ${ACT_LABEL[b.activity].toLowerCase()} request.`, go: 'tab:upcoming' }, c.executionCtx);
   return c.json({ ok: true });
@@ -449,7 +595,7 @@ companionBookings.post('/:id/verify-code', async (c) => {
     }
   }
   // TODO(payouts): transfer `subtotal` to the companion (Stripe Connect) — until then payouts are made manually.
-  await c.env.DB.prepare("UPDATE bookings SET status = 'completed', pay_status = 'released', released_at = unixepoch(), updated_at = unixepoch() WHERE id = ?").bind(b.id).run();
+  await c.env.DB.prepare(`UPDATE bookings SET status = 'completed', pay_status = 'released', released_at = unixepoch(), ${NO_RESCHED}, updated_at = unixepoch() WHERE id = ?`).bind(b.id).run();
   await endCheckins(c.env, b.id);
   await endThread(c.env, b.id, c.executionCtx); // the booking's chat ends for both once you've met
   const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;
@@ -468,6 +614,16 @@ export async function expireUnpaid(env: Env) {
       continue;
     }
     await dropHold(env, b);
+  }
+  return r.results.length;
+}
+
+/** Cron: a suggested time that's less than an hour away can't be accepted any more, so it stops holding the time. */
+export async function expireReschedules(env: Env) {
+  const r = await env.DB.prepare('SELECT id, companion_id FROM bookings WHERE resched_at IS NOT NULL AND resched_at < ? LIMIT 200').bind(now() + 3600).all<{ id: string; companion_id: string }>();
+  for (const b of r.results) {
+    await env.DB.prepare(`UPDATE bookings SET ${NO_RESCHED} WHERE id = ?`).bind(b.id).run();
+    await slotsChanged(env, b.companion_id);
   }
   return r.results.length;
 }

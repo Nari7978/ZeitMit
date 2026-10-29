@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
+import { LANGUAGES } from '../types';
 import { CONTACT_MSG, euros, fail, hasContactDetails, parseJson } from '../lib/util';
 import { owesPayout } from './payouts';
 
@@ -18,9 +19,9 @@ me.get('/', async (c) => {
   const u = c.get('user');
   const row = await c.env.DB.prepare(
     `SELECT u.id, u.email, u.name, u.bio, u.role, u.age_confirmed, u.created_at, u.avatar_id, u.credit, u.prefs, u.language, u.id_status, u.id_note,
-            c.status AS companion_status
+            u.gender, u.age, u.languages, u.interests, c.status AS companion_status
      FROM users u LEFT JOIN companions c ON c.user_id = u.id WHERE u.id = ?`,
-  ).bind(u.id).first<Record<string, unknown> & { avatar_id: string | null; prefs: string; companion_status: string | null }>();
+  ).bind(u.id).first<Record<string, unknown> & { avatar_id: string | null; prefs: string; companion_status: string | null; languages: string; interests: string }>();
   const saved = await c.env.DB.prepare('SELECT companion_id FROM saved WHERE user_id = ? ORDER BY created_at').bind(u.id).all<{ companion_id: string }>();
   return c.json({
     ...row,
@@ -29,6 +30,8 @@ me.get('/', async (c) => {
     companionStatus: row?.companion_status ?? 'none',
     idStatus: row?.id_status ?? 'none',
     idNote: row?.id_note ?? null,
+    languages: parseJson<string[]>(row?.languages, []),
+    interests: parseJson<string[]>(row?.interests, []),
     saved: saved.results.map((r) => r.companion_id),
   });
 });
@@ -60,7 +63,10 @@ me.post('/verification', async (c) => {
 /** Personal details, 18+ confirmation and the Expo push token. */
 me.patch('/', async (c) => {
   const u = c.get('user');
-  const b = await c.req.json<{ name?: string; bio?: string; ageConfirmed?: boolean; pushToken?: string | null; prefs?: Partial<Prefs>; language?: 'auto' | 'en' | 'de' }>();
+  const b = await c.req.json<{
+    name?: string; bio?: string; ageConfirmed?: boolean; pushToken?: string | null; prefs?: Partial<Prefs>; language?: 'auto' | 'en' | 'de';
+    gender?: 'w' | 'm' | 'nb' | null; age?: number | null; languages?: string[]; interests?: string[];
+  }>();
   if (b.language !== undefined && !['auto', 'en', 'de'].includes(b.language)) fail(400, 'Unknown language.');
   if (b.prefs) {
     const cur = await c.env.DB.prepare('SELECT prefs FROM users WHERE id = ?').bind(u.id).first<{ prefs: string }>();
@@ -77,6 +83,22 @@ me.patch('/', async (c) => {
   if (b.name && b.name.length > 60) fail(400, 'Name is too long.');
   if (b.bio && b.bio.length > 400) fail(400, 'About is too long.');
   if (hasContactDetails(b.bio ?? '') || hasContactDetails(b.name ?? '')) fail(400, CONTACT_MSG);
+  // Profile details companions see when you book them (all optional).
+  if (b.gender !== undefined && b.gender !== null && !['w', 'm', 'nb'].includes(b.gender)) fail(400, 'Pick one of the options.');
+  if (b.age !== undefined && b.age !== null && (!Number.isInteger(b.age) || b.age < 18 || b.age > 99)) fail(400, 'Enter an age between 18 and 99.');
+  if (b.languages !== undefined && (!Array.isArray(b.languages) || b.languages.length > LANGUAGES.length || b.languages.some((l) => !LANGUAGES.includes(l)))) fail(400, 'Pick languages from the list.');
+  if (b.interests !== undefined && (!Array.isArray(b.interests) || b.interests.length > 12 || b.interests.some((i) => typeof i !== 'string' || !i.trim() || i.length > 30 || hasContactDetails(i)))) {
+    fail(400, 'Pick up to 12 interests.');
+  }
+  if (b.gender !== undefined || b.age !== undefined || b.languages !== undefined || b.interests !== undefined) {
+    await c.env.DB.prepare(
+      `UPDATE users SET gender = CASE WHEN ?1 THEN ?2 ELSE gender END, age = CASE WHEN ?3 THEN ?4 ELSE age END,
+         languages = COALESCE(?5, languages), interests = COALESCE(?6, interests) WHERE id = ?7`,
+    ).bind(
+      b.gender !== undefined ? 1 : 0, b.gender ?? null, b.age !== undefined ? 1 : 0, b.age ?? null,
+      b.languages ? JSON.stringify([...new Set(b.languages)]) : null, b.interests ? JSON.stringify([...new Set(b.interests.map((i) => i.trim()))]) : null, u.id,
+    ).run();
+  }
   await c.env.DB.prepare(
     `UPDATE users SET name = COALESCE(?, name), bio = COALESCE(?, bio),
        age_confirmed = CASE WHEN ? THEN 1 ELSE age_confirmed END,

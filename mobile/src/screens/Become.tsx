@@ -11,7 +11,7 @@ import { toggleIn, useStore } from '../store';
 import { toCompanionMode } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Enter, H, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
-import { CircleButton, IconTile, PrimaryButton, SecondaryButton, TextButton, useTopPad } from '../ui/common';
+import { CircleButton, IconTile, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useTopPad } from '../ui/common';
 import { StepTitle } from './BookingFlow';
 import { t } from '../i18n';
 
@@ -38,6 +38,7 @@ const HOW: [string, string, string][] = [
 export default function Become() {
   const insets = useSafeAreaInsets();
   const top = useTopPad();
+  const keyboard = useKeyboardShown();
   const first = useStore((s) => s.user?.first ?? '');
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
@@ -56,7 +57,7 @@ export default function Become() {
     }
   };
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
-  const footPad = Math.max(30, insets.bottom + 8);
+  const footPad = keyboard ? 12 : Math.max(30, insets.bottom + 8);
 
   const valid = [true, !!b.name.trim() && b.about.trim().length >= 40 && ageOk(b.age) && !!b.gender, b.acts.length > 0 && b.langs.length > 0, b.days.length > 0 && b.wins.length > 0, b.adult && b.idv && b.rules, true][step];
   const next = () => {
@@ -134,7 +135,7 @@ export default function Become() {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colors.sun }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.sun }}>
       <Row style={{ paddingTop: top, paddingHorizontal: 16, gap: 10 }}>
         <CircleButton icon="chevron-left" label="Back" onPress={() => setStep(step - 1)} />
         <View style={{ flex: 1 }}>

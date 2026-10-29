@@ -75,6 +75,8 @@ export default function RootLayout() {
           <Stack.Screen name="verify" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="payment-done" options={{ animation: 'none' }} />
           <Stack.Screen name="payouts" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="customer/[id]" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="reschedule/[id]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
         </Stack.Protected>

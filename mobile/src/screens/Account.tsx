@@ -7,8 +7,9 @@ import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Photo, Row, Txt } from '../ui/primitives';
 import { eur } from '../data';
 import { openSettings, type SettingsPage } from './Settings';
-import { PrimaryButton, SecondaryButton, StatusCover, TextButton, useTopPad, usePullRefresh } from '../ui/common';
+import { SecondaryButton, StatusCover, TextButton, useTopPad, usePullRefresh } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
+import { ModeSwitch } from './companion/Shell';
 import { t } from '../i18n';
 
 export const initials = (name: string) => name.split(' ').map((w) => w[0]).join('').slice(0, 2);
@@ -23,7 +24,7 @@ export default function Account() {
   const available = useStore((s) => s.comp.earnings.available);
   const { logout } = useStore.getState();
   if (!user) return null;
-  const editUser = { name: user.name, bio: user.bio };
+  const editUser = { name: user.name, bio: user.bio, gender: user.gender, age: user.age ? String(user.age) : '', languages: user.languages, interests: user.interests };
   const { openSheet } = useStore.getState();
 
   type RowDef = [icon: string, label: string, value: string, fn: () => void];
@@ -112,7 +113,13 @@ export default function Account() {
                   <Txt size={12} weight={600} color={compStatus === 'approved' ? colors.greenDeep : colors.amberDeep}>{compStatus === 'approved' ? 'Live' : 'Under review'}</Txt>
                 </View>
               </Row>
-              <PrimaryButton label="Switch to companion mode" icon="repeat" height={46} radius={14} size={14} onPress={toCompanionMode} />
+              <Pressable accessibilityRole="button" onPress={toCompanionMode} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Txt size={15} weight={600}>Companion mode</Txt>
+                  <Txt size={12} color={colors.gray600}>Requests, calendar and earnings</Txt>
+                </View>
+                <ModeSwitch on={false} />
+              </Pressable>
             </Box>
           )}
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, Pressable, RefreshControl, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Keyboard, Platform, Pressable, RefreshControl, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, type Weight } from '../theme';
 import { useStore } from '../store';
@@ -87,9 +87,10 @@ export function SecondaryButton({ label, children, onPress, icon, iconSize = 15,
 }
 
 /** Borderless text button. */
-export function TextButton({ label, onPress, size = 14, weight = 600, color = colors.ink, style, underline }: { label: string; onPress: () => void; size?: number; weight?: Weight; color?: string; style?: StyleProp<ViewStyle>; underline?: boolean }) {
+export function TextButton({ label, onPress, size = 14, weight = 600, color = colors.ink, style, underline, icon }: { label: string; onPress: () => void; size?: number; weight?: Weight; color?: string; style?: StyleProp<ViewStyle>; underline?: boolean; icon?: string }) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} hitSlop={8} style={({ pressed }) => [{ paddingVertical: 6, opacity: pressed ? 0.6 : 1 }, style]}>
+    <Pressable accessibilityRole="button" onPress={onPress} hitSlop={8} style={({ pressed }) => [{ paddingVertical: 6, opacity: pressed ? 0.6 : 1 }, icon ? { flexDirection: 'row', alignItems: 'center', gap: 5 } : null, style]}>
+      {icon ? <Icon name={icon} size={size + 1} color={color} /> : null}
       <Txt size={size} weight={weight} color={color} style={underline ? { textDecorationLine: 'underline' } : null}>{label}</Txt>
     </Pressable>
   );
@@ -204,4 +205,20 @@ export function IconTile({ icon, size = 40, radius = 13, bg = colors.blush, colo
       <Icon name={icon} size={iconSize} color={color} />
     </View>
   );
+}
+
+/**
+ * True while the on-screen keyboard is open. Android draws edge to edge, so the window doesn't shrink for the keyboard:
+ * screens lift their content with a KeyboardAvoidingView (behavior "padding" on both platforms), and bottom bars drop
+ * their safe-area padding while the keyboard covers that area anyway.
+ */
+export function useKeyboardShown() {
+  const [shown, setShown] = useState(() => Keyboard.isVisible?.() ?? false);
+  useEffect(() => {
+    const ios = Platform.OS === 'ios';
+    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', () => setShown(true));
+    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => setShown(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+  return shown;
 }

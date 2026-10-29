@@ -1,7 +1,7 @@
 // Companion payouts: balance, the bank account payouts go to, requesting a payout, and history.
 // ZeitMit sends each payout by bank transfer and marks it as paid; see backend/src/routes/payouts.ts.
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, ScrollView, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
@@ -70,7 +70,7 @@ export default function Payouts() {
         : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.sun }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
       <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshControl={refresh} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ paddingTop: 4, paddingHorizontal: 12 }}>
@@ -147,7 +147,7 @@ export default function Payouts() {
           </Row>
         </View>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

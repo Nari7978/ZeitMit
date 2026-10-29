@@ -185,7 +185,7 @@ export function HeartGlyph({ size, fill, stroke, strokeWidth = 2 }: { size: numb
 
 // ---------- Controls ----------
 
-export function Toggle({ on, onPress, label, bordered }: { on: boolean; onPress: () => void; label: string; bordered?: boolean }) {
+export function Toggle({ on, onPress, label, bordered, dark }: { on: boolean; onPress: () => void; label: string; bordered?: boolean; dark?: boolean }) {
   const x = useRef(new Animated.Value(on ? 1 : 0)).current;
   useEffect(() => {
     Animated.timing(x, { toValue: on ? 1 : 0, duration: 200, useNativeDriver: true }).start();
@@ -197,7 +197,7 @@ export function Toggle({ on, onPress, label, bordered }: { on: boolean; onPress:
       accessibilityLabel={label}
       accessibilityState={{ checked: on }}
       onPress={onPress}
-      style={{ width: 50, height: 30, borderRadius: 999, backgroundColor: on ? colors.ink : colors.gray300, borderWidth: bordered ? 2 : 0, borderColor: colors.ink }}
+      style={{ width: 50, height: 30, borderRadius: 999, backgroundColor: on ? (dark ? colors.sun : colors.ink) : dark ? 'rgba(255,255,255,.22)' : colors.gray300, borderWidth: bordered ? 2 : 0, borderColor: colors.ink }}
     >
       <Animated.View
         style={{

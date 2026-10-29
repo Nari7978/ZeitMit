@@ -6,7 +6,9 @@ import { Icon } from '../../ui/Icon';
 import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
 import { t } from '../../i18n';
-import { openBookingChat } from '../../nav';
+import { openBookingChat, openCustomer, openReschedule } from '../../nav';
+import { TextButton } from '../../ui/common';
+import { ReschedBox } from '../../ui/ReschedBox';
 
 export default function Calendar() {
   const avail = useStore((s) => s.comp.avail);
@@ -47,14 +49,16 @@ export default function Calendar() {
       <Txt size={15} weight={700} style={{ marginTop: 6 }}>Upcoming</Txt>
       {up.map((u) => (
         <Box key={u.id} shadow={4} style={{ padding: 14, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
-          <Row style={{ gap: 12 }}>
+          <Pressable accessibilityRole="button" accessibilityLabel={t(`View ${u.who}’s profile`)} onPress={() => openCustomer(u.customerId)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <Initial who={u.who} hue={hueOf(u.customerId)} url={u.avatarUrl} size={44} radius={14} fontSize={15} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
               <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
               <Txt size={12} color={colors.gray600} numberOfLines={1}>{u.place}</Txt>
             </View>
-          </Row>
+            <Icon name="chevron-right" size={16} color={colors.gray400} />
+          </Pressable>
+          {u.resched ? <ReschedBox bookingId={u.id} resched={u.resched} mine={u.resched.by === 'companion'} other={u.who.split(' ')[0]} current={`${u.day} · ${u.time}`} /> : null}
           <Row style={{ gap: 8 }}>
             {([
               ['message-circle', 'Message', () => void openBookingChat(u.id)],
@@ -77,6 +81,9 @@ export default function Calendar() {
             <Icon name="key-round" size={15} color={colors.white} />
             <Txt size={14} weight={700} color={colors.white}>Enter meet code</Txt>
           </PressBox>
+          {u.resched?.by !== 'customer' && (u.reschedLeft ?? 1) > 0 ? (
+            <TextButton label="Suggest another time" icon="calendar-clock" size={13} weight={700} onPress={() => openReschedule(u.id)} style={{ alignSelf: 'center', marginTop: -4 }} />
+          ) : null}
         </Box>
       ))}
       {!up.length ? <Txt size={14} color={colors.gray600}>No upcoming bookings yet.</Txt> : null}

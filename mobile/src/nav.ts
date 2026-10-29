@@ -8,6 +8,18 @@ export function openProfile(id: string) {
   router.push({ pathname: '/profile/[id]', params: { id } });
 }
 
+/** Companion side: the profile of someone who booked you. */
+export function openCustomer(id: string) {
+  useStore.getState().closeSheet();
+  router.push({ pathname: '/customer/[id]', params: { id } });
+}
+
+/** Picks a new time for a booking (either side; the other side accepts or declines). */
+export function openReschedule(bookingId: string) {
+  useStore.getState().closeSheet();
+  router.push({ pathname: '/reschedule/[id]', params: { id: bookingId } });
+}
+
 /** Opens the booking flow (optionally on a day, YYYY-MM-DD), or the one-time ID check first if the customer isn't verified yet. */
 export function openBooking(cid: string, date?: string) {
   if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);

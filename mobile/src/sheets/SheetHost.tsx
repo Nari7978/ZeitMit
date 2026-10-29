@@ -1,16 +1,17 @@
 // Bottom sheets (filters, sort, gift, safety, meet code, …) rendered above every screen.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
+import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, AM, ageStr, eur, LANGS, PREF, SORT, WHEN } from '../data';
+import { A, AM, ageStr, eur, INTERESTS, LANGS, PREF, SORT, WHEN } from '../data';
+import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
-import { CircleButton, PrimaryButton, SecondaryButton, TextButton } from '../ui/common';
+import { CircleButton, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown } from '../ui/common';
 import { t } from '../i18n';
 import { sendSms, sendWhatsApp } from '../lib/whatsapp';
 import { shareMessage, sosMessage } from '../lib/checkinText';
@@ -36,7 +37,7 @@ export function SheetHost() {
       <Enter style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} duration={200}>
         <Pressable accessibilityLabel="Close sheet" onPress={close} style={{ flex: 1, backgroundColor: colors.scrim }} />
       </Enter>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 0, justifyContent: 'flex-end' }} pointerEvents="box-none">
+      <KeyboardAvoidingView behavior="padding" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 0, justifyContent: 'flex-end' }} pointerEvents="box-none">
         <Animated.View
           accessibilityViewIsModal
           style={{
@@ -78,7 +79,8 @@ function SheetBody({ kind }: { kind: SheetKind }) {
 
 function Pad({ children, scroll }: { children: ReactNode; scroll?: boolean }) {
   const insets = useSafeAreaInsets();
-  const style = { paddingTop: 8, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8) };
+  const keyboard = useKeyboardShown();
+  const style = { paddingTop: 8, paddingHorizontal: 20, paddingBottom: keyboard ? 16 : Math.max(30, insets.bottom + 8) };
   if (scroll) return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={style}>{children}</ScrollView>;
   return <View style={style}>{children}</View>;
 }
@@ -303,17 +305,42 @@ function ReviewSheet() {
 }
 
 function EditSheet() {
-  const edit = useStore((s) => s.edit ?? { name: s.user?.name ?? '', bio: s.user?.bio ?? '' });
+  const edit = useStore((s) => s.edit ?? {
+    name: s.user?.name ?? '', bio: s.user?.bio ?? '', gender: s.user?.gender ?? null, age: s.user?.age ? String(s.user.age) : '',
+    languages: s.user?.languages ?? [], interests: s.user?.interests ?? [],
+  });
   const set = (o: Partial<typeof edit>) => useStore.setState({ edit: { ...edit, ...o } });
   const save = () => void useStore.getState().saveEdit();
+  const label = (text: string, top = 14) => <Txt size={13} weight={600} style={{ marginTop: top, marginBottom: 6 }}>{text}</Txt>;
   return (
-    <Pad>
-      <SheetTitle style={{ marginBottom: 14 }}>Personal details</SheetTitle>
-      <Txt size={13} weight={600} style={{ marginBottom: 6 }}>Name</Txt>
+    <Pad scroll>
+      <SheetTitle style={{ marginBottom: 4 }}>Personal details</SheetTitle>
+      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 6 }}>Companions you book see your profile, so they know who they’re meeting.</Txt>
+      {label('Name')}
       <TextInput value={edit.name} onChangeText={(t) => set({ name: t })} accessibilityLabel="Name" style={[font('body'), input, { height: 50 }]} />
-      <Txt size={13} weight={600} style={{ marginTop: 14, marginBottom: 6 }}>About</Txt>
-      <TextInput value={edit.bio} onChangeText={(t) => set({ bio: t })} accessibilityLabel="About" multiline textAlignVertical="top" style={[font('body'), input, { height: 96, padding: 14, fontSize: 15, lineHeight: 22 }]} />
-      <Txt size={12} color={colors.gray600} style={{ marginTop: 8 }}>Email, phone and date of birth are private and never shown to companions.</Txt>
+      {label('About')}
+      <TextInput value={edit.bio} onChangeText={(t) => set({ bio: t })} accessibilityLabel="About" placeholder={t('A few words about you and what you enjoy')} placeholderTextColor={colors.gray400} multiline textAlignVertical="top" style={[font('body'), input, { height: 96, padding: 14, fontSize: 15, lineHeight: 22 }]} />
+      <Row style={{ gap: 12, marginTop: 14, alignItems: 'flex-start' }}>
+        <View style={{ width: 92 }}>
+          <Txt size={13} weight={600} style={{ marginBottom: 6 }}>Age</Txt>
+          <TextInput value={edit.age} onChangeText={(t) => set({ age: t.replace(/\D/g, '').slice(0, 2) })} accessibilityLabel="Age" keyboardType="number-pad" placeholder={t('Optional')} placeholderTextColor={colors.gray400} style={[font('body'), input, { height: 50 }]} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Txt size={13} weight={600} style={{ marginBottom: 6 }}>Gender</Txt>
+          <Row style={{ gap: 6, flexWrap: 'wrap', minHeight: 50 }}>
+            {GENDERS.map(([g, l]) => <Chip key={g} label={l} on={edit.gender === g} onPress={() => set({ gender: edit.gender === g ? null : g })} height={34} padL={12} padR={12} />)}
+          </Row>
+        </View>
+      </Row>
+      {label('Languages')}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        {LANGS.map((l) => <Chip key={l} label={l} on={edit.languages.includes(l)} onPress={() => set({ languages: toggleIn(edit.languages, l) })} height={34} padL={12} padR={12} />)}
+      </View>
+      {label('Interests')}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        {INTERESTS.map((i) => <Chip key={i} label={i} on={edit.interests.includes(i)} onPress={() => set({ interests: toggleIn(edit.interests, i) })} height={34} padL={12} padR={12} />)}
+      </View>
+      <Txt size={12} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>Age, gender, languages and interests are optional. Your email, phone and ID documents are never shown.</Txt>
       <PrimaryButton label="Save" style={{ marginTop: 14 }} onPress={save} />
     </Pad>
   );
