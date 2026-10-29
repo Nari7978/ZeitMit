@@ -208,17 +208,20 @@ export function IconTile({ icon, size = 40, radius = 13, bg = colors.blush, colo
 }
 
 /**
- * True while the on-screen keyboard is open. Android draws edge to edge, so the window doesn't shrink for the keyboard:
- * screens lift their content with a KeyboardAvoidingView (behavior "padding" on both platforms), and bottom bars drop
- * their safe-area padding while the keyboard covers that area anyway.
+ * Where the on-screen keyboard's top edge is (window coordinates) while it's open, else null. Android draws edge to
+ * edge, so the window doesn't shrink for the keyboard: screens lift their content with a KeyboardAvoidingView
+ * (behavior "padding" on both platforms), and bottom bars drop their safe-area padding while the keyboard is up.
  */
-export function useKeyboardShown() {
-  const [shown, setShown] = useState(() => Keyboard.isVisible?.() ?? false);
+export function useKeyboardTop() {
+  const [top, setTop] = useState<number | null>(() => (Keyboard.isVisible?.() ? Keyboard.metrics?.()?.screenY ?? null : null));
   useEffect(() => {
     const ios = Platform.OS === 'ios';
-    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', () => setShown(true));
-    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => setShown(false));
+    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', (e) => setTop(e.endCoordinates.screenY));
+    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => setTop(null));
     return () => { show.remove(); hide.remove(); };
   }, []);
-  return shown;
+  return top;
 }
+
+/** True while the on-screen keyboard is open. */
+export const useKeyboardShown = () => useKeyboardTop() !== null;

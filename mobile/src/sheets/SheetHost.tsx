@@ -11,7 +11,7 @@ import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKin
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
-import { CircleButton, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown } from '../ui/common';
+import { CircleButton, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useKeyboardTop } from '../ui/common';
 import { t } from '../i18n';
 import { sendSms, sendWhatsApp } from '../lib/whatsapp';
 import { shareMessage, sosMessage } from '../lib/checkinText';
@@ -21,6 +21,10 @@ export function SheetHost() {
   const close = useStore((s) => s.closeSheet);
   const { height } = useWindowDimensions();
   const y = useRef(new Animated.Value(height)).current;
+  // With the keyboard up, the sheet sits on top of it and must fit in the space above (it scrolls inside).
+  const keyboardTop = useKeyboardTop();
+  const insets = useSafeAreaInsets();
+  const room = keyboardTop !== null ? Math.max(220, keyboardTop - insets.top - 8) : null;
 
   useEffect(() => {
     if (!sheet) return;
@@ -41,7 +45,7 @@ export function SheetHost() {
         <Animated.View
           accessibilityViewIsModal
           style={{
-            height: tall ? '92%' : undefined, maxHeight: '92%', backgroundColor: colors.white, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+            height: tall ? room ?? '92%' : undefined, maxHeight: room ?? '92%', backgroundColor: colors.white, borderTopLeftRadius: 28, borderTopRightRadius: 28,
             transform: [{ translateY: y }], shadowColor: 'rgb(18,14,38)', shadowOpacity: 0.15, shadowRadius: 20, shadowOffset: { width: 0, height: -10 }, elevation: 20,
           }}
         >
