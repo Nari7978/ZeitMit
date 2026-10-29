@@ -49,12 +49,12 @@ export async function sendLoginEmail(env: Env, to: string, code: string) {
 }
 
 /** Safety alert for the team: email to every ADMIN_EMAILS address, plus a push to admins signed in on the app. */
-export async function alertAdmins(env: Env, subject: string, text: string) {
+export async function alertAdmins(env: Env, subject: string, text: string, style: Pick<Note, 'icon' | 'tone' | 'go'> = { icon: 'shield-alert', tone: 'error' }) {
   const emails = (env.ADMIN_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (!emails.length) return;
   const admins = await env.DB.prepare(`SELECT id FROM users WHERE lower(email) IN (${emails.map(() => '?').join(',')})`).bind(...emails).all<{ id: string }>();
   await Promise.all([
     ...emails.map((e) => sendEmail(env, e, subject, text).catch(() => false)),
-    ...admins.results.map((a) => notify(env, a.id, { icon: 'shield-alert', tone: 'error', title: subject, body: text.split('\n')[0].slice(0, 160), go: '' }).catch(() => undefined)),
+    ...admins.results.map((a) => notify(env, a.id, { ...style, title: subject, body: text.split('\n')[0].slice(0, 160), go: style.go ?? '' }).catch(() => undefined)),
   ]);
 }

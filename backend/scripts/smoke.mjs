@@ -47,7 +47,7 @@ const health = await call('GET', '/');
 ok(health.status === 200 && health.data.ok, 'health check');
 
 const list = await call('GET', '/companions');
-ok(list.status === 200 && list.data.length === 8, `lists approved companions (${list.data?.length})`);
+ok(list.status === 200 && list.data.filter((c) => c.id.startsWith('demo_')).length === 8, `lists approved companions (${list.data?.length}, 8 demo)`);
 
 const stamp = Date.now();
 const customer = await login(`mira+${stamp}@example.com`);
@@ -339,7 +339,7 @@ ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not pub
   r = await call('DELETE', `/admin/companions/${customer.user.id}`, A);
   ok(r.status === 200, 'admin removes a companion listing');
   r = await call('GET', '/companion', T);
-  ok(r.data.status === 'none', 'listing is gone, account stays');
+  ok(r.data.status === 'rejected' && !(await call('GET', '/companions')).data.some((x) => x.id === customer.user.id), 'listing is hidden, account and history stay');
   r = await call('DELETE', `/admin/users/${friend.user.id}`, A);
   ok(r.status === 200, 'admin deletes an account');
   r = await call('GET', '/me', friend.token);

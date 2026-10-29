@@ -86,7 +86,7 @@ type State = {
   compConvos: Convo[];
   notifs: Notif[];
   toast: string | null;
-  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number }; rate: number; acts: ActId[]; avail: string[] };
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[] };
   edit: { name: string; bio: string } | null;
   review: { bid: string | null; stars: number; text: string };
   reportReason: string | null;
@@ -158,7 +158,7 @@ type Actions = {
 
 export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
 
-const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], earnings: { held: 0, released: 0, releasedCount: 0 }, rate: 25, acts: [], avail: [] };
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [] };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;

@@ -20,6 +20,7 @@ export default function Account() {
   const user = useStore((s) => s.user);
   const savedCount = useStore((s) => s.saved.length);
   const compStatus = useStore((s) => s.companionStatus);
+  const available = useStore((s) => s.comp.earnings.available);
   const { logout } = useStore.getState();
   if (!user) return null;
   const editUser = { name: user.name, bio: user.bio };
@@ -37,6 +38,8 @@ export default function Account() {
       ['ticket', 'Redeem a gift code', user.credit ? eur(user.credit / 100) + ' credit' : '', () => openSheet('redeem')],
       ['credit-card', 'Payments & credit', '', page('payments')],
       ['history', 'Booking history', '', () => toBookings('completed')],
+      // Companions (and former companions with earnings) withdraw here.
+      ...(compStatus !== 'none' ? [['wallet', 'Payouts', available > 0 ? eur(available / 100) + ' available' : '', () => router.push('/payouts')] as RowDef] : []),
     ] },
     { title: 'Preferences', rows: [
       ['bell', 'Notifications', notifValue, page('notifications')],

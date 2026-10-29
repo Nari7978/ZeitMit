@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { CONTACT_MSG, fail, hasContactDetails, parseJson } from '../lib/util';
+import { CONTACT_MSG, euros, fail, hasContactDetails, parseJson } from '../lib/util';
+import { owesPayout } from './payouts';
 
 export type Prefs = {
   pushMessages: boolean; pushBookings: boolean; emailUpdates: boolean; marketing: boolean;
@@ -91,6 +92,8 @@ me.delete('/', async (c) => {
     "SELECT COUNT(*) AS n FROM bookings WHERE (customer_id = ? OR companion_id = ?) AND status IN ('pending', 'confirmed')",
   ).bind(u.id, u.id).first<{ n: number }>();
   if (active && active.n > 0) fail(409, 'Complete or cancel your active bookings first.');
+  const owed = await owesPayout(c.env, u.id);
+  if (owed.owed) fail(409, `You still have ${euros(owed.available + owed.pending + owed.requested)} in earnings. Withdraw them under Payouts first, or contact support.`);
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE users SET suspended = 1, push_token = NULL, id_doc_photo_id = NULL, id_selfie_photo_id = NULL, id_status = CASE id_status WHEN 'pending' THEN 'none' ELSE id_status END WHERE id = ?").bind(u.id),
     c.env.DB.prepare("DELETE FROM photos WHERE owner_id = ? AND kind = 'id'").bind(u.id),

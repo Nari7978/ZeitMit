@@ -5,6 +5,7 @@ import { berlinToUnix, slotsFor } from '../lib/companions';
 import { notify } from '../lib/notify';
 import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
 import { cancelIntent, capture, createCheckout, getSession, intentOf, stripeOn } from '../lib/stripe';
+import { balanceOf } from './payouts';
 
 type BookingRow = {
   id: string; customer_id: string; companion_id: string; activity: ActId; starts_at: number; duration_h: number;
@@ -252,7 +253,7 @@ bookings.post('/:id/cancel', async (c) => {
     }
   }
   const res = await c.env.DB.prepare(
-    `UPDATE bookings SET status = 'cancelled', pay_status = 'released', cancel_note = ?, cancelled_by = 'customer', cancel_reason = ?, updated_at = unixepoch()
+    `UPDATE bookings SET status = 'cancelled', pay_status = 'released', released_at = unixepoch(), cancel_note = ?, cancelled_by = 'customer', cancel_reason = ?, updated_at = unixepoch()
      WHERE id = ? AND status = 'confirmed' AND pay_status = 'held'`,
   ).bind(`Cancelled by you less than ${FREE_CANCEL_HOURS} hours before · no refund`, reason, b.id).run();
   if (!res.meta.changes) fail(409, 'This booking can’t be cancelled any more.');
@@ -298,11 +299,15 @@ companionBookings.get('/', async (c) => {
   const all = r.results.map(forCompanion);
   const held = r.results.filter((b) => b.status === 'confirmed' && b.pay_status === 'held').reduce((a, b) => a + b.subtotal, 0);
   const released = r.results.filter((b) => b.pay_status === 'released').reduce((a, b) => a + b.subtotal, 0);
+  const balance = await balanceOf(c.env, c.get('user').id);
   return c.json({
     requests: all.filter((b) => b.status === 'pending'),
     upcoming: all.filter((b) => b.status === 'confirmed'),
     done: all.filter((b) => b.status === 'completed'),
-    earnings: { held, released, releasedCount: r.results.filter((b) => b.pay_status === 'released').length },
+    earnings: {
+      held, released, releasedCount: r.results.filter((b) => b.pay_status === 'released').length,
+      available: balance.available, pending: balance.pending, requested: balance.requested, paidOut: balance.paid,
+    },
   });
 });
 
@@ -369,7 +374,7 @@ companionBookings.post('/:id/verify-code', async (c) => {
     }
   }
   // TODO(payouts): transfer `subtotal` to the companion (Stripe Connect) — until then payouts are made manually.
-  await c.env.DB.prepare("UPDATE bookings SET status = 'completed', pay_status = 'released', updated_at = unixepoch() WHERE id = ?").bind(b.id).run();
+  await c.env.DB.prepare("UPDATE bookings SET status = 'completed', pay_status = 'released', released_at = unixepoch(), updated_at = unixepoch() WHERE id = ?").bind(b.id).run();
   await endCheckins(c.env, b.id);
   await endThread(c.env, b.id, c.executionCtx); // the booking's chat ends for both once you've met
   const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;

@@ -87,5 +87,115 @@ ok(r.data.find((x) => x.id === b2.id).pay === 'refunded', 'payment shows as refu
 r = await call('POST', `/admin/bookings/${b2.id}/refund`, A);
 ok(r.status === 409, 'a booking can only be refunded once');
 
+// 5) Payouts: a new companion earns, requests a payout, ZeitMit pays it (by hand) or rejects it
+{
+  const PIXEL = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+  const co = await login(`earner+${Date.now()}@example.com`);
+  const P = co.token;
+  await call('PATCH', '/me', P, { name: 'Jana Koch', ageConfirmed: true });
+  const idp = (await call('POST', '/photos', P, { kind: 'id', data: PIXEL })).data;
+  r = await call('POST', '/companion/apply', P, {
+    name: 'Jana', age: 31, gender: 'w', about: 'Architect who loves slow city walks, museums and long talks over good coffee in Berlin.',
+    acts: ['coffee', 'walks'], langs: ['German', 'English'], rate: 30, days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], wins: ['am', 'pm', 'eve'],
+    adult: true, rules: true, idPhotoId: idp.id,
+  });
+  ok(r.status === 201, 'new companion applies');
+  await call('POST', `/admin/companions/${co.user.id}/approve`, A);
+
+  const janaSlots = (await call('GET', `/companions/${co.user.id}`)).data.slots.flatMap((d) => d.times.map((t) => [d.date, t])).slice(-2);
+  const earn = async ([date, time]) => {
+    const bk = (await call('POST', '/bookings', T, { companionId: co.user.id, act: 'coffee', date, time, dur: 2, place: 'Café' })).data;
+    await call('POST', `/companion/bookings/${bk.id}/accept`, P);
+    sql(`UPDATE bookings SET starts_at = unixepoch() + 3600 WHERE id = '${bk.id}'`);
+    const code = (await call('GET', '/bookings', T)).data.find((x) => x.id === bk.id).otp;
+    await call('POST', `/companion/bookings/${bk.id}/verify-code`, P, { code });
+    return bk;
+  };
+  const e1 = await earn(janaSlots[0]);
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.data.balance.pending === 6000 && r.data.balance.available === 0 && r.data.rules.holdDays === 2 && r.data.balance.nextAvailableAt > Date.now() / 1000,
+    `earnings wait ${r.data.rules.holdDays} days before they can be withdrawn (€60 pending)`);
+  sql(`UPDATE bookings SET released_at = released_at - 3 * 86400 WHERE id = '${e1.id}'`);
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.data.balance.available === 6000 && r.data.balance.pending === 0, 'after the wait: €60 available');
+  r = await call('GET', '/companion/bookings', P);
+  ok(r.data.earnings.available === 6000, 'Overview gets the same balance');
+
+  r = await call('POST', '/companion/payouts', P);
+  ok(r.status === 400 && /bank account/.test(r.data.error), 'payout needs a bank account first');
+  r = await call('PUT', '/companion/payouts/account', P, { holderName: 'Jana Koch', iban: 'DE89 3704 0044 0532 0130 01' });
+  ok(r.status === 400 && /IBAN/.test(r.data.error), 'IBAN check digits are verified');
+  r = await call('PUT', '/companion/payouts/account', P, { holderName: 'Jana Koch', iban: 'de89 3704 0044 0532 0130 00' });
+  ok(r.status === 201 && r.data.ibanMasked === 'DE89 •••• 3000', 'valid IBAN saved, only shown masked');
+
+  r = await call('POST', '/companion/payouts', P);
+  ok(r.status === 201 && r.data.amount === 6000 && r.data.status === 'requested', 'companion requests the whole €60');
+  const po1 = r.data.id;
+  r = await call('POST', '/companion/payouts', P);
+  ok(r.status === 409, 'only one payout request at a time');
+  r = await call('PUT', '/companion/payouts/account', P, { holderName: 'Someone Else', iban: 'DE89370400440532013000' });
+  ok(r.status === 409, 'bank account is locked while a payout is on its way');
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.data.balance.available === 0 && r.data.balance.requested === 6000, 'requested amount is reserved');
+
+  r = await call('GET', '/admin/payouts', A);
+  const row = r.data.find((x) => x.id === po1);
+  ok(row && row.iban === 'DE89 3704 0044 0532 0130 00' && row.holderName === 'Jana Koch' && row.amount === 6000 && row.shortBy === 0, 'admin sees the request with the full IBAN');
+  r = await call('GET', '/admin/stats', A);
+  ok(r.data.pendingPayouts >= 1, 'admin badge counts open payout requests');
+  r = await call('DELETE', `/admin/users/${co.user.id}`, A);
+  ok(r.status === 409 && r.data.code === 'unpaid', 'admin is warned before deleting someone who is still owed money');
+  r = await call('DELETE', '/me', P);
+  ok(r.status === 409 && /earnings/.test(r.data.error), 'a companion can’t delete their account while money is owed');
+
+  r = await call('POST', `/admin/payouts/${po1}/paid`, A, { reference: 'SEPA 2026-11-02' });
+  ok(r.status === 200, 'admin marks the transfer as paid');
+  r = await call('POST', `/admin/payouts/${po1}/paid`, A);
+  ok(r.status === 409, 'a payout can only be marked once');
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.data.balance.available === 0 && r.data.balance.paid === 6000 && r.data.payouts[0].status === 'paid' && r.data.payouts[0].reference === 'SEPA 2026-11-02', 'companion sees it as paid, with the reference');
+  r = await call('GET', '/me/notifications', P);
+  ok(r.data.some((n) => n.title === 'Payout sent' && n.go === 'payouts' && n.body.includes('DE89 •••• 3000')), 'companion is told the money is on its way');
+
+  // Second payout gets rejected: the money goes back to the balance
+  const e2 = await earn(janaSlots[1]);
+  sql(`UPDATE bookings SET released_at = released_at - 3 * 86400 WHERE id = '${e2.id}'`);
+  r = await call('POST', '/companion/payouts', P);
+  const po2 = r.data.id;
+  r = await call('POST', `/admin/payouts/${po2}/reject`, A, {});
+  ok(r.status === 400, 'rejecting needs a reason');
+  r = await call('POST', `/admin/payouts/${po2}/reject`, A, { reason: 'The account holder doesn’t match your verified name.' });
+  ok(r.status === 200, 'admin rejects a payout with a reason');
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.data.balance.available === 6000 && r.data.payouts[0].status === 'rejected' && /verified name/.test(r.data.payouts[0].note), 'rejected amount is back in the balance, with the reason');
+
+  // A refund after the first payout: deducted from what's left
+  r = await call('POST', `/admin/bookings/${e1.id}/refund`, A);
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.status === 200 && r.data.balance.available === 0, 'refund of a paid-out booking is deducted from the balance (€60 − €60)');
+  r = await call('GET', '/me/notifications', P);
+  ok(r.data.some((n) => n.title === 'A booking was refunded' && n.go === 'payouts'), 'companion is told about the deduction');
+  r = await call('POST', '/companion/payouts', P);
+  ok(r.status === 409 && /from €20/.test(r.data.error), 'nothing to request below €20');
+  r = await call('PUT', '/companion/payouts/account', P, { holderName: 'Jana Koch', iban: 'AT61 1904 3002 3457 3201' });
+  ok(r.status === 200, 'bank account can change when nothing is on its way');
+  r = await call('GET', '/me/notifications', P);
+  ok(r.data.some((n) => n.title === 'Payout account changed'), 'a changed bank account is notified');
+
+  // Removing the listing keeps earnings and history; applying again works
+  r = await call('DELETE', `/admin/companions/${co.user.id}`, A);
+  ok(r.status === 200, 'admin removes the listing');
+  r = await call('GET', '/companion/payouts', P);
+  ok(r.data.payouts.length === 2 && r.data.balance.paid === 6000, 'earnings and payout history survive a removed listing');
+  const idp2 = (await call('POST', '/photos', P, { kind: 'id', data: PIXEL })).data;
+  r = await call('POST', '/companion/apply', P, {
+    name: 'Jana', age: 31, gender: 'w', about: 'Architect who loves slow city walks, museums and long talks over good coffee in Berlin.',
+    acts: ['coffee'], langs: ['German'], rate: 30, days: ['Sat'], wins: ['pm'], adult: true, rules: true, idPhotoId: idp2.id,
+  });
+  ok(r.status === 201, 'applying again after a removal works (bookings stay attached)');
+  r = await call('DELETE', `/admin/users/${co.user.id}?force=1`, A);
+  ok(r.status === 200, 'admin can still delete the account when forced');
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

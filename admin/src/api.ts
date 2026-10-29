@@ -16,7 +16,7 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401) session.set(null);
-    throw new Error(data?.error ?? `Request failed (${res.status})`);
+    throw Object.assign(new Error(data?.error ?? `Request failed (${res.status})`), { status: res.status, code: data?.code as string | undefined });
   }
   return data as T;
 }

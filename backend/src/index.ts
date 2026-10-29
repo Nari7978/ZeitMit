@@ -13,6 +13,7 @@ import { livePage, notFoundPage, pickLang } from './livePage';
 import { admin } from './routes/admin';
 import { chat } from './chat';
 import { photos } from './routes/photos';
+import { payouts } from './routes/payouts';
 import { stripeOn } from './lib/stripe';
 
 export { ChatRoom } from './chat';
@@ -61,6 +62,7 @@ app.route('/bookings', bookings);
 app.use('/companion/*', requireAuth);
 app.use('/companion', requireAuth);
 app.route('/companion/bookings', companionBookings);
+app.route('/companion/payouts', payouts);
 app.route('/companion', companionProfile);
 
 app.use('/conversations/*', requireAuth);

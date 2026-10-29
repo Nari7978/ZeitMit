@@ -76,7 +76,7 @@ export async function openBookingChat(bookingId: string) {
 
 /**
  * Opens the screen a notification points to: "chat:<id>", "tab:<bookings tab>", "comp:<tab>",
- * "checkin", "verify", "home", "become". Loads what it needs first if the app just started.
+ * "checkin", "verify", "home", "become", "payouts". Loads what it needs first if the app just started.
  */
 export async function followGo(go: string) {
   if (!go) return;
@@ -102,6 +102,9 @@ export async function followGo(go: string) {
   } else if (go === 'home') {
     useStore.setState({ sheet: null });
     router.dismissTo('/');
+  } else if (go === 'payouts') {
+    useStore.setState({ sheet: null });
+    router.push('/payouts');
   } else if (go === 'become') {
     useStore.setState({ sheet: null });
     router.push('/become');

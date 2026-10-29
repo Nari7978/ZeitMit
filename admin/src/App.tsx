@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, eur, photoSrc, session, when } from './api';
 
-type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'safety' | 'reviews' | 'users';
-type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number };
+type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'payouts' | 'safety' | 'reviews' | 'users';
+type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number; pendingPayouts: number };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -28,6 +28,7 @@ export function App() {
     ['ids', 'ID checks', stats?.pendingIds],
     ['companions', 'Companion reviews', stats?.pendingCompanions],
     ['bookings', 'Bookings & payments'],
+    ['payouts', 'Payouts', stats?.pendingPayouts],
     ['safety', 'Reports & safety', (stats?.openReports ?? 0) + (stats?.sos ?? 0)],
     ['reviews', 'Reviews'],
     ['users', 'Users'],
@@ -53,6 +54,7 @@ export function App() {
         {page === 'ids' && <IdChecks {...ctx} />}
         {page === 'companions' && <Companions {...ctx} />}
         {page === 'bookings' && <Bookings {...ctx} />}
+        {page === 'payouts' && <Payouts {...ctx} />}
         {page === 'safety' && <Safety {...ctx} />}
         {page === 'reviews' && <Reviews {...ctx} />}
         {page === 'users' && <Users {...ctx} />}
@@ -107,6 +109,7 @@ function Login({ onIn }: { onIn: (token: string) => void }) {
 function Overview({ stats, go }: { stats: Stats | null; go: (p: Page) => void }) {
   const tiles: [string, ReactNode, Page][] = stats ? [
     ['ID checks waiting', stats.pendingIds, 'ids'],
+    ['Payouts to send', stats.pendingPayouts, 'payouts'],
     ['Companions waiting for review', stats.pendingCompanions, 'companions'],
     ['Open reports', stats.openReports, 'safety'],
     ['SOS / missed check-ins', stats.sos, 'safety'],
@@ -212,10 +215,10 @@ function Companions({ say, refresh }: Ctx) {
     } catch (e) { say((e as Error).message); }
   };
   const remove = async (a: Applicant) => {
-    if (!confirm(`Remove ${a.name}’s companion listing for good?\n\nTheir profile, reviews, bookings and chats as a companion are deleted. Open bookings are cancelled and refunded. Their customer account stays.`)) return;
+    if (!confirm(`Remove ${a.name}’s companion listing?\n\nTheir profile disappears from the app and open bookings are cancelled and refunded. Their account, earnings and payout history stay, so you can still pay what they earned. They can apply again.`)) return;
     try {
       const r = await api<{ refunded: number }>('DELETE', `/admin/companions/${a.id}`);
-      say(`${a.name}’s listing removed${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}.`);
+      say(`${a.name}’s listing removed${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}. Earnings stay.`);
     } catch (e) {
       say(/not found/i.test((e as Error).message) ? `${a.name}’s listing was already removed.` : (e as Error).message);
     }
@@ -388,8 +391,16 @@ function Users({ say }: Ctx) {
   const remove = async (u: UserRow) => {
     const typed = prompt(`Delete ${u.email} permanently?\n\nThis removes the account and everything linked to it: profile, companion listing, bookings, chats, reviews and photos. Open bookings are cancelled and refunded. It can’t be undone.\n\nType DELETE to confirm.`);
     if (typed?.trim().toUpperCase() !== 'DELETE') return;
+    const del = (force: boolean) => api<{ refunded: number }>('DELETE', `/admin/users/${u.id}${force ? '?force=1' : ''}`);
     try {
-      const r = await api<{ refunded: number }>('DELETE', `/admin/users/${u.id}`);
+      let r: { refunded: number };
+      try {
+        r = await del(false);
+      } catch (e) {
+        // They're still owed money: deleting loses the record of it, so ask once more.
+        if ((e as { code?: string }).code !== 'unpaid' || !confirm(`${(e as Error).message}\n\nPay or reject it under Payouts first. Delete anyway?`)) throw e;
+        r = await del(true);
+      }
       say(`${u.email} deleted${r.refunded ? `, ${r.refunded} booking(s) refunded` : ''}.`);
     } catch (e) {
       say(/not found/i.test((e as Error).message) ? `${u.email} was already deleted.` : (e as Error).message);
@@ -451,6 +462,69 @@ function Reviews({ say }: Ctx) {
           </table>
         )}
       </div>
+    </>
+  );
+}
+
+type PayoutRow = {
+  id: string; amount: number; status: 'requested' | 'paid' | 'rejected'; holderName: string; iban: string; reference: string | null; note: string | null;
+  createdAt: number; decidedAt: number | null; email: string; name: string; accountName: string; shortBy: number;
+};
+
+function Payouts({ say, refresh }: Ctx) {
+  const [status, setStatus] = useState<'requested' | 'paid' | 'rejected'>('requested');
+  const [list, setList] = useState<PayoutRow[] | null>(null);
+  const load = useCallback(() => { setList(null); api<PayoutRow[]>('GET', `/admin/payouts?status=${status}`).then(setList).catch((e) => say(e.message)); }, [status, say]);
+  useEffect(load, [load]);
+  const copy = (text: string) => { navigator.clipboard.writeText(text).then(() => say('Copied.'), () => say(text)); };
+  const paid = async (p: PayoutRow) => {
+    const ref = prompt(`Mark ${eur(p.amount)} to ${p.holderName} as paid?\n\nSend the bank transfer first. Add the transfer reference (optional), then press OK.`, '');
+    if (ref === null) return;
+    try { await api('POST', `/admin/payouts/${p.id}/paid`, { reference: ref }); say(`Marked as paid. ${p.name} has been notified.`); } catch (e) { say((e as Error).message); }
+    load(); refresh();
+  };
+  const reject = async (p: PayoutRow) => {
+    const why = prompt(`Why can’t this payout be sent? ${p.name} will see your reason, and the ${eur(p.amount)} goes back to their balance.`, '');
+    if (!why) return;
+    try { await api('POST', `/admin/payouts/${p.id}/reject`, { reason: why }); say('Rejected. The amount is back in their balance.'); } catch (e) { say((e as Error).message); }
+    load(); refresh();
+  };
+  return (
+    <>
+      <h1>Payouts</h1>
+      <p className="muted">Companions request their available earnings here. Send a SEPA transfer from your business account, then mark it as paid.</p>
+      <div className="tabs">
+        {(['requested', 'paid', 'rejected'] as const).map((s) => <button key={s} className={status === s ? 'on' : ''} onClick={() => setStatus(s)}>{{ requested: 'To send', paid: 'Paid', rejected: 'Rejected' }[s]}</button>)}
+      </div>
+      {!list ? <p className="muted">Loading…</p> : !list.length ? <p className="muted">{status === 'requested' ? 'No payouts to send.' : 'Nothing here.'}</p> : (
+        <div className="grid">
+          {list.map((p) => (
+            <div key={p.id} className="card" style={{ display: 'grid', gap: 10 }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <h2 style={{ fontSize: 28 }}>{eur(p.amount)}</h2>
+                <span className="muted small">{p.name} · {p.email} · requested {when(p.createdAt)}</span>
+              </div>
+              <div className="small" style={{ display: 'grid', gap: 6 }}>
+                <div>Account holder: <b>{p.holderName}</b>{p.accountName && p.accountName.toLowerCase() !== p.holderName.toLowerCase() ? <span className="err"> · ZeitMit name: {p.accountName}. Check it matches their ID.</span> : null}</div>
+                <div className="row" style={{ gap: 10 }}>
+                  <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 15 }}>{p.iban}</span>
+                  <button className="btn" onClick={() => copy(p.iban.replace(/\s/g, ''))}>Copy IBAN</button>
+                  <button className="btn" onClick={() => copy((p.amount / 100).toFixed(2))}>Copy amount</button>
+                </div>
+                {p.shortBy > 0 ? <div className="err">A refund since this request means they’re now {eur(p.shortBy)} short. Reject it and let them request again.</div> : null}
+                {p.status === 'paid' ? <div className="muted">Paid {p.decidedAt ? when(p.decidedAt) : ''}{p.reference ? ` · reference: ${p.reference}` : ''}</div> : null}
+                {p.status === 'rejected' ? <div className="muted">Rejected {p.decidedAt ? when(p.decidedAt) : ''} · {p.note}</div> : null}
+              </div>
+              {p.status === 'requested' ? (
+                <div className="row">
+                  <button className="btn green" onClick={() => void paid(p)}>Mark as paid</button>
+                  <button className="btn red" onClick={() => void reject(p)}>Reject</button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }

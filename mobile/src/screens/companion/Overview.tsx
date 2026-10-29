@@ -5,7 +5,7 @@ import { AM, eur, hours } from '../../data';
 import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
-import { PrimaryButton } from '../../ui/common';
+import { PrimaryButton, SecondaryButton } from '../../ui/common';
 import { initials } from '../Account';
 import { CompShell, Initial } from './Shell';
 import { t } from '../../i18n';
@@ -15,7 +15,6 @@ export default function Overview() {
   const { requests, upcoming, earnings, rate, acts } = s.comp;
   const next = upcoming[0];
   const held = earnings.held / 100;
-  const released = earnings.released / 100;
   const live = s.companionStatus === 'approved';
 
   return (
@@ -52,7 +51,7 @@ export default function Overview() {
         </View>
         <View style={{ flex: 1 }}>
           <Txt size={15} weight={700}>Your listing</Txt>
-          <Txt size={13} color={colors.gray600}>{eur(rate)}/h · {acts.length} activities</Txt>
+          <Txt size={13} color={colors.gray600}>{`${eur(rate)}/h · ${acts.length} ${acts.length === 1 ? 'activity' : 'activities'}`}</Txt>
         </View>
         <Icon name="chevron-right" size={18} color={colors.gray400} />
       </PressBox>
@@ -63,10 +62,13 @@ export default function Overview() {
         </Row>
         <Row style={{ gap: 10, alignItems: 'stretch' }}>
           <Money icon="lock" label="Held" value={eur(held)} sub="Paid, waiting for meet code" bg={colors.lilac} />
-          <Money icon="circle-check" label="Released" value={eur(released)} sub={`${earnings.releasedCount} confirmed with code`} bg={colors.mintSoft} />
+          <Money icon="circle-check" label="Available" value={eur(Math.max(0, earnings.available) / 100)} sub={earnings.pending > 0 ? `+ ${eur(earnings.pending / 100)} pending` : 'Ready to withdraw'} bg={colors.mintSoft} />
         </Row>
-        <Txt size={12} lh={1.5} color={colors.gray600}>Money moves to you the moment you enter the customer’s 4-digit code at the meet-up. Payouts to your bank go out weekly.</Txt>
-        <PrimaryButton label="Enter a meet code" icon="key-round" height={44} radius={12} size={14} weight={700} onPress={() => router.navigate('/companion/calendar')} />
+        <Txt size={12} lh={1.5} color={colors.gray600}>You earn a booking’s money when you enter the customer’s 4-digit code at the meet-up. It can be withdrawn 2 days later, from €20.</Txt>
+        <Row style={{ gap: 10 }}>
+          <PrimaryButton label="Withdraw" icon="wallet" height={44} radius={12} size={14} weight={700} onPress={() => router.push('/payouts')} style={{ flex: 1, paddingHorizontal: 10 }} />
+          <SecondaryButton label="Meet code" icon="key-round" height={44} radius={12} size={14} onPress={() => router.navigate('/companion/calendar')} style={{ flex: 1, paddingHorizontal: 10 }} />
+        </Row>
       </Box>
     </CompShell>
   );

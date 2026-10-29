@@ -57,11 +57,16 @@ companionProfile.post('/apply', async (c) => {
   const exists = await c.env.DB.prepare('SELECT status FROM companions WHERE user_id = ?').bind(u.id).first<{ status: string }>();
   if (exists && exists.status !== 'rejected') fail(409, 'You already have a companion profile.');
   const interests = (b.interests ?? []).slice(0, 12);
+  // Upsert, not delete + insert: someone applying again may have bookings (and earnings) tied to this row.
   await c.env.DB.batch([
-    c.env.DB.prepare('DELETE FROM companions WHERE user_id = ?').bind(u.id),
     c.env.DB.prepare(
       `INSERT INTO companions (user_id, display_name, age, show_age, pronouns, gender, area, hue, tagline, bio, rate, interests, languages, activities, boundaries, lgbtq, photo_id, id_photo_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET
+         display_name = excluded.display_name, age = excluded.age, show_age = excluded.show_age, pronouns = excluded.pronouns, gender = excluded.gender,
+         area = excluded.area, tagline = excluded.tagline, bio = excluded.bio, rate = excluded.rate, interests = excluded.interests,
+         languages = excluded.languages, activities = excluded.activities, boundaries = excluded.boundaries, lgbtq = excluded.lgbtq,
+         photo_id = COALESCE(excluded.photo_id, companions.photo_id), id_photo_id = excluded.id_photo_id, status = 'pending', id_verified = 0`,
     ).bind(
       u.id, b.name!.trim(), b.age ?? null, b.showAge === false ? 0 : 1, b.pronouns?.trim() || null, b.gender!, b.area ?? 'Berlin',
       Math.floor(Math.random() * 360), b.tagline?.trim().slice(0, 60) || interests.slice(0, 2).join(' and ') || 'New in Berlin', b.about!.trim(), b.rate!,
