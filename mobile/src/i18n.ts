@@ -464,6 +464,17 @@ const DE: Record<string, string> = {
   'Payout not sent': 'Auszahlung nicht überwiesen',
   'A booking was refunded': 'Eine Buchung wurde erstattet',
   'typing…': 'schreibt …',
+  // Home
+  'Rent': 'Buch dir', 'a date.': 'ein Date.', 'a mate.': 'einen Kumpel.', 'a plus-one.': 'ein Plus-One.', 'a gym buddy.': 'einen Sportbuddy.',
+  'a city guide.': 'einen Stadtguide.', 'a dinner date.': 'ein Dinner-Date.',
+  'Real people for coffee, culture, dates and plus-ones. Always in public, paid safely through ZeitMit.': 'Echte Menschen für Kaffee, Kultur, Dates und als Begleitung. Immer an öffentlichen Orten, sicher bezahlt über ZeitMit.',
+  'What do you feel like?': 'Worauf hast du Lust?', 'City walks': 'Spazieren', 'Dinner out': 'Essen gehen', '1 companion who knows the quiet corners': '1 Begleitperson, die die ruhigen Ecken kennt', '1 person': '1 Person', 'All activities →': 'Alle Aktivitäten →',
+  'Real people, right here': 'Echte Menschen hier', 'More soon': 'Bald mehr', 'HOW IT WORKS': 'SO FUNKTIONIERT’S',
+  'Pick a plan': 'Plan wählen', 'Choose a companion, an activity and a time that suits you.': 'Wähle eine Begleitperson, eine Aktivität und eine Zeit, die dir passt.',
+  'Pay safely': 'Sicher bezahlen', 'ZeitMit holds the money. Full refund if they decline.': 'ZeitMit hält das Geld. Volle Erstattung, wenn abgelehnt wird.',
+  'Meet & share your code': 'Treffen & Code teilen', 'Meet in public. Your 4-digit code releases the payment.': 'Trefft euch öffentlich. Dein 4-stelliger Code gibt die Zahlung frei.',
+  'GOT FREE TIME?': 'ZEIT ÜBRIG?', 'Get paid to hang out.': 'Verdien Geld mit deiner Zeit.',
+  'Become a companion: you pick the activities, your rate and your hours.': 'Werde Begleitperson: Du wählst Aktivitäten, Preis und Zeiten.',
   'Ask for their 4-digit meet code and enter it to get paid.': 'Frag nach dem 4-stelligen Treffcode und gib ihn ein, damit du bezahlt wirst.',
   // Moving a booking
   'This booking can’t be moved any more.': 'Diese Buchung kann nicht mehr verschoben werden.',
@@ -501,6 +512,9 @@ const DE: Record<string, string> = {
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^Good afternoon, (.+)$/, 'Guten Tag, $1'],
+  [/^Good evening, (.+)$/, 'Guten Abend, $1'],
+  [/^(\d+) people$/, '$1 Personen'],
   [/^Meeting (.+) now$/, 'Treffen mit $1 jetzt'],
   [/^Meeting (.+) at (\d{2}:\d{2})$/, 'Treffen mit $1 um $2'],
   [/^Meet code opens (.+)$/, 'Treffcode ab $1'],

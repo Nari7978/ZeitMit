@@ -242,6 +242,8 @@ export function Chip({
 
 let reduceMotion = false;
 AccessibilityInfo.isReduceMotionEnabled?.().then((v) => { reduceMotion = v; }).catch(() => {});
+/** True when the person turned on "reduce motion": looping animations stay still then. */
+export const motionOff = () => reduceMotion;
 
 /** zmFade / zmPop / zmIn entry animations. */
 export function Enter({ kind = 'fade', duration, delay = 0, style, children }: { kind?: 'fade' | 'pop' | 'in' | 'up' | 'rise'; duration?: number; delay?: number; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
