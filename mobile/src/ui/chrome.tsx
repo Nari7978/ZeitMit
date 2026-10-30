@@ -43,7 +43,10 @@ export function NavBar({ state, navigateToTab, items }: BottomTabBarProps & { it
             }}
             style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3 }}
           >
-            <View style={{ width: 56, height: 30, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? 'rgba(255,233,77,.14)' : 'transparent' }}>
+            <View style={{ width: 56, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+              {/* The highlight keeps its colour and only shows or hides: Android drops the rounded corners of a
+                  background that was transparent when the tab first rendered. */}
+              <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 15, backgroundColor: 'rgba(255,233,77,.14)', opacity: on ? 1 : 0 }} />
               <Icon name={it.icon} size={21} color={color} />
               {it.badge ? (
                 <View style={{ position: 'absolute', top: -2, right: 8, minWidth: 17, height: 17, paddingHorizontal: 4, borderRadius: 999, backgroundColor: colors.red, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>

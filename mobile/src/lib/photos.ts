@@ -4,9 +4,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { api, API_URL } from '../api';
 
-export type PhotoKind = 'avatar' | 'companion' | 'id';
+export type PhotoKind = 'avatar' | 'companion' | 'gallery' | 'id';
 
-const SIZE: Record<PhotoKind, number> = { avatar: 400, companion: 900, id: 1200 };
+const SIZE: Record<PhotoKind, number> = { avatar: 400, companion: 900, gallery: 900, id: 1200 };
 
 /** Absolute URL for a `/photos/…` path from the API. */
 export const photoUri = (url?: string | null) => (url ? (url.startsWith('http') ? url : API_URL + url) : null);

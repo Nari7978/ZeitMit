@@ -220,7 +220,7 @@ const DE: Record<string, string> = {
   'Profiles are reviewed before they appear publicly.': 'Profile werden geprüft, bevor sie öffentlich erscheinen.',
   'Earnings depend on bookings and are not guaranteed.': 'Einnahmen hängen von Buchungen ab und sind nicht garantiert.',
   '18+ only. ID verification is required.': 'Nur ab 18. Ausweisprüfung erforderlich.', 'Create companion profile': 'Begleitprofil erstellen',
-  'Introduce yourself': 'Stell dich vor', 'A clear, friendly photo of you. Profiles with a photo get far more requests.': 'Ein klares, freundliches Foto von dir. Profile mit Foto bekommen deutlich mehr Anfragen.',
+  'Introduce yourself': 'Stell dich vor',
   'Change photo': 'Foto ändern', 'Choose a photo': 'Foto wählen', 'Display name': 'Anzeigename', 'You can hide it at any time.': 'Du kannst es jederzeit ausblenden.',
   'Use an example': 'Beispiel verwenden', 'What you enjoy, what you’re like to spend time with, what you can show people…': 'Was du magst, wie es ist, Zeit mit dir zu verbringen, was du zeigen kannst …',
   'Write at least 40 characters.': 'Mindestens 40 Zeichen.', 'What will you offer?': 'Was bietest du an?',
@@ -508,10 +508,25 @@ const DE: Record<string, string> = {
   'Age, gender, languages and interests are optional. Your email, phone and ID documents are never shown.': 'Alter, Geschlecht, Sprachen und Interessen sind optional. E-Mail, Telefonnummer und Ausweisdokumente werden nie gezeigt.',
   'Requests, calendar and earnings': 'Anfragen, Kalender und Einnahmen',
   'ZeitMit took your listing down. You can still withdraw what you’ve earned. Contact support if you have questions.': 'ZeitMit hat dein Profil entfernt. Was du verdient hast, kannst du weiterhin auszahlen lassen. Wende dich bei Fragen an den Support.',
+  // Companion photos
+  'A clear, friendly photo of your face. It’s the first thing customers see.': 'Ein klares, freundliches Foto deines Gesichts. Das sehen Kund*innen zuerst.',
+  'Add a profile photo of yourself.': 'Füge ein Profilfoto von dir hinzu.', 'More photos': 'Weitere Fotos', 'Photos': 'Fotos',
+  'Add 3 to 6 more photos of you, ideally doing things you enjoy. Customers swipe through them on your profile.': 'Füge 3 bis 6 weitere Fotos von dir hinzu, am besten bei Dingen, die du gern machst. Kund*innen wischen auf deinem Profil durch sie.',
+  'Add at least 3 more photos besides your profile photo.': 'Füge außer deinem Profilfoto mindestens 3 weitere Fotos hinzu.',
+  'Add a photo': 'Foto hinzufügen', 'Add another photo': 'Weiteres Foto hinzufügen', 'Photo added': 'Foto hinzugefügt', 'Photo removed': 'Foto entfernt',
+  'Customers swipe through these on your profile. Keep at least 3.': 'Kund*innen wischen auf deinem Profil durch diese Fotos. Behalte mindestens 3.',
+  'Add at least 3 photos besides your profile photo, ideally doing things you enjoy. Customers swipe through them on your profile.': 'Füge außer deinem Profilfoto mindestens 3 Fotos hinzu, am besten bei Dingen, die du gern machst. Kund*innen wischen auf deinem Profil durch sie.',
+  'Keep at least 3 photos. Add a new one before removing this one.': 'Behalte mindestens 3 Fotos. Füge erst ein neues hinzu, bevor du dieses entfernst.',
+  'Add more photos': 'Mehr Fotos hinzufügen', 'Show at least 3 besides your profile photo. Customers swipe through them.': 'Zeig außer deinem Profilfoto mindestens 3 weitere. Kund*innen wischen durch sie.',
+  'Add up to 6 photos.': 'Füge bis zu 6 Fotos hinzu.', 'One of those photos isn’t yours or was removed. Pull down to refresh.': 'Eines dieser Fotos gehört nicht dir oder wurde entfernt. Zum Aktualisieren nach unten ziehen.',
+  '+10% fee': '+10 % Gebühr', 'You don’t have a companion profile yet.': 'Du hast noch kein Profil als Begleitperson.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^(\d+) photos$/, '$1 Fotos'],
+  [/^Remove photo (\d+)$/, 'Foto $1 entfernen'],
+  [/^(.+) · (.+) away$/, '$1 · $2 entfernt'],
   [/^Good afternoon, (.+)$/, 'Guten Tag, $1'],
   [/^Good evening, (.+)$/, 'Guten Abend, $1'],
   [/^(\d+) people$/, '$1 Personen'],

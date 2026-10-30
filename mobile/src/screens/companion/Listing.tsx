@@ -4,11 +4,12 @@ import { colors, font } from '../../theme';
 import { A, INTERESTS, LANGS, OKOPTS, type Companion } from '../../data';
 import { api } from '../../api';
 import { pickAndUpload } from '../../lib/photos';
-import { toggleIn, useStore } from '../../store';
+import { GALLERY_MAX, GALLERY_MIN, toggleIn, useStore } from '../../store';
 import { openProfile, toCustomerMode } from '../../nav';
 import { Icon } from '../../ui/Icon';
 import { Box, Chip, Photo, Row, Toggle, Txt } from '../../ui/primitives';
 import { PrimaryButton, SecondaryButton, TextButton } from '../../ui/common';
+import { PhotoGrid, type GalleryPhoto } from '../../ui/PhotoGrid';
 import { GENDERS, RateStepper } from '../Become';
 import { CompShell } from './Shell';
 import { t } from '../../i18n';
@@ -28,16 +29,20 @@ export default function Listing() {
   const { setListing, showToast } = useStore.getState();
   const [d, setD] = useState<Draft | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState<'photo' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'photo' | 'gallery' | 'save' | null>(null);
+  const [gallery, setGallery] = useState<GalleryPhoto[] | null>(null);
   const upd = (o: Partial<Draft>) => { setD((x) => (x ? { ...x, ...o } : x)); setDirty(true); };
 
   useEffect(() => {
-    api<Companion & { bio: string; showAge: boolean; ageValue: number | null }>('GET', '/companion')
-      .then((c) => setD({
-        photoUrl: c.photoUrl ?? null, tagline: c.tagline, about: c.bio, interests: c.interests, ok: c.ok, area: c.area,
-        langs: Object.fromEntries(c.langs), showAge: c.showAge, lgbtq: c.lgbtq,
-        age: c.ageValue ? String(c.ageValue) : '', gender: c.g, pronouns: c.pron ?? '',
-      }))
+    api<Companion & { bio: string; showAge: boolean; ageValue: number | null; galleryIds: string[]; gallery: string[] }>('GET', '/companion')
+      .then((c) => {
+        setD({
+          photoUrl: c.photoUrl ?? null, tagline: c.tagline, about: c.bio, interests: c.interests, ok: c.ok, area: c.area,
+          langs: Object.fromEntries(c.langs), showAge: c.showAge, lgbtq: c.lgbtq,
+          age: c.ageValue ? String(c.ageValue) : '', gender: c.g, pronouns: c.pron ?? '',
+        });
+        setGallery(c.galleryIds.map((id, i) => ({ id, url: c.gallery[i] })));
+      })
       .catch((e) => showToast(e.message));
   }, [showToast]);
 
@@ -46,6 +51,38 @@ export default function Listing() {
     try {
       const r = await pickAndUpload('companion');
       if (r) { setD((x) => (x ? { ...x, photoUrl: r.url } : x)); showToast('Listing photo updated'); }
+    } catch (e) {
+      showToast((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // The extra photos are saved straight away (the server keeps at least 3 once there are 3).
+  const saveGallery = async (next: GalleryPhoto[], done: string) => {
+    const r = await api<{ ids: string[]; gallery: string[] }>('PUT', '/companion/gallery', { ids: next.map((p) => p.id) });
+    setGallery(r.ids.map((id, i) => ({ id, url: r.gallery[i] })));
+    useStore.setState((s) => ({ comp: { ...s.comp, gallery: r.ids.length } }));
+    showToast(done);
+  };
+  const addPhoto = async () => {
+    if (!gallery || busy) return;
+    setBusy('gallery');
+    try {
+      const r = await pickAndUpload('gallery');
+      if (r) await saveGallery([...gallery, r], 'Photo added');
+    } catch (e) {
+      showToast((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const removePhoto = async (id: string) => {
+    if (!gallery || busy) return;
+    if (gallery.length <= GALLERY_MIN) return showToast('Keep at least 3 photos. Add a new one before removing this one.');
+    setBusy('gallery');
+    try {
+      await saveGallery(gallery.filter((p) => p.id !== id), 'Photo removed');
     } catch (e) {
       showToast((e as Error).message);
     } finally {
@@ -93,6 +130,19 @@ export default function Listing() {
           </Row>
         </View>
       </Box>
+
+      {gallery ? (
+        <Box shadow={4} style={card}>
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Txt size={15} weight={700}>More photos</Txt>
+            <Txt size={12} weight={600} color={gallery.length >= GALLERY_MIN ? colors.greenDeep : colors.red}>{`${gallery.length}/${GALLERY_MAX}`}</Txt>
+          </Row>
+          <Txt size={12} lh={1.45} color={gallery.length >= GALLERY_MIN ? colors.gray600 : colors.red}>
+            {gallery.length >= GALLERY_MIN ? 'Customers swipe through these on your profile. Keep at least 3.' : 'Add at least 3 photos besides your profile photo, ideally doing things you enjoy. Customers swipe through them on your profile.'}
+          </Txt>
+          <PhotoGrid photos={gallery} adding={busy === 'gallery'} onAdd={() => void addPhoto()} onRemove={(id) => void removePhoto(id)} />
+        </Box>
+      ) : null}
 
       <Box shadow={4} style={[card, { gap: 14 }]}>
         <Txt size={15} weight={700}>Hourly rate</Txt>

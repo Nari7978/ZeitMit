@@ -32,6 +32,8 @@ export type Companion = {
   /** Weekdays with availability, 0 = Mon. */
   days: number[];
   photoUrl?: string | null;
+  /** More photos besides the profile photo, shown as slides on the profile. */
+  gallery?: string[];
 };
 
 export type Activity = { id: ActId; label: string; icon: string; desc: string };

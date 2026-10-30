@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -13,7 +13,55 @@ import { useSlots, type DaySlots } from '../lib/slots';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, usePullRefresh, useTopPad } from '../ui/common';
-import { locale } from '../i18n';
+import { locale, t } from '../i18n';
+
+const PHOTO_H = 470;
+
+/** Profile photo first, then the companion's other photos: swipe through them, the dots show where you are. */
+function PhotoSlides({ c }: { c: Companion }) {
+  const { width } = useWindowDimensions();
+  const [at, setAt] = useState(0);
+  const slides = [c.photoUrl, ...(c.gallery ?? [])].filter((u): u is string => !!u);
+  const shade = (
+    <LinearGradient pointerEvents="none" colors={['rgba(18,14,38,.45)', 'rgba(18,14,38,0)']} locations={[0, 0.28]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+  );
+  if (slides.length < 2) {
+    return (
+      <>
+        <Photo hue={c.hue} url={c.photoUrl} />
+        {shade}
+        <Txt kind="mono" size={11} weight={500} color="rgba(23,21,43,.55)" style={{ position: 'absolute', left: 20, bottom: 60 }}>{c.photoUrl ? '' : c.photo}</Txt>
+      </>
+    );
+  }
+  return (
+    <>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        scrollEventThrottle={32}
+        onScroll={(e) => {
+          const i = Math.round(e.nativeEvent.contentOffset.x / width);
+          if (i !== at) setAt(i);
+        }}
+        accessibilityLabel={t(`${slides.length} photos`)}
+      >
+        {slides.map((u) => (
+          <View key={u} style={{ width, height: PHOTO_H }}>
+            <Photo hue={c.hue} url={u} />
+          </View>
+        ))}
+      </ScrollView>
+      {shade}
+      <View testID="photo-dots" pointerEvents="none" style={{ position: 'absolute', bottom: 42, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        {slides.map((u, i) => (
+          <View key={u} style={{ width: i === at ? 18 : 6, height: 6, borderRadius: 3, backgroundColor: i === at ? colors.white : 'rgba(255,255,255,.55)' }} />
+        ))}
+      </View>
+    </>
+  );
+}
 
 type Detail = Companion & {
   reviewList: { n: string; a: string; stars: number; t: string; created_at: number }[];
@@ -59,14 +107,8 @@ export default function Profile() {
         }}
         contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
       >
-        <View style={{ height: 470 }}>
-          <Photo hue={c.hue} url={c.photoUrl} />
-          <LinearGradient colors={['rgba(18,14,38,.45)', 'rgba(18,14,38,0)']} locations={[0, 0.28]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-          <Txt kind="mono" size={11} weight={500} color="rgba(23,21,43,.55)" style={{ position: 'absolute', left: 20, bottom: 60 }}>{c.photoUrl ? '' : c.photo}</Txt>
-          <Row style={{ position: 'absolute', bottom: 42, left: 0, right: 0, justifyContent: 'center', gap: 6 }}>
-            <View style={{ width: 18, height: 6, borderRadius: 3, backgroundColor: colors.white }} />
-            {[0, 1, 2].map((i) => <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,.55)' }} />)}
-          </Row>
+        <View style={{ height: PHOTO_H }}>
+          <PhotoSlides c={c} />
         </View>
 
         <View style={{ marginTop: -26, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.white, paddingTop: 26, paddingHorizontal: 20 }}>
@@ -91,14 +133,14 @@ export default function Profile() {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, columnGap: 16, marginTop: 14 }}>
             <Row style={{ gap: 5 }}>
               <Icon name="map-pin" size={15} color={colors.gray600} />
-              <Txt size={14}>{c.area} · {c.dist} away</Txt>
+              <Txt size={14}>{c.dist ? `${c.area} · ${c.dist} away` : c.area}</Txt>
             </Row>
             <Txt size={14}><Txt size={14} color={colors.amber}>★</Txt> <Txt size={14} weight={700}>{ratingStr(c)}</Txt> <Txt size={14} color={colors.gray600}>{reviewsStr(c)}</Txt></Txt>
           </View>
           <View style={{ height: 1, backgroundColor: colors.ink, marginVertical: 22 }} />
 
           <Section title="About" first />
-          <Txt size={15} lh={1.6} color={colors.gray900}>{c.bio}</Txt>
+          <Txt size={15} lh={1.6} color={colors.gray900} align="justify">{c.bio}</Txt>
 
           <Section title="Interests" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -220,11 +262,11 @@ export default function Profile() {
       {/* Sticky booking bar */}
       <Row style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 14, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: 'rgba(255,255,255,.96)', borderTopWidth: 2, borderTopColor: colors.ink, gap: 10 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Txt size={14} color={colors.gray600} numberOfLines={1}><H size={23} weight={700} ls={-0.02}>{eur(c.rate)}</H> / hour</Txt>
-          <Txt size={12} color={colors.gray600} numberOfLines={1}>+ 10% service fee</Txt>
+          <Txt size={14} color={colors.gray600} numberOfLines={1}><H size={23} weight={700} ls={-0.02}>{eur(c.rate)}</H>/h</Txt>
+          <Txt size={12} color={colors.gray600} numberOfLines={1}>+10% fee</Txt>
         </View>
-        <SecondaryButton label="Message" icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 16 }} onPress={() => messageCompanion(c.id, c.name)} />
-        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 22, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
+        <SecondaryButton label="Message" icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
+        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
           <Txt size={15} weight={600} color={colors.white}>Book now</Txt>
         </PressBox>
       </Row>

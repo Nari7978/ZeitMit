@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur, hours } from '../../data';
-import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
+import { CODE_OPENS_HOURS, GALLERY_MIN, hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
 import { PrimaryButton } from '../../ui/common';
@@ -12,7 +12,7 @@ import { t } from '../../i18n';
 
 export default function Overview() {
   const s = useStore();
-  const { requests, upcoming, earnings, rate, acts } = s.comp;
+  const { requests, upcoming, earnings, rate, acts, gallery } = s.comp;
   const next = upcoming[0];
   const held = earnings.held / 100;
   const live = s.companionStatus === 'approved';
@@ -46,6 +46,18 @@ export default function Overview() {
           />
         </Box>
       ))}
+      {s.companionStatus !== 'rejected' && gallery !== null && gallery < GALLERY_MIN ? (
+        <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/listing')} accessibilityLabel={t('Add more photos')} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.blush }]}>
+          <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="images" size={22} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Txt size={15} weight={700}>Add more photos</Txt>
+            <Txt size={13} lh={1.4} color={colors.gray800}>Show at least 3 besides your profile photo. Customers swipe through them.</Txt>
+          </View>
+          <Icon name="chevron-right" size={18} color={colors.gray600} />
+        </PressBox>
+      ) : null}
       <Row style={{ gap: 12 }}>
         <StatTile n={requests.length} label="New requests" onPress={() => router.navigate('/companion/requests')} />
         <StatTile n={upcoming.length} label="Upcoming" onPress={() => router.navigate('/companion/calendar')} />

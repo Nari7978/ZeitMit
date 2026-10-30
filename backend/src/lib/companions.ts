@@ -6,7 +6,12 @@ export type CompanionRow = {
   area: string; dist: string; hue: number; photo_note: string; tagline: string; bio: string; rate: number;
   interests: string; languages: string; activities: string; boundaries: string; lgbtq: number; status: string;
   id_verified: number; rating: number | null; review_count: number; photo_id: string | null; id_photo_id: string | null;
+  gallery: string;
 };
+
+/** Besides the profile photo, companions show this many more photos (the application needs the minimum). */
+export const GALLERY_MIN = 3;
+export const GALLERY_MAX = 6;
 
 /** API shape, mirroring the mobile app's `Companion` type. */
 export function toCompanion(r: CompanionRow) {
@@ -33,6 +38,7 @@ export function toCompanion(r: CompanionRow) {
     bio: r.bio,
     status: r.status,
     photoUrl: r.photo_id ? `/photos/${r.photo_id}` : null,
+    gallery: parseJson<string[]>(r.gallery, []).map((id) => `/photos/${id}`),
     showAge: !!r.show_age,
   };
 }

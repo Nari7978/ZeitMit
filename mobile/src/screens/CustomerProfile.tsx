@@ -74,7 +74,7 @@ export default function CustomerProfile() {
 
         <View style={{ paddingHorizontal: 20, gap: 14, marginTop: 22 }}>
           <Card title="About">
-            <Txt size={15} lh={1.55} color={p.bio ? colors.gray900 : colors.gray600}>{p.bio || `${first} hasn’t written an intro yet.`}</Txt>
+            <Txt size={15} lh={1.55} color={p.bio ? colors.gray900 : colors.gray600} align={p.bio ? 'justify' : undefined}>{p.bio || `${first} hasn’t written an intro yet.`}</Txt>
           </Card>
           {p.languages.length || p.interests.length ? (
             <Card>

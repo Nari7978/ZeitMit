@@ -94,7 +94,13 @@ ok(r.status === 409, 'a booking can only be refunded once');
   const P = co.token;
   await call('PATCH', '/me', P, { name: 'Jana Koch', ageConfirmed: true });
   const idp = (await call('POST', '/photos', P, { kind: 'id', data: PIXEL })).data;
+  // A profile photo and 3 more, as the app asks for
+  const photos = async () => {
+    const up = async (kind) => (await call('POST', '/photos', P, { kind, data: PIXEL })).data.id;
+    return { photoId: await up('companion'), galleryIds: [await up('gallery'), await up('gallery'), await up('gallery')] };
+  };
   r = await call('POST', '/companion/apply', P, {
+    ...(await photos()),
     name: 'Jana', age: 31, gender: 'w', about: 'Architect who loves slow city walks, museums and long talks over good coffee in Berlin.',
     acts: ['coffee', 'walks'], langs: ['German', 'English'], rate: 30, days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], wins: ['am', 'pm', 'eve'],
     adult: true, rules: true, idPhotoId: idp.id,
@@ -188,13 +194,16 @@ ok(r.status === 409, 'a booking can only be refunded once');
   r = await call('GET', '/companion/payouts', P);
   ok(r.data.payouts.length === 2 && r.data.balance.paid === 6000, 'earnings and payout history survive a removed listing');
   const idp2 = (await call('POST', '/photos', P, { kind: 'id', data: PIXEL })).data;
+  const again = await photos();
   r = await call('POST', '/companion/apply', P, {
+    ...again,
     name: 'Jana', age: 31, gender: 'w', about: 'Architect who loves slow city walks, museums and long talks over good coffee in Berlin.',
     acts: ['coffee'], langs: ['German'], rate: 30, days: ['Sat'], wins: ['pm'], adult: true, rules: true, idPhotoId: idp2.id,
   });
   ok(r.status === 201, 'applying again after a removal works (bookings stay attached)');
   r = await call('DELETE', `/admin/users/${co.user.id}?force=1`, A);
   ok(r.status === 200, 'admin can still delete the account when forced');
+  ok((await fetch(`${BASE}/photos/${again.galleryIds[0]}`)).status === 404, 'their photos are deleted with the account');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');

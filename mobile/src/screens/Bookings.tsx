@@ -42,8 +42,10 @@ export default function Bookings() {
                   accessibilityRole="tab"
                   accessibilityState={{ selected: on }}
                   onPress={() => useStore.setState({ btab: k })}
-                  style={{ flex: 1, height: 38, borderRadius: 11, backgroundColor: on ? colors.white : 'transparent', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, shadowColor: 'rgb(23,21,43)', shadowOpacity: on ? 0.1 : 0, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: on ? 1 : 0 }}
+                  style={{ flex: 1, height: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}
                 >
+                  {/* Shown or hidden, never recoloured, so Android keeps the rounded corners (as in the tab bar). */}
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 11, backgroundColor: colors.white, opacity: on ? 1 : 0, shadowColor: 'rgb(23,21,43)', shadowOpacity: 0.1, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } }} />
                   <Txt size={12.5} weight={600} color={on ? colors.ink : colors.gray600} numberOfLines={1}>{k[0].toUpperCase() + k.slice(1)}</Txt>
                   <Txt size={11} weight={600} color={on ? colors.ink : colors.gray600} style={{ opacity: 0.6 }}>{n}</Txt>
                 </Pressable>

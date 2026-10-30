@@ -53,6 +53,7 @@ a { color: inherit; }
 .app-card { display: grid; grid-template-columns: 150px 1fr; gap: 18px; }
 .photo { width: 150px; height: 188px; border-radius: 16px; border: 2px solid var(--ink); object-fit: cover; background: var(--cream); display: grid; place-items: center; color: var(--gray); font-size: 12px; text-align: center; }
 .idphoto { width: 100%; max-width: 360px; border-radius: 14px; border: 2px dashed var(--ink); display: block; }
+.thumb { width: 64px; height: 80px; border-radius: 10px; border: 2px solid var(--ink); object-fit: cover; display: block; }
 .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--butter); font-size: 12px; font-weight: 600; margin: 0 4px 4px 0; }
 .muted { color: var(--gray); }
 .small { font-size: 13px; }

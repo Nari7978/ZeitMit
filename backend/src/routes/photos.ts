@@ -4,13 +4,14 @@ import { requireAuth, verifySession } from '../lib/auth';
 import { fail, newId } from '../lib/util';
 
 const MAX_B64 = 700_000; // ≈ 500 KB image; the app sends ~100 KB JPEGs
-const KINDS = ['avatar', 'companion', 'id'] as const;
+const KINDS = ['avatar', 'companion', 'gallery', 'id'] as const;
 
 export const photos = new Hono<AppEnv>();
 
 /**
- * Upload a photo. Body: { kind: 'avatar' | 'companion' | 'id', data: base64, mime? }
+ * Upload a photo. Body: { kind: 'avatar' | 'companion' | 'gallery' | 'id', data: base64, mime? }
  * avatar → becomes the user's picture; companion → the companion listing photo (if a listing exists);
+ * gallery → one of a companion's extra photos (attached with the application or PUT /companion/gallery);
  * id → kept private for the admin review and deleted after the decision.
  */
 photos.post('/', requireAuth, async (c) => {

@@ -76,8 +76,12 @@ export type NewBooking = { cid: string; act: ActId; date: string; time: string; 
 export type CompanionApplication = {
   name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; langs: string[];
   rate: number; days: string[]; wins: string[]; adult: boolean; rules: boolean; idPhotoId?: string; photoId?: string; tagline?: string;
-  levels?: Record<string, string>; area?: string; age: number; gender: 'w' | 'm' | 'nb'; pronouns?: string;
+  levels?: Record<string, string>; area?: string; age: number; gender: 'w' | 'm' | 'nb'; pronouns?: string; galleryIds: string[];
 };
+
+/** Photos a companion shows besides the profile photo: the application needs the minimum. */
+export const GALLERY_MIN = 3;
+export const GALLERY_MAX = 6;
 
 type State = {
   session: 'loading' | 'out' | 'in';
@@ -94,7 +98,8 @@ type State = {
   compConvos: Convo[];
   notifs: Notif[];
   toast: string | null;
-  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[] };
+  /** `gallery`: how many photos the listing has besides the profile photo (null until loaded). */
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; gallery: number | null };
   edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
   reportReason: string | null;
@@ -172,7 +177,7 @@ type Actions = {
 
 export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
 
-const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [] };
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [], gallery: null };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;
@@ -338,7 +343,7 @@ export const useStore = create<State & Actions>()((set, get) => {
         comp: {
           ...s.comp,
           ...(bk.status === 'fulfilled' ? bk.value : {}),
-          ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail } : {}),
+          ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, gallery: profile.value.gallery?.length ?? 0 } : {}),
         },
         compConvos: convos.status === 'fulfilled' ? convos.value : s.compConvos,
       }));
@@ -529,7 +534,7 @@ export const useStore = create<State & Actions>()((set, get) => {
     submitCompanion: async (a) => {
       const ok = await attempt(() => api('POST', '/companion/apply', a));
       if (!ok) return false;
-      set({ companionStatus: 'pending', comp: { ...get().comp, rate: a.rate, acts: a.acts } });
+      set({ companionStatus: 'pending', comp: { ...get().comp, rate: a.rate, acts: a.acts, gallery: a.galleryIds.length } });
       void get().loadCompanionSide();
       return true;
     },

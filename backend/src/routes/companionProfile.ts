@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
-import { toCompanion, type CompanionRow } from '../lib/companions';
+import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { berlinWhen, CONTACT_MSG, fail, hasContactDetails, parseJson } from '../lib/util';
 
@@ -10,7 +10,7 @@ const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 type Listing = {
   name?: string; showAge?: boolean; age?: number; about?: string; interests?: string[]; acts?: string[]; ok?: string[];
   langs?: string[]; rate?: number; days?: string[]; wins?: string[]; area?: string; gender?: 'w' | 'm' | 'nb'; pronouns?: string; lgbtq?: boolean;
-  tagline?: string; levels?: Record<string, string>; photoId?: string; idPhotoId?: string;
+  tagline?: string; levels?: Record<string, string>; photoId?: string; idPhotoId?: string; galleryIds?: string[];
 };
 
 const LEVELS = ['Native', 'Fluent', 'Conversational', 'Intermediate', 'Basic'];
@@ -39,7 +39,7 @@ companionProfile.get('/', async (c) => {
   const row = await c.env.DB.prepare('SELECT * FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
   if (!row) return c.json({ status: 'none' });
   const avail = await c.env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(id).all<{ day: number; win: string }>();
-  return c.json({ ...toCompanion(row), ageValue: row.age, avail: avail.results.map((a) => `${WEEK[a.day]}-${a.win}`) });
+  return c.json({ ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []), avail: avail.results.map((a) => `${WEEK[a.day]}-${a.win}`) });
 });
 
 /** "Become a Companion" submission. Goes to the admin review queue. */
@@ -55,31 +55,71 @@ companionProfile.post('/apply', async (c) => {
   const photo = b.photoId
     ? await c.env.DB.prepare("SELECT id FROM photos WHERE id = ? AND owner_id = ? AND kind = 'companion'").bind(b.photoId, u.id).first()
     : null;
+  if (!photo) fail(400, 'Add a profile photo of yourself.');
+  const gallery = await ownGallery(c.env, u.id, b.galleryIds);
+  if (gallery.length < GALLERY_MIN) fail(400, `Add at least ${GALLERY_MIN} more photos besides your profile photo.`);
   const exists = await c.env.DB.prepare('SELECT status FROM companions WHERE user_id = ?').bind(u.id).first<{ status: string }>();
   if (exists && exists.status !== 'rejected') fail(409, 'You already have a companion profile.');
   const interests = (b.interests ?? []).slice(0, 12);
   // Upsert, not delete + insert: someone applying again may have bookings (and earnings) tied to this row.
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `INSERT INTO companions (user_id, display_name, age, show_age, pronouns, gender, area, hue, tagline, bio, rate, interests, languages, activities, boundaries, lgbtq, photo_id, id_photo_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO companions (user_id, display_name, age, show_age, pronouns, gender, area, hue, tagline, bio, rate, interests, languages, activities, boundaries, lgbtq, photo_id, id_photo_id, gallery)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET
          display_name = excluded.display_name, age = excluded.age, show_age = excluded.show_age, pronouns = excluded.pronouns, gender = excluded.gender,
          area = excluded.area, tagline = excluded.tagline, bio = excluded.bio, rate = excluded.rate, interests = excluded.interests,
          languages = excluded.languages, activities = excluded.activities, boundaries = excluded.boundaries, lgbtq = excluded.lgbtq,
-         photo_id = COALESCE(excluded.photo_id, companions.photo_id), id_photo_id = excluded.id_photo_id, status = 'pending', id_verified = 0`,
+         photo_id = COALESCE(excluded.photo_id, companions.photo_id), id_photo_id = excluded.id_photo_id, gallery = excluded.gallery, status = 'pending', id_verified = 0`,
     ).bind(
       u.id, b.name!.trim(), b.age ?? null, b.showAge === false ? 0 : 1, b.pronouns?.trim() || null, b.gender!, b.area ?? 'Berlin',
       Math.floor(Math.random() * 360), b.tagline?.trim().slice(0, 60) || interests.slice(0, 2).join(' and ') || 'New in Berlin', b.about!.trim(), b.rate!,
       JSON.stringify(interests), JSON.stringify(b.langs!.map((l) => [l, LEVELS.includes(b.levels?.[l] ?? '') ? b.levels![l] : 'Fluent'])), JSON.stringify(b.acts), JSON.stringify(b.ok ?? []), b.lgbtq ? 1 : 0,
-      photo ? b.photoId! : null, b.idPhotoId!,
+      b.photoId!, b.idPhotoId!, JSON.stringify(gallery),
     ),
+    dropUnusedGallery(c.env, u.id, gallery),
     c.env.DB.prepare('DELETE FROM availability WHERE companion_id = ?').bind(u.id),
     ...b.days!.flatMap((d) => b.wins!.filter((w) => (WINDOWS as readonly string[]).includes(w)).map((w) =>
       c.env.DB.prepare('INSERT OR IGNORE INTO availability (companion_id, day, win) VALUES (?, ?, ?)').bind(u.id, WEEK.indexOf(d), w))),
   ]);
   void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ status: 'pending' }, 201);
+});
+
+/** The person's own uploaded gallery photos among `ids`, in that order (unknown or foreign ids are left out). */
+async function ownGallery(env: AppEnv['Bindings'], userId: string, ids: unknown) {
+  if (!Array.isArray(ids)) return [];
+  const want = [...new Set(ids.filter((x): x is string => typeof x === 'string'))].slice(0, GALLERY_MAX);
+  if (!want.length) return [];
+  const r = await env.DB.prepare(`SELECT id FROM photos WHERE owner_id = ? AND kind = 'gallery' AND id IN (${want.map(() => '?').join(',')})`)
+    .bind(userId, ...want).all<{ id: string }>();
+  const mine = new Set(r.results.map((x) => x.id));
+  return want.filter((id) => mine.has(id));
+}
+
+/** Gallery photos the person uploaded but no longer uses (removed, or left from an earlier try) are deleted. */
+const dropUnusedGallery = (env: AppEnv['Bindings'], userId: string, keep: string[]) =>
+  env.DB.prepare(`DELETE FROM photos WHERE owner_id = ? AND kind = 'gallery'${keep.length ? ` AND id NOT IN (${keep.map(() => '?').join(',')})` : ''}`).bind(userId, ...keep);
+
+/**
+ * Replaces the gallery (ids in display order, up to 6). Photos can be added one by one, but a gallery that has
+ * the minimum never drops below it: add the new photo first, then remove the old one.
+ */
+companionProfile.put('/gallery', async (c) => {
+  const u = c.get('user');
+  const { ids } = await c.req.json<{ ids?: unknown }>();
+  if (!Array.isArray(ids) || ids.length > GALLERY_MAX) fail(400, `Add up to ${GALLERY_MAX} photos.`);
+  const row = await c.env.DB.prepare('SELECT gallery FROM companions WHERE user_id = ?').bind(u.id).first<{ gallery: string }>();
+  if (!row) fail(404, 'You don’t have a companion profile yet.');
+  const gallery = await ownGallery(c.env, u.id, ids);
+  if (gallery.length !== (ids as unknown[]).length) fail(400, 'One of those photos isn’t yours or was removed. Pull down to refresh.');
+  const had = JSON.parse(row!.gallery || '[]') as string[];
+  if (gallery.length < GALLERY_MIN && gallery.length < had.length) fail(409, `Keep at least ${GALLERY_MIN} photos. Add a new one before removing this one.`);
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE companions SET gallery = ? WHERE user_id = ?').bind(JSON.stringify(gallery), u.id),
+    dropUnusedGallery(c.env, u.id, gallery),
+  ]);
+  return c.json({ gallery: gallery.map((id) => `/photos/${id}`), ids: gallery });
 });
 
 /** "Your listing": everything except name/age/verification can be edited after applying. */

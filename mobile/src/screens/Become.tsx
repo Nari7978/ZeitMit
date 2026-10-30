@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { pickAndUpload } from '../lib/photos';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -7,18 +7,19 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { A, AM, CSTEPS, eur, INTERESTS, LANGS, OKOPTS, WEEK, WIN, type ActId } from '../data';
-import { toggleIn, useStore } from '../store';
+import { GALLERY_MAX, GALLERY_MIN, toggleIn, useStore } from '../store';
 import { toCompanionMode } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Enter, H, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, IconTile, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useTopPad } from '../ui/common';
+import { PhotoGrid, type GalleryPhoto } from '../ui/PhotoGrid';
 import { StepTitle } from './BookingFlow';
 import { t } from '../i18n';
 
 type Draft = {
   name: string; showAge: boolean; about: string; aboutErr: boolean; interests: string[]; acts: ActId[]; langs: string[];
   rate: number; days: string[]; wins: string[]; ok: string[]; adult: boolean; idv: boolean; rules: boolean;
-  photoId?: string; photoUrl?: string; idPhotoId?: string; tagline: string;
+  photoId?: string; photoUrl?: string; idPhotoId?: string; tagline: string; gallery: GalleryPhoto[];
   age: string; gender?: Gender; pronouns: string;
 };
 
@@ -43,13 +44,18 @@ export default function Become() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(false);
-  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false, tagline: '', age: '', pronouns: '' });
-  const [uploading, setUploading] = useState<'photo' | 'id' | null>(null);
-  const upload = async (kind: 'companion' | 'id', source: 'library' | 'camera') => {
-    setUploading(kind === 'id' ? 'id' : 'photo');
+  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false, tagline: '', age: '', pronouns: '', gallery: [] });
+  const [uploading, setUploading] = useState<'photo' | 'gallery' | 'id' | null>(null);
+  const scroller = useRef<ScrollViewInstance>(null);
+  const upload = async (kind: 'companion' | 'gallery' | 'id', source: 'library' | 'camera') => {
+    if (uploading) return;
+    setUploading(kind === 'companion' ? 'photo' : kind);
     try {
       const r = await pickAndUpload(kind, source);
-      if (r) upd(kind === 'id' ? { idPhotoId: r.id, idv: true } : { photoId: r.id, photoUrl: r.url });
+      if (!r) return;
+      if (kind === 'id') upd({ idPhotoId: r.id, idv: true });
+      else if (kind === 'gallery') setB((x) => ({ ...x, gallery: [...x.gallery, r].slice(0, GALLERY_MAX) }));
+      else upd({ photoId: r.id, photoUrl: r.url });
     } catch (e) {
       useStore.getState().showToast((e as Error).message);
     } finally {
@@ -59,10 +65,15 @@ export default function Become() {
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
   const footPad = keyboard ? 12 : Math.max(30, insets.bottom + 8);
 
-  const valid = [true, !!b.name.trim() && b.about.trim().length >= 40 && ageOk(b.age) && !!b.gender, b.acts.length > 0 && b.langs.length > 0, b.days.length > 0 && b.wins.length > 0, b.adult && b.idv && b.rules, true][step];
+  const photosOk = !!b.photoId && b.gallery.length >= GALLERY_MIN;
+  const valid = [true, photosOk && !!b.name.trim() && b.about.trim().length >= 40 && ageOk(b.age) && !!b.gender, b.acts.length > 0 && b.langs.length > 0, b.days.length > 0 && b.wins.length > 0, b.adult && b.idv && b.rules, true][step];
   const next = () => {
     if (!valid && step !== 1) return;
-    if (step === 1 && (b.about.trim().length < 40 || !ageOk(b.age) || !b.gender || !b.name.trim())) return upd({ aboutErr: true });
+    if (step === 1 && !valid) {
+      // The photos are at the top: bring them into view when they're what's missing.
+      if (!photosOk) scroller.current?.scrollTo({ y: 0, animated: true });
+      return upd({ aboutErr: true });
+    }
     if (step < 5) {
       upd({ aboutErr: false });
       return setStep(step + 1);
@@ -70,7 +81,7 @@ export default function Become() {
     if (busy) return;
     setBusy(true);
     void useStore.getState()
-      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline, age: +b.age, gender: b.gender!, pronouns: b.pronouns.trim() || undefined })
+      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline, age: +b.age, gender: b.gender!, pronouns: b.pronouns.trim() || undefined, galleryIds: b.gallery.map((p) => p.id) })
       .then((ok) => { setBusy(false); if (ok) setDone(true); });
   };
 
@@ -147,20 +158,32 @@ export default function Become() {
       <Row style={{ gap: 4, paddingTop: 16, paddingHorizontal: 20 }}>
         {CSTEPS.map((_, i) => <View key={i} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i < step ? colors.ink : colors.track }} />)}
       </Row>
-      <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
+      <ScrollView ref={scroller} style={{ flex: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
         {step === 1 && (
           <>
             <StepTitle title="Introduce yourself" />
-            <Row style={{ gap: 14, marginBottom: 18 }}>
-              <Pressable accessibilityRole="button" accessibilityLabel="Add profile photo" onPress={() => void upload('companion', 'library')} style={{ width: 96, height: 120, borderRadius: 20, borderWidth: 2, borderColor: colors.ink, borderStyle: b.photoUrl ? 'solid' : 'dashed', backgroundColor: colors.white, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+            <Row style={{ gap: 14 }}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Add profile photo" onPress={() => void upload('companion', 'library')} style={{ width: 96, height: 120, borderRadius: 20, borderWidth: 2, borderColor: b.aboutErr && !b.photoUrl ? colors.red : colors.ink, borderStyle: b.photoUrl ? 'solid' : 'dashed', backgroundColor: colors.white, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
                 {b.photoUrl ? <Photo hue={0} url={b.photoUrl} /> : <Icon name={uploading === 'photo' ? 'hourglass' : 'image-plus'} size={26} />}
               </Pressable>
               <View style={{ flex: 1, gap: 4 }}>
                 <Txt size={14} weight={700}>Profile photo</Txt>
-                <Txt size={12} lh={1.45} color={colors.gray600}>A clear, friendly photo of you. Profiles with a photo get far more requests.</Txt>
+                <Txt size={12} lh={1.45} color={colors.gray600}>A clear, friendly photo of your face. It’s the first thing customers see.</Txt>
                 <TextButton label={b.photoUrl ? 'Change photo' : 'Choose a photo'} size={13} onPress={() => void upload('companion', 'library')} />
               </View>
             </Row>
+            {b.aboutErr && !b.photoUrl ? <Txt size={12} color={colors.red} style={{ marginTop: 6 }}>Add a profile photo of yourself.</Txt> : null}
+            <Row style={{ justifyContent: 'space-between', marginTop: 20, marginBottom: 4 }}>
+              <Txt size={14} weight={700}>More photos</Txt>
+              <Txt size={12} weight={600} color={b.gallery.length >= GALLERY_MIN ? colors.greenDeep : colors.gray600}>{`${b.gallery.length}/${GALLERY_MAX}`}</Txt>
+            </Row>
+            <Txt size={12} lh={1.45} color={colors.gray600} style={{ marginBottom: 10 }}>Add 3 to 6 more photos of you, ideally doing things you enjoy. Customers swipe through them on your profile.</Txt>
+            <PhotoGrid
+              photos={b.gallery} adding={uploading === 'gallery'} error={b.aboutErr && b.gallery.length < GALLERY_MIN}
+              onAdd={() => void upload('gallery', 'library')} onRemove={(id) => setB((x) => ({ ...x, gallery: x.gallery.filter((p) => p.id !== id) }))}
+            />
+            {b.aboutErr && b.gallery.length < GALLERY_MIN ? <Txt size={12} color={colors.red} style={{ marginTop: 6 }}>Add at least 3 more photos besides your profile photo.</Txt> : null}
+            <View style={{ height: 22 }} />
             <Label>Display name</Label>
             <Box shadow={3} style={{ borderRadius: 14 }}>
               <TextInput value={b.name} onChangeText={(t) => upd({ name: t })} accessibilityLabel="Display name" style={[font('body'), input, { height: 52, borderWidth: 2 }]} />
@@ -279,6 +302,14 @@ export default function Become() {
           <>
             <StepTitle title="Review and submit" />
             <Box shadow={4} style={{ backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 16 }}>
+              <View style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.hairline, gap: 8 }}>
+                <Txt size={12} color={colors.gray600}>Photos</Txt>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {[b.photoUrl, ...b.gallery.map((p) => p.url)].map((u) => (
+                    <View key={u ?? ''} style={{ flex: 1, maxWidth: 72, aspectRatio: 0.8, borderRadius: 10, borderWidth: 1.5, borderColor: colors.ink, overflow: 'hidden' }}><Photo hue={0} url={u} /></View>
+                  ))}
+                </View>
+              </View>
               {[
                 ['Name · age', `${b.name}, ${b.age} · ${t(b.showAge ? 'Shown' : 'Hidden')}`],
                 ['Gender', t(GENDERS.find(([k]) => k === b.gender)?.[1] ?? '—') + (b.pronouns.trim() ? ` · ${b.pronouns.trim()}` : '')],
