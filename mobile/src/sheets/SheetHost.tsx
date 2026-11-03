@@ -5,7 +5,7 @@ import Slider from '@react-native-community/slider';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, AM, ageStr, eur, INTERESTS, LANGS, PREF, SORT, WHEN } from '../data';
+import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, LANGS, PREF, SORT, WHEN } from '../data';
 import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { openProfile } from '../nav';
@@ -78,6 +78,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'otpin': return <OtpInSheet />;
     case 'delete': return <DeleteSheet />;
     case 'redeem': return <RedeemSheet />;
+    case 'feedback': return <FeedbackSheet />;
   }
 }
 
@@ -282,6 +283,110 @@ function ReportSheet() {
   );
 }
 
+// ---------- After a meet-up ----------
+
+const SAFE: { k: 'yes' | 'unsure' | 'no'; label: string; icon: string; bg: string; fg: string }[] = [
+  { k: 'yes', label: 'Yes', icon: 'shield-check', bg: colors.greenSoft, fg: colors.greenDeep },
+  { k: 'unsure', label: 'Not sure', icon: 'circle-alert', bg: colors.amberSoft, fg: '#7A5413' },
+  { k: 'no', label: 'No', icon: 'shield-alert', bg: colors.redSoft, fg: colors.redDeep },
+];
+
+/** Private answers for the safety team: did they feel safe, how respectful the other person was, what stood out. */
+function FeedbackSheet() {
+  const f = useStore((s) => s.feedback);
+  const reviewed = useStore((s) => s.bookings.find((b) => b.id === s.feedback.bid)?.reviewed ?? true);
+  const { openSheet, closeSheet, submitFeedback } = useStore.getState();
+  const set = (o: Partial<typeof f>) => useStore.setState((s) => ({ feedback: { ...s.feedback, ...o } }));
+  const review = () => openSheet('review', { review: { bid: f.bid, stars: Math.max(f.stars, 1), text: '' } });
+
+  if (f.sent) {
+    const canReview = f.side === 'customer' && !reviewed;
+    const worry = f.sent.concern;
+    return (
+      <Pad>
+        <View style={{ alignItems: 'center', gap: 8, paddingTop: 6 }}>
+          <View style={{ width: 64, height: 64, borderRadius: 22, borderWidth: 2, borderColor: colors.ink, backgroundColor: worry ? colors.redSoft : colors.mintSoft, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name={worry ? 'shield-alert' : 'shield-check'} size={30} />
+          </View>
+          <BigTitle>Thanks for telling us</BigTitle>
+          <Txt size={14} lh={1.5} color={colors.gray800} align="center">
+            {worry ? `Our safety team will look into it and may contact you. ${f.name} won’t see what you wrote.` : 'It helps keep ZeitMit safe for everyone.'}
+          </Txt>
+        </View>
+        {worry ? (
+          <View style={{ marginTop: 16, gap: 10 }}>
+            <Row style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: colors.redSoft, alignItems: 'flex-start' }}>
+              <Icon name="phone" size={17} color={colors.redDeep} style={{ marginTop: 1 }} />
+              <Txt size={13} lh={1.5} style={{ flex: 1 }}>If you’re in danger right now, call 112.</Txt>
+            </Row>
+            <SecondaryButton label={`Report ${f.name}`} icon="flag" height={48} onPress={() => openSheet('report', { reportReason: null, reportTarget: f.about })} />
+          </View>
+        ) : null}
+        <View style={{ marginTop: 14, gap: 2, alignItems: 'stretch' }}>
+          {canReview && !worry ? <PrimaryButton label={`Review ${f.name} publicly`} onPress={review} /> : <PrimaryButton label="Done" onPress={closeSheet} />}
+          {canReview && worry ? <TextButton label="Leave a public review" size={14} onPress={review} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
+        </View>
+      </Pad>
+    );
+  }
+
+  const ready = !!f.safe && f.stars > 0;
+  return (
+    <Pad scroll>
+      <SheetTitle style={{ marginBottom: 4 }}>How did it go with {f.name}?</SheetTitle>
+      <Row style={{ gap: 6, marginBottom: 16 }}>
+        <Icon name="lock" size={13} color={colors.gray600} />
+        <Txt size={12} color={colors.gray600} style={{ flex: 1 }}>Private. Only the ZeitMit safety team sees this, never {f.name}.</Txt>
+      </Row>
+      <Txt size={14} weight={700} style={{ marginBottom: 8 }}>Did you feel safe?</Txt>
+      <Row style={{ gap: 8 }}>
+        {SAFE.map((o) => {
+          const on = f.safe === o.k;
+          return (
+            <Pressable
+              key={o.k} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={t(o.label)} onPress={() => set({ safe: o.k })}
+              style={{ flex: 1, height: 64, borderRadius: 16, borderWidth: 2, borderColor: on ? colors.ink : colors.hairline, backgroundColor: on ? o.bg : colors.white, alignItems: 'center', justifyContent: 'center', gap: 4 }}
+            >
+              <Icon name={o.icon} size={19} color={on ? o.fg : colors.gray600} />
+              <Txt size={13} weight={700} color={on ? o.fg : colors.ink}>{o.label}</Txt>
+            </Pressable>
+          );
+        })}
+      </Row>
+      <Txt size={14} weight={700} style={{ marginTop: 18, marginBottom: 2 }}>How respectful was {f.name}?</Txt>
+      <Row style={{ gap: 4 }}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Pressable key={n} accessibilityRole="button" accessibilityLabel={t(n === 1 ? '1 star' : `${n} stars`)} hitSlop={4} onPress={() => set({ stars: n })} style={{ padding: 2 }}>
+            <Txt size={34} lh={38} color={n <= f.stars ? colors.amber : colors.gray300}>★</Txt>
+          </Pressable>
+        ))}
+      </Row>
+      <Txt size={14} weight={700} style={{ marginTop: 16, marginBottom: 8 }}>What stood out? <Txt size={13} color={colors.gray600}>(optional)</Txt></Txt>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {FEEDBACK_GOOD.map((x) => <FeedbackTag key={x} label={x} good on={f.tags.includes(x)} onPress={() => set({ tags: toggleIn(f.tags, x) })} />)}
+        {FEEDBACK_CONCERNS.map((x) => <FeedbackTag key={x} label={x} on={f.tags.includes(x)} onPress={() => set({ tags: toggleIn(f.tags, x) })} />)}
+      </View>
+      <TextInput
+        value={f.note} onChangeText={(v) => set({ note: v.slice(0, 600) })} accessibilityLabel="Note for the safety team"
+        placeholder={t('Anything the team should know? (optional)')} placeholderTextColor={colors.gray400} multiline textAlignVertical="top"
+        style={[font('body'), { marginTop: 14, height: 96, padding: 14, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, fontSize: 15, color: colors.ink, outlineStyle: 'none' } as object]}
+      />
+      <PrimaryButton label={f.busy ? 'Sending…' : 'Send to the safety team'} dim={!ready || f.busy} style={{ marginTop: 14 }} onPress={() => void submitFeedback()} />
+      {!ready ? <Txt size={12} color={colors.gray600} align="center" style={{ marginTop: 8 }}>Answer both questions to send it.</Txt> : null}
+    </Pad>
+  );
+}
+
+const FeedbackTag = ({ label, good, on, onPress }: { label: string; good?: boolean; on: boolean; onPress: () => void }) => (
+  <Pressable
+    accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
+    style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 34, paddingHorizontal: 12, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, backgroundColor: on ? (good ? colors.mintSoft : colors.redSoft) : colors.white }}
+  >
+    {on ? <Icon name="check" size={13} color={good ? colors.greenDeep : colors.redDeep} /> : null}
+    <Txt size={13} weight={on ? 700 : 500}>{label}</Txt>
+  </Pressable>
+);
+
 // ---------- Account ----------
 
 function ReviewSheet() {
@@ -297,7 +402,7 @@ function ReviewSheet() {
       <Txt size={13} color={colors.gray600} style={{ marginBottom: 14 }}>Reviews are public and linked to a completed booking.</Txt>
       <Row style={{ gap: 6, justifyContent: 'center', marginBottom: 16 }}>
         {[1, 2, 3, 4, 5].map((n) => (
-          <Pressable key={n} accessibilityRole="button" accessibilityLabel={`${n} stars`} onPress={() => set({ stars: n })} style={{ padding: 2 }}>
+          <Pressable key={n} accessibilityRole="button" accessibilityLabel={t(n === 1 ? '1 star' : `${n} stars`)} onPress={() => set({ stars: n })} style={{ padding: 2 }}>
             <Txt size={36} lh={40} color={n <= review.stars ? colors.amber : colors.gray300}>★</Txt>
           </Pressable>
         ))}

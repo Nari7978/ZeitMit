@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
-import { ACT_LABEL, ACTIVITIES, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
+import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
 import { berlinToUnix, hoursText, MAX_HOURS, MIN_HOURS, slotsFor, validLength } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
-import { notify } from '../lib/notify';
+import { alertAdmins, notify } from '../lib/notify';
 import { inBackground, sendBookingConfirmation, sendBookingInvoice } from '../lib/mail';
 import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
 import { cancelIntent, capture, createCheckout, expireSession, getSession, intentOf, stripeOn } from '../lib/stripe';
@@ -45,6 +45,7 @@ const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; ph
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.cancel_note ?? undefined, status: b.status,
   pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' ? b.meet_code : undefined, reviewed: !!b.reviewed,
   cancelledBy: b.cancelled_by ?? undefined, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
+  feedback: !!(b as { my_feedback?: number }).my_feedback,
 });
 
 /** Booking as the companion sees it (never includes the meet code). */
@@ -55,6 +56,7 @@ const forCompanion = (b: BookingRow & CustomerInfo) => ({
   customer: { bio: b.customer_bio ?? '', verified: b.customer_id_status === 'approved', since: b.customer_since ?? null },
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.note, status: b.status, pay: b.pay_status,
   payout: b.subtotal, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
+  feedback: !!(b as { my_feedback?: number }).my_feedback,
 });
 
 async function load(env: Env, id: string) {
@@ -174,8 +176,9 @@ export const bookings = new Hono<AppEnv>();
 
 bookings.get('/', async (c) => {
   const r = await c.env.DB.prepare(
-    `SELECT b.*, c.display_name AS companion_name, c.hue, c.photo_id FROM bookings b JOIN companions c ON c.user_id = b.companion_id
-     WHERE b.customer_id = ? AND b.paid = 1 ORDER BY b.starts_at DESC LIMIT 200`,
+    `SELECT b.*, c.display_name AS companion_name, c.hue, c.photo_id, EXISTS (SELECT 1 FROM meet_feedback f WHERE f.booking_id = b.id AND f.from_id = ?1) AS my_feedback
+     FROM bookings b JOIN companions c ON c.user_id = b.companion_id
+     WHERE b.customer_id = ?1 AND b.paid = 1 ORDER BY b.starts_at DESC LIMIT 200`,
   ).bind(c.get('user').id).all<BookingRow & { companion_name: string; hue: number }>();
   return c.json(r.results.map(forCustomer));
 });
@@ -398,6 +401,46 @@ bookings.post('/:id/reschedule', async (c) => {
   return c.json({ moved: false, ...when });
 });
 
+/**
+ * After a meet-up, either side tells the team privately how it went. Only admins see it, and serious answers alert them.
+ * Body: { safe: 'yes' | 'unsure' | 'no', stars: 1–5 (how respectful the other person was), tags?: string[], note?: string }
+ */
+bookings.post('/:id/feedback', async (c) => {
+  const uid = c.get('user').id;
+  const b = await load(c.env, c.req.param('id'));
+  const side = sideOf(b, uid);
+  if (b.status !== 'completed') fail(409, 'You can tell us how it went once you’ve met.');
+  const f = await c.req.json<{ safe?: string; stars?: number; tags?: unknown; note?: string }>();
+  if (!['yes', 'unsure', 'no'].includes(f.safe ?? '')) fail(400, 'Tell us whether you felt safe.');
+  if (!Number.isInteger(f.stars) || f.stars! < 1 || f.stars! > 5) fail(400, 'Choose 1 to 5 stars.');
+  const known = [...FEEDBACK_GOOD, ...FEEDBACK_CONCERNS];
+  const tags = Array.isArray(f.tags) ? [...new Set(f.tags.filter((x): x is string => typeof x === 'string' && known.includes(x)))] : [];
+  const note = typeof f.note === 'string' ? f.note.trim().slice(0, 600) : '';
+  const concern = f.safe !== 'yes' || f.stars! <= 2 || tags.some((x) => FEEDBACK_CONCERNS.includes(x));
+  const about = side === 'customer' ? b.companion_id : b.customer_id;
+  const res = await c.env.DB.prepare(
+    `INSERT INTO meet_feedback (id, booking_id, from_id, about_id, role, safe, stars, tags, note, concern) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (booking_id, from_id) DO NOTHING`,
+  ).bind(newId('fb'), b.id, uid, about, side, f.safe, f.stars, JSON.stringify(tags), note, concern ? 1 : 0).run();
+  if (!res.meta.changes) fail(409, 'You already told us how this one went. Thank you!');
+  // Didn't feel safe, 1 star or crossed boundaries: the team hears about it straight away.
+  if (f.safe === 'no' || f.stars === 1 || tags.includes('Crossed boundaries')) {
+    const p = await c.env.DB.prepare('SELECT (SELECT email FROM users WHERE id = ?) AS sender, (SELECT email FROM users WHERE id = ?) AS other').bind(uid, about)
+      .first<{ sender: string; other: string }>();
+    const names = await namesOf(c.env, b);
+    const [me, them] = side === 'customer' ? [names.customer, names.companion] : [names.companion, names.customer];
+    const answer = f.safe === 'no' ? 'didn’t feel safe' : f.safe === 'unsure' ? 'wasn’t sure they were safe' : 'felt safe';
+    await alertAdmins(c.env, `Safety feedback: ${me} ${answer} with ${them}`, [
+      `${me} (${side}, ${p?.sender}) ${answer} at their meet-up with ${them} (${p?.other}).`,
+      `Booking ${b.id}: ${ACT_LABEL[b.activity]}, ${berlinWhen(b.starts_at).full}.`,
+      `Respect: ${f.stars}/5${tags.length ? ` · ${tags.join(', ')}` : ''}`,
+      note ? `Note: “${note}”` : 'No note.',
+      'See Safety feedback in the admin panel.',
+    ].join('\n'), { icon: 'shield-alert', tone: 'error', go: '' });
+  }
+  return c.json({ ok: true, concern }, 201);
+});
+
 /** The other side accepts the suggested time: the booking moves (a companion's suggestion on a request also confirms it). */
 bookings.post('/:id/reschedule/accept', async (c) => {
   const b = await load(c.env, c.req.param('id'));
@@ -515,9 +558,10 @@ export const companionBookings = new Hono<AppEnv>();
 
 companionBookings.get('/', async (c) => {
   const r = await c.env.DB.prepare(
-    `SELECT b.*, u.name AS customer_name, u.avatar_id, u.bio AS customer_bio, u.id_status AS customer_id_status, u.created_at AS customer_since
+    `SELECT b.*, u.name AS customer_name, u.avatar_id, u.bio AS customer_bio, u.id_status AS customer_id_status, u.created_at AS customer_since,
+       EXISTS (SELECT 1 FROM meet_feedback f WHERE f.booking_id = b.id AND f.from_id = ?1) AS my_feedback
      FROM bookings b JOIN users u ON u.id = b.customer_id
-     WHERE b.companion_id = ? AND b.paid = 1 ORDER BY b.starts_at LIMIT 200`,
+     WHERE b.companion_id = ?1 AND b.paid = 1 ORDER BY b.starts_at LIMIT 200`,
   ).bind(c.get('user').id).all<BookingRow & CustomerInfo>();
   const all = r.results.map(forCompanion);
   const held = r.results.filter((b) => b.status === 'confirmed' && b.pay_status === 'held').reduce((a, b) => a + b.subtotal, 0);
@@ -620,6 +664,27 @@ export async function expireUnpaid(env: Env) {
     await dropHold(env, b);
   }
   return r.results.length;
+}
+
+/** Cron: once a meet-up has ended, both sides are asked privately how it went (once, up to 3 days after the end). */
+export async function askFeedback(env: Env) {
+  const r = await env.DB.prepare(
+    `SELECT b.*, c.display_name AS companion_name, u.name AS customer_name FROM bookings b
+     JOIN companions c ON c.user_id = b.companion_id JOIN users u ON u.id = b.customer_id
+     WHERE b.status = 'completed' AND b.feedback_asked = 0 AND b.starts_at + b.duration_h * 3600 <= ?1 AND b.starts_at + b.duration_h * 3600 > ?1 - 3 * 86400
+     LIMIT 100`,
+  ).bind(now()).all<BookingRow & { companion_name: string; customer_name: string | null }>();
+  for (const b of r.results) {
+    const res = await env.DB.prepare('UPDATE bookings SET feedback_asked = 1 WHERE id = ? AND feedback_asked = 0').bind(b.id).run();
+    if (!res.meta.changes) continue;
+    const given = new Set((await env.DB.prepare('SELECT from_id FROM meet_feedback WHERE booking_id = ?').bind(b.id).all<{ from_id: string }>()).results.map((x) => x.from_id));
+    const ask = (to: string, name: string) => notify(env, to, {
+      icon: 'shield-check', tone: 'violet', title: `How did it go with ${name}?`,
+      body: 'Tell us privately whether you felt safe. Only the ZeitMit safety team sees your answer.', go: `feedback:${b.id}`,
+    });
+    if (!given.has(b.customer_id)) await ask(b.customer_id, b.companion_name);
+    if (!given.has(b.companion_id)) await ask(b.companion_id, (b.customer_name || '').trim().split(/\s+/)[0] || 'your customer');
+  }
 }
 
 /** Cron: a suggested time that's less than an hour away can't be accepted any more, so it stops holding the time. */

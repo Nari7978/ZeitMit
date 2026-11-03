@@ -19,6 +19,10 @@ export default function Overview() {
   // Meet-ups happening now (the code can be entered from 2 hours before): enter the customer's code right here.
   const nowS = Date.now() / 1000;
   const meeting = upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600);
+  // The latest meet-up that ended in the past week without the private “How did it go?” answered.
+  const ask = s.comp.done
+    .filter((b) => !b.feedback && b.startsAt + b.dur * 3600 <= nowS && b.startsAt + b.dur * 3600 > nowS - 7 * 86400)
+    .sort((a, b) => b.startsAt - a.startsAt)[0];
 
   return (
     <CompShell title={'Hi, ' + (s.user?.first ?? '')}>
@@ -46,6 +50,18 @@ export default function Overview() {
           />
         </Box>
       ))}
+      {ask ? (
+        <PressBox shadow={4} fx="push" onPress={() => s.openFeedback(ask.id)} accessibilityLabel={t(`How did it go with ${ask.who.split(' ')[0]}?`)} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.lilac }]}>
+          <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="shield-check" size={22} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Txt size={15} weight={700}>{`How did it go with ${ask.who.split(' ')[0]}?`}</Txt>
+            <Txt size={13} lh={1.4} color={colors.gray800}>Tell us privately whether you felt safe. Only the safety team sees it.</Txt>
+          </View>
+          <Icon name="chevron-right" size={18} color={colors.gray600} />
+        </PressBox>
+      ) : null}
       {s.companionStatus !== 'rejected' && gallery !== null && gallery < GALLERY_MIN ? (
         <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/listing')} accessibilityLabel={t('Add more photos')} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.blush }]}>
           <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>

@@ -105,9 +105,12 @@ function BookingCard({ b }: { b: Booking }) {
       { label: 'Message', fn: msg },
       { label: 'Cancel request', fn: cancel },
     ],
-    completed: b.reviewed
-      ? [{ ...again, primary: true }]
-      : [again, { label: 'Leave a review', fn: () => openSheet('review', { review: { bid: b.id, stars: 5, text: '' } }), primary: true }],
+    // First the private “How did it go?” for the safety team, then the public review.
+    completed: !b.feedback
+      ? [again, { label: 'How did it go?', fn: () => useStore.getState().openFeedback(b.id), primary: true }]
+      : b.reviewed
+        ? [{ ...again, primary: true }]
+        : [again, { label: 'Leave a review', fn: () => openSheet('review', { review: { bid: b.id, stars: 5, text: '' } }), primary: true }],
     cancelled: [again],
   }[b.status];
 

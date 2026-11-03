@@ -109,6 +109,12 @@ export async function followGo(go: string) {
     if (!s.checkin) await s.loadCheckin();
     if (useStore.getState().checkin) useStore.getState().openSheet('sos');
     else s.showToast('That check-in has already ended.');
+  } else if (go.startsWith('feedback:')) {
+    // “How did it go?” after a meet-up: the booking may not be loaded yet when the notification opened the app.
+    const id = go.slice(9);
+    const known = () => { const st = useStore.getState(); return st.bookings.some((b) => b.id === id) || st.comp.done.some((b) => b.id === id); };
+    if (!known()) await s.refresh();
+    useStore.getState().openFeedback(id);
   } else if (go === 'verify') {
     openVerify();
   } else if (go === 'home') {

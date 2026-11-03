@@ -141,6 +141,9 @@ export const eur = (n: number) => {
 };
 export const memberSince = (unix: number) => 'Member since ' + new Date(unix * 1000).getFullYear();
 export const hours = (d: number) => t(`${Math.floor(d)}${d % 1 ? '½' : ''} ${d === 1 ? 'hour' : 'hours'}`);
+/** What stood out at a meet-up, for the private safety feedback (the server accepts the same lists). */
+export const FEEDBACK_GOOD = ['Respectful', 'Kept to boundaries', 'On time', 'Friendly'];
+export const FEEDBACK_CONCERNS = ['Pushy or rude', 'Crossed boundaries', 'Asked for contact details', 'Wanted to meet outside ZeitMit', 'Made me uncomfortable'];
 /** Booking lengths: 1 to 8 hours in half-hour steps (the server allows the same). */
 export const MIN_HOURS = 1;
 export const MAX_HOURS = 8;

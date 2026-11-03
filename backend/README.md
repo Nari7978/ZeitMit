@@ -25,11 +25,13 @@ node scripts/smoke.mjs         # end-to-end checks against the local API
 node scripts/local-flows.mjs   # time-dependent flows (meet code, late cancel); edits the local DB
 node scripts/slots.mjs         # open times: lengths, every kind of cancellation, live updates; edits the local DB
 node scripts/reschedule.mjs    # moving bookings and the customer profile companions see; edits the local DB
+node scripts/feedback.mjs      # private safety feedback after meet-ups and the admin list; edits the local DB
 ```
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
 `scripts/emails.mjs` checks the invoice and confirmation emails against a mock Brevo (it records what it's asked to send): run the API with
 `npx wrangler dev --port 8789 --var BREVO_API_KEY:test --var EMAIL_FROM_ADDRESS:hello@zeitmit.app --var BREVO_API_BASE:http://localhost:9998`.
+Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs http://localhost:8789 http://localhost:9998 safety@example.com` to also check the safety team's alert email.
 
 ## Test-mode features
 - **`DEV_LOGIN_CODES = "true"`**: login codes come back in the API response instead of by email, and admin access is disabled. The deploy workflow switches this off once `BREVO_API_KEY` and `EMAIL_FROM_ADDRESS` are set.
@@ -54,6 +56,13 @@ node scripts/reschedule.mjs    # moving bookings and the customer profile compan
 - When a booking is confirmed (the companion accepts, or the customer accepts the companion's suggested time), both sides get a confirmation with an `.ics` calendar file. If a confirmed booking moves, it's sent again with the new time; the calendar entry keeps its UID with a higher `SEQUENCE`, so calendars update it. The meet code is never emailed.
 - Emails follow the person's language setting; on "automatic" they use the language the app last reported showing (`PATCH /me { uiLanguage }`). Without email configured (local development) nothing is sent, but invoice numbers are still given out.
 
+## Safety feedback after meet-ups
+- Once a meet-up has ended (its meet code was entered and its time is over), the cron asks both sides privately how it went, once, up to 3 days after the end: a notification and push that opens the form (`go: "feedback:<booking id>"`). The app also shows it on the completed booking (customers) and on the Overview (companions, for a week).
+- `POST /bookings/:id/feedback` with `{ safe: 'yes' | 'unsure' | 'no', stars: 1–5, tags?, note? }`: whether they felt safe, how respectful the other person was, optional tags (the lists are `FEEDBACK_GOOD` and `FEEDBACK_CONCERNS` in `src/types.ts`; others are dropped) and a note of up to 600 characters. One answer per person per booking, only by the two people who met.
+- The other person never sees it. It's a concern when they didn't feel safe or weren't sure, gave 2 stars or fewer, or picked a worrying tag. Didn't feel safe, 1 star or "Crossed boundaries" also emails and notifies the admins (`ADMIN_EMAILS`) straight away.
+- Admins see it under Safety feedback: concerns first (open, then reviewed), everything with "All answers", each with what everyone said about the same person (answers, average stars, how many didn't feel safe), and can mark it reviewed or suspend the person. Customers can still leave a public review afterwards; the two are separate.
+- Deleting an account deletes the feedback they gave and the feedback about them.
+
 ## Payouts (sent by hand)
 - A booking's money is earned when the meet code is entered (or the customer cancels late). It becomes withdrawable `PAYOUT_HOLD_DAYS` (2) days later, so there's time for complaints and refunds.
 - Companions save a bank account (IBAN checked) and request their whole available balance, from `PAYOUT_MIN` (€20). One request can be open at a time, and the bank account is locked while it is.
@@ -67,10 +76,11 @@ node scripts/reschedule.mjs    # moving bookings and the customer profile compan
 | Me | `GET/PATCH/DELETE /me`, `PUT/DELETE /me/saved/:cid`, `GET /me/notifications`, `POST /me/notifications/read`, `POST /me/reports`, `POST /me/blocks` |
 | Browse | `GET /companions`, `GET /companions/:id`, `GET /companions/:id/slots` |
 | Customer bookings | `GET/POST /bookings`, `POST /bookings/:id/confirm-payment·release·cancel·review` |
+| After a meet-up (either side) | `POST /bookings/:id/feedback` (private, for the safety team) |
 | Moving a booking (either side) | `GET/POST/DELETE /bookings/:id/reschedule`, `POST /bookings/:id/reschedule/accept` |
 | Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/gallery`, `PUT /companion/availability`, `GET /companion/customers/:id`, `GET /companion/bookings`, `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
 | Payouts | `GET/POST /companion/payouts`, `PUT /companion/payouts/account` |
 | Chat | `GET /conversations`, `POST /conversations` (`{ bookingId }` or `{ companionId }`), `GET/POST /conversations/:id/messages`, `GET /conversations/:id/ws` (WebSocket, `?token=`) |
 | Live | `GET /live` (your updates), `GET /live/slots/:id` (a companion's open times); WebSockets, `?token=` |
 | Safety & gifts | `POST /safety/checkins`, `GET /safety/checkins/active`, `POST /safety/checkins/:id/ok·end·sos·location`, `GET /t/:token` (live page), `POST /gifts`, `POST /gifts/redeem` |
-| Admin | `/admin/stats`, `/admin/verifications`, `/admin/companions`, `/admin/bookings` (+ refund), `/admin/payouts` (+ paid, reject), `/admin/reports`, `/admin/reviews`, `/admin/users` (+ suspend, delete) |
+| Admin | `/admin/stats`, `/admin/verifications`, `/admin/companions`, `/admin/bookings` (+ refund), `/admin/payouts` (+ paid, reject), `/admin/reports`, `/admin/feedback` (+ review), `/admin/reviews`, `/admin/users` (+ suspend, delete) |

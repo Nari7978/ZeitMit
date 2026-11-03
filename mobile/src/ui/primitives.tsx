@@ -108,7 +108,8 @@ type PressBoxProps = ShadowOpts & Omit<PressableProps, 'style' | 'children'> & {
 export function PressBox({ style, shadow = 0, shadowColor = colors.ink, children, fx = 'fade', ...rest }: PressBoxProps) {
   const { wrap, face, radius } = split(style);
   return (
-    <Pressable accessibilityRole="button" {...rest} style={wrap}>
+    // Screen readers get the label in the app's language, like the text on the button.
+    <Pressable accessibilityRole="button" {...rest} accessibilityLabel={rest.accessibilityLabel ? t(rest.accessibilityLabel) : undefined} style={wrap}>
       {({ pressed }) => {
         const p = pressed && !rest.disabled;
         const push = p && fx === 'push';
@@ -196,7 +197,7 @@ export function Toggle({ on, onPress, label, bordered, dark }: { on: boolean; on
   return (
     <Pressable
       accessibilityRole="switch"
-      accessibilityLabel={label}
+      accessibilityLabel={t(label)}
       accessibilityState={{ checked: on }}
       onPress={onPress}
       style={{ width: 50, height: 30, borderRadius: 999, backgroundColor: on ? (dark ? colors.sun : colors.ink) : dark ? 'rgba(255,255,255,.22)' : colors.gray300, borderWidth: bordered ? 2 : 0, borderColor: colors.ink }}

@@ -3,7 +3,7 @@ import type { AppEnv } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { notify } from '../lib/notify';
-import { berlinWhen, euros, fail } from '../lib/util';
+import { berlinWhen, euros, fail, parseJson } from '../lib/util';
 import { ACT_LABEL } from '../types';
 import { balanceOf, groupIban, maskIban, owesPayout } from './payouts';
 import { refundBooking } from './bookings';
@@ -14,7 +14,7 @@ export const admin = new Hono<AppEnv>();
 
 admin.get('/stats', async (c) => {
   const q = (sql: string) => c.env.DB.prepare(sql).first<{ n: number }>().then((r) => r?.n ?? 0);
-  const [users, companions, pendingCompanions, bookings, held, openReports, sos, pendingIds, pendingPayouts] = await Promise.all([
+  const [users, companions, pendingCompanions, bookings, held, openReports, sos, pendingIds, pendingPayouts, openFeedback] = await Promise.all([
     q('SELECT COUNT(*) AS n FROM users'),
     q("SELECT COUNT(*) AS n FROM companions WHERE status = 'approved'"),
     q("SELECT COUNT(*) AS n FROM companions WHERE status = 'pending'"),
@@ -24,8 +24,9 @@ admin.get('/stats', async (c) => {
     q("SELECT COUNT(*) AS n FROM checkins WHERE status IN ('sos', 'alerted')"),
     q("SELECT COUNT(*) AS n FROM users WHERE id_status = 'pending'"),
     q("SELECT COUNT(*) AS n FROM payouts WHERE status = 'requested'"),
+    q("SELECT COUNT(*) AS n FROM meet_feedback WHERE concern = 1 AND status = 'open'"),
   ]);
-  return c.json({ users, companions, pendingCompanions, bookings, heldCents: held, openReports, sos, pendingIds, pendingPayouts });
+  return c.json({ users, companions, pendingCompanions, bookings, heldCents: held, openReports, sos, pendingIds, pendingPayouts, openFeedback });
 });
 
 admin.get('/companions', async (c) => {
@@ -147,6 +148,30 @@ admin.get('/reports', async (c) => {
   return c.json({ reports: r.results, flaggedMessages: flagged.results, sos: sos.results });
 });
 
+/**
+ * Private feedback after meet-ups: concerns first (open, then reviewed), or everything with ?show=all. Each answer
+ * comes with what others said about the same person, to spot patterns.
+ */
+admin.get('/feedback', async (c) => {
+  const all = c.req.query('show') === 'all';
+  const r = await c.env.DB.prepare(
+    `SELECT f.*, b.activity, b.starts_at, b.duration_h, fu.email AS from_email, fu.name AS from_name, au.email AS about_email, au.name AS about_name,
+       (SELECT COUNT(*) FROM meet_feedback x WHERE x.about_id = f.about_id) AS about_count,
+       (SELECT ROUND(AVG(x.stars), 1) FROM meet_feedback x WHERE x.about_id = f.about_id) AS about_stars,
+       (SELECT COUNT(*) FROM meet_feedback x WHERE x.about_id = f.about_id AND x.safe = 'no') AS about_unsafe
+     FROM meet_feedback f JOIN bookings b ON b.id = f.booking_id JOIN users fu ON fu.id = f.from_id JOIN users au ON au.id = f.about_id
+     ${all ? '' : 'WHERE f.concern = 1'}
+     ORDER BY (f.concern = 1 AND f.status = 'open') DESC, f.created_at DESC LIMIT 300`,
+  ).all<Record<string, unknown> & { tags: string; activity: keyof typeof ACT_LABEL; starts_at: number }>();
+  return c.json(r.results.map((x) => ({ ...x, tags: parseJson<string[]>(x.tags, []), act: ACT_LABEL[x.activity], when: berlinWhen(x.starts_at).full })));
+});
+
+admin.post('/feedback/:id/review', async (c) => {
+  const res = await c.env.DB.prepare("UPDATE meet_feedback SET status = 'reviewed' WHERE id = ?").bind(c.req.param('id')).run();
+  if (!res.meta.changes) fail(404, 'Feedback not found.');
+  return c.json({ ok: true });
+});
+
 admin.post('/reports/:id/resolve', async (c) => {
   await c.env.DB.prepare("UPDATE reports SET status = 'resolved' WHERE id = ?").bind(c.req.param('id')).run();
   return c.json({ ok: true });
@@ -206,6 +231,7 @@ admin.delete('/users/:id', async (c) => {
     c.env.DB.prepare('DELETE FROM conversations WHERE customer_id = ?1 OR companion_id = ?1').bind(id),
     c.env.DB.prepare(`DELETE FROM checkins WHERE user_id = ?1 OR booking_id IN ${mine}`).bind(id),
     c.env.DB.prepare(`DELETE FROM reviews WHERE companion_id = ?1 OR booking_id IN ${mine}`).bind(id),
+    c.env.DB.prepare(`DELETE FROM meet_feedback WHERE from_id = ?1 OR about_id = ?1 OR booking_id IN ${mine}`).bind(id),
     c.env.DB.prepare('DELETE FROM messages WHERE sender_id = ?1').bind(id),
     c.env.DB.prepare('DELETE FROM bookings WHERE customer_id = ?1 OR companion_id = ?1').bind(id),
     c.env.DB.prepare('DELETE FROM reports WHERE reporter_id = ?1 OR target_id = ?1').bind(id),

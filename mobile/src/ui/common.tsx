@@ -5,6 +5,7 @@ import { colors, type Weight } from '../theme';
 import { useStore } from '../store';
 import { Icon } from './Icon';
 import { HeartGlyph, PressBox, Txt, Row } from './primitives';
+import { t } from '../i18n';
 
 /** Fixed strip behind the status bar so scrolled content doesn't show through it. */
 export function StatusCover({ color }: { color: string }) {
@@ -101,7 +102,7 @@ export function CircleButton({ icon, onPress, label, size = 42, iconSize = 21, b
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={t(label)}
       onPress={onPress}
       hitSlop={4}
       style={({ pressed }) => [{ width: size, height: size, borderRadius: size / 2, borderWidth: border, borderColor, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.75 : 1 }, style]}

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, eur, photoSrc, session, when } from './api';
 
-type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'payouts' | 'safety' | 'reviews' | 'users';
-type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number; pendingPayouts: number };
+type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'payouts' | 'safety' | 'feedback' | 'reviews' | 'users';
+type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number; pendingPayouts: number; openFeedback: number };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -30,6 +30,7 @@ export function App() {
     ['bookings', 'Bookings & payments'],
     ['payouts', 'Payouts', stats?.pendingPayouts],
     ['safety', 'Reports & safety', (stats?.openReports ?? 0) + (stats?.sos ?? 0)],
+    ['feedback', 'Safety feedback', stats?.openFeedback],
     ['reviews', 'Reviews'],
     ['users', 'Users'],
   ];
@@ -56,6 +57,7 @@ export function App() {
         {page === 'bookings' && <Bookings {...ctx} />}
         {page === 'payouts' && <Payouts {...ctx} />}
         {page === 'safety' && <Safety {...ctx} />}
+        {page === 'feedback' && <Feedback {...ctx} />}
         {page === 'reviews' && <Reviews {...ctx} />}
         {page === 'users' && <Users {...ctx} />}
       </main>
@@ -113,6 +115,7 @@ function Overview({ stats, go }: { stats: Stats | null; go: (p: Page) => void })
     ['Companions waiting for review', stats.pendingCompanions, 'companions'],
     ['Open reports', stats.openReports, 'safety'],
     ['SOS / missed check-ins', stats.sos, 'safety'],
+    ['Safety concerns after meet-ups', stats.openFeedback, 'feedback'],
     ['Money held now', eur(stats.heldCents), 'bookings'],
     ['Bookings', stats.bookings, 'bookings'],
     ['Live companions', stats.companions, 'companions'],
@@ -438,6 +441,70 @@ function Users({ say }: Ctx) {
 }
 
 type ReviewRow = { id: string; author_name: string; activity: string; stars: number; text: string; created_at: number; companion: string };
+
+type FeedbackRow = {
+  id: string; booking_id: string; role: 'customer' | 'companion'; safe: 'yes' | 'unsure' | 'no'; stars: number; tags: string[]; note: string;
+  concern: number; status: 'open' | 'reviewed'; created_at: number; act: string; when: string;
+  from_email: string; from_name: string | null; about_id: string; about_email: string; about_name: string | null;
+  about_count: number; about_stars: number | null; about_unsafe: number;
+};
+const SAFE: Record<FeedbackRow['safe'], [string, string]> = { yes: ['Felt safe', 'var(--mint-soft)'], unsure: ['Not sure', 'var(--amber-soft)'], no: ['Didn’t feel safe', 'var(--red-soft)'] };
+const CONCERN_TAGS = new Set(['Pushy or rude', 'Crossed boundaries', 'Asked for contact details', 'Wanted to meet outside ZeitMit', 'Made me uncomfortable']);
+
+/** What people said privately after their meet-ups: concerns first, with what others said about the same person. */
+function Feedback({ say, refresh }: Ctx) {
+  const [all, setAll] = useState(false);
+  const [list, setList] = useState<FeedbackRow[] | null>(null);
+  const load = useCallback(() => { api<FeedbackRow[]>('GET', `/admin/feedback${all ? '?show=all' : ''}`).then(setList).catch((e) => say(e.message)); }, [say, all]);
+  useEffect(load, [load]);
+  const review = async (id: string) => { try { await api('POST', `/admin/feedback/${id}/review`); load(); refresh(); } catch (e) { say((e as Error).message); } };
+  const suspend = async (id: string, email: string) => {
+    if (!confirm(`Suspend ${email}? They’ll be logged out and can’t use ZeitMit.`)) return;
+    try { await api('POST', `/admin/users/${id}/suspend`, { suspended: true }); say(`${email} suspended.`); } catch (e) { say((e as Error).message); }
+  };
+  const who = (name: string | null, email: string) => name?.trim() || email;
+  return (
+    <>
+      <h1>Safety feedback</h1>
+      <p className="muted" style={{ maxWidth: 680 }}>After every meet-up both sides answer privately: did they feel safe, how respectful the other person was (1–5), and what stood out. The other person never sees it.</p>
+      <div className="row" style={{ margin: '12px 0 16px' }}>
+        <button className={`btn${all ? '' : ' dark'}`} onClick={() => setAll(false)}>Concerns</button>
+        <button className={`btn${all ? ' dark' : ''}`} onClick={() => setAll(true)}>All answers</button>
+      </div>
+      {!list ? <p className="muted">Loading…</p> : !list.length ? (
+        <div className="card"><p className="muted" style={{ margin: 0 }}>{all ? 'No answers yet.' : 'No concerns: every answer so far says the meet-up felt safe.'}</p></div>
+      ) : (
+        <div style={{ display: 'grid', gap: 14 }}>
+          {list.map((f) => (
+            <div key={f.id} className="card" style={{ display: 'grid', gap: 8, opacity: f.concern && f.status === 'reviewed' ? 0.6 : 1 }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <span className="pill" style={{ background: SAFE[f.safe][1], margin: 0 }}>{SAFE[f.safe][0]}</span>
+                  <span title={`Respect: ${f.stars} of 5`} style={{ fontSize: 18, letterSpacing: 1, color: '#e0a100' }}>{'★'.repeat(f.stars)}<span style={{ color: '#d6d2c4' }}>{'★'.repeat(5 - f.stars)}</span></span>
+                </div>
+                <span className="small muted">{when(f.created_at)}</span>
+              </div>
+              <div>
+                <b>{who(f.from_name, f.from_email)}</b> <span className="small muted">({f.role}, {f.from_email})</span> about <b>{who(f.about_name, f.about_email)}</b> <span className="small muted">({f.about_email})</span>
+              </div>
+              <div className="small muted">{f.act} · {f.when} · booking {f.booking_id}</div>
+              {f.tags.length ? <div>{f.tags.map((t) => <span key={t} className="pill" style={{ background: CONCERN_TAGS.has(t) ? 'var(--red-soft)' : 'var(--mint-soft)' }}>{t}</span>)}</div> : null}
+              {f.note ? <blockquote style={{ margin: 0, padding: '10px 12px', background: 'var(--cream)', borderRadius: 12 }}>“{f.note}”</blockquote> : null}
+              <div className="small">
+                Everything about {who(f.about_name, f.about_email)}: {f.about_count} {f.about_count === 1 ? 'answer' : 'answers'} · {f.about_stars ?? '–'}★ on average
+                {f.about_unsafe ? <b style={{ color: 'var(--red)' }}> · {f.about_unsafe} didn’t feel safe</b> : null}
+              </div>
+              <div className="row">
+                {f.concern ? (f.status === 'open' ? <button className="btn" onClick={() => void review(f.id)}>Mark reviewed</button> : <span className="small muted">Reviewed</span>) : null}
+                {f.concern ? <button className="btn red" onClick={() => void suspend(f.about_id, f.about_email)}>Suspend {who(f.about_name, f.about_email)}</button> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
 
 function Reviews({ say }: Ctx) {
   const [list, setList] = useState<ReviewRow[] | null>(null);

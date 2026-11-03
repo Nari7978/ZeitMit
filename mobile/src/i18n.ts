@@ -524,11 +524,31 @@ const DE: Record<string, string> = {
   'Always meet in a public place. ZeitMit never asks for your home address.': 'Trefft euch immer an einem öffentlichen Ort. ZeitMit fragt nie nach deiner Adresse.',
   'Agree on a place in the chat': 'Treffpunkt im Chat absprechen', 'Skip for now': 'Jetzt überspringen', 'Clear meeting place': 'Treffpunkt löschen',
   'Your own length': 'Eigene Dauer', 'Half-hour steps': 'In halben Stunden', 'Half an hour shorter': 'Eine halbe Stunde kürzer', 'Half an hour longer': 'Eine halbe Stunde länger',
-  'Choose 1 to 8 hours, in half-hour steps.': 'Wähle 1 bis 8 Stunden in Halbstundenschritten.', 'You don’t have a companion profile yet.': 'Du hast noch kein Profil als Begleitperson.',
+  'Choose 1 to 8 hours, in half-hour steps.': 'Wähle 1 bis 8 Stunden in Halbstundenschritten.',
+  // Private feedback after a meet-up
+  'How did it go?': 'Wie war’s?', 'Did you feel safe?': 'Hast du dich sicher gefühlt?', 'Yes': 'Ja', 'No': 'Nein', 'Not sure': 'Nicht sicher', 'What stood out?': 'Was ist dir aufgefallen?',
+  'Respectful': 'Respektvoll', 'Kept to boundaries': 'Hat Grenzen respektiert', 'On time': 'Pünktlich', 'Friendly': 'Freundlich',
+  'Pushy or rude': 'Aufdringlich oder unhöflich', 'Crossed boundaries': 'Grenzen überschritten', 'Asked for contact details': 'Nach Kontaktdaten gefragt',
+  'Wanted to meet outside ZeitMit': 'Wollte sich außerhalb von ZeitMit treffen', 'Made me uncomfortable': 'War mir unangenehm',
+  'Anything the team should know? (optional)': 'Sollte das Team noch etwas wissen? (optional)', 'Send to the safety team': 'An das Sicherheitsteam senden',
+  'Answer both questions to send it.': 'Beantworte beide Fragen, um es zu senden.', 'Thanks for telling us': 'Danke, dass du es uns sagst',
+  'It helps keep ZeitMit safe for everyone.': 'Das hilft, ZeitMit für alle sicher zu halten.', 'If you’re in danger right now, call 112.': 'Wenn du gerade in Gefahr bist, ruf 112 an.',
+  'Leave a public review': 'Öffentliche Bewertung schreiben',
+  'Tell us privately whether you felt safe. Only the safety team sees it.': 'Sag uns vertraulich, ob du dich sicher gefühlt hast. Nur das Sicherheitsteam sieht es.',
+  'Tell us privately whether you felt safe. Only the ZeitMit safety team sees your answer.': 'Sag uns vertraulich, ob du dich sicher gefühlt hast. Nur das ZeitMit-Sicherheitsteam sieht deine Antwort.',
+  'You can tell us how it went once you’ve met.': 'Du kannst uns erzählen, wie es war, sobald ihr euch getroffen habt.', 'Tell us whether you felt safe.': 'Sag uns, ob du dich sicher gefühlt hast.',
+  'Choose 1 to 5 stars.': 'Wähle 1 bis 5 Sterne.', '1 star': '1 Stern', '2 stars': '2 Sterne', '3 stars': '3 Sterne', '4 stars': '4 Sterne', '5 stars': '5 Sterne','You already told us how this one went. Thank you!': 'Du hast uns schon erzählt, wie es war. Danke!',
+  'That meet-up isn’t in your bookings any more.': 'Dieses Treffen ist nicht mehr in deinen Buchungen.', 'You don’t have a companion profile yet.': 'Du hast noch kein Profil als Begleitperson.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  [/^How did it go with (.+)\?$/, 'Wie war es mit $1?'],
+  [/^How respectful was (.+)\?$/, 'Wie respektvoll war $1?'],
+  [/^Private\. Only the ZeitMit safety team sees this, never (.+)\.$/, 'Privat. Nur das ZeitMit-Sicherheitsteam sieht das, nie $1.'],
+  [/^Our safety team will look into it and may contact you\. (.+) won’t see what you wrote\.$/, 'Unser Sicherheitsteam schaut sich das an und meldet sich eventuell bei dir. $1 sieht nicht, was du geschrieben hast.'],
+  [/^Report ([^\s.]+)$/, '$1 melden'],
+  [/^Review (.+) publicly$/, '$1 öffentlich bewerten'],
   [/^(\d+) photos$/, '$1 Fotos'],
   [/^Remove photo (\d+)$/, 'Foto $1 entfernen'],
   [/^(.+) · (.+) away$/, '$1 · $2 entfernt'],

@@ -31,6 +31,8 @@ export type Resched = { at: number; by: 'customer' | 'companion'; day: string; t
 export type Booking = {
   id: string; cid: string; companionName: string; hue: number; photoUrl?: string | null; creditUsed?: number; act: ActId; startsAt: number; day: string; time: string; full: string;
   dur: number; place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
+  /** You already told the safety team how this meet-up went. */
+  feedback?: boolean;
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system';
   resched?: Resched | null; reschedLeft?: number;
 };
@@ -43,13 +45,20 @@ export type Convo = {
 export type Notif = { id: string; icon: string; tone: Tone; title: string; body: string; go: string; read: number; created_at: number };
 export type CompBooking = {
   id: string; who: string; customerId: string; avatarUrl?: string | null; act: ActId; startsAt: number; day: string; time: string; full: string;
-  dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number;
+  dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number; feedback?: boolean;
   customer?: { bio: string; verified: boolean; since: number | null };
   resched?: Resched | null; reschedLeft?: number;
 };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem';
+  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback';
+
+/** Private answers after a meet-up: only the safety team sees them. `about` is the other person's user id. */
+export type Feedback = {
+  bid: string | null; name: string; about: string | null; side: 'customer' | 'companion';
+  safe: 'yes' | 'unsure' | 'no' | null; stars: number; tags: string[]; note: string; busy: boolean; sent: { concern: boolean } | null;
+};
+const EMPTY_FEEDBACK: Feedback = { bid: null, name: '', about: null, side: 'customer', safe: null, stars: 0, tags: [], note: '', busy: false, sent: null };
 export type SortKey = keyof typeof SORT;
 export type Prefs = {
   pushMessages: boolean; pushBookings: boolean; emailUpdates: boolean; marketing: boolean;
@@ -102,6 +111,7 @@ type State = {
   comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; gallery: number | null };
   edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
+  feedback: Feedback;
   reportReason: string | null;
   /** User the report / block sheet refers to. */
   reportTarget: string | null;
@@ -136,6 +146,9 @@ type Actions = {
   setF: (patch: Partial<Filters>) => void;
   clearAll: () => void;
   openSheet: (sheet: SheetKind, patch?: Partial<State>) => void;
+  /** Opens the private “How did it go?” sheet for a meet-up of yours (either side). */
+  openFeedback: (bookingId: string) => void;
+  submitFeedback: () => Promise<void>;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
@@ -240,6 +253,7 @@ export const useStore = create<State & Actions>()((set, get) => {
     comp: EMPTY_COMP,
     edit: null,
     review: { bid: null, stars: 5, text: '' },
+    feedback: EMPTY_FEEDBACK,
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
     cancel: { bid: null, side: 'customer', reason: null, busy: false },
@@ -462,6 +476,28 @@ export const useStore = create<State & Actions>()((set, get) => {
       get().showToast(`Booking cancelled. ${b?.who ?? 'Your customer'} gets ${eur(r.refunded / 100)} back.`);
       await get().loadCompanionSide();
       return true;
+    },
+    openFeedback: (bid) => {
+      const s = get();
+      const mine = s.bookings.find((b) => b.id === bid);
+      const theirs = s.comp.done.find((b) => b.id === bid);
+      if (!mine && !theirs) return get().showToast('That meet-up isn’t in your bookings any more.');
+      if ((mine ?? theirs)!.feedback) return get().showToast('You already told us how this one went. Thank you!');
+      set({
+        sheet: 'feedback',
+        feedback: mine
+          ? { ...EMPTY_FEEDBACK, bid, name: mine.companionName, about: mine.cid, side: 'customer' }
+          : { ...EMPTY_FEEDBACK, bid, name: theirs!.who.split(' ')[0], about: theirs!.customerId, side: 'companion' },
+      });
+    },
+    submitFeedback: async () => {
+      const f = get().feedback;
+      if (!f.bid || !f.safe || !f.stars || f.busy) return;
+      set({ feedback: { ...f, busy: true } });
+      const r = await attempt(() => api<{ concern: boolean }>('POST', `/bookings/${f.bid}/feedback`, { safe: f.safe, stars: f.stars, tags: f.tags, note: f.note }));
+      if (!r) return set((s) => ({ feedback: { ...s.feedback, busy: false } }));
+      const mark = <T extends { id: string; feedback?: boolean }>(list: T[]) => list.map((b) => (b.id === f.bid ? { ...b, feedback: true } : b));
+      set((s) => ({ feedback: { ...s.feedback, busy: false, sent: { concern: r.concern } }, bookings: mark(s.bookings), comp: { ...s.comp, done: mark(s.comp.done) } }));
     },
     submitReview: async () => {
       const { review } = get();

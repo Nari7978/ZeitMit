@@ -50,5 +50,9 @@ export const BOUNDARY_OPTIONS = ['Holding hands', 'Arm in arm', 'Hug hello', 'Co
 export const LANGUAGES = ['German', 'English', 'French', 'Spanish', 'Italian', 'Turkish', 'Japanese'];
 export const WINDOWS = ['am', 'pm', 'eve'] as const;
 export const SERVICE_FEE = 0.1;
+/** What stood out at a meet-up, for the private safety feedback (the app offers the same). */
+export const FEEDBACK_GOOD = ['Respectful', 'Kept to boundaries', 'On time', 'Friendly'];
+export const FEEDBACK_CONCERNS = ['Pushy or rude', 'Crossed boundaries', 'Asked for contact details', 'Wanted to meet outside ZeitMit', 'Made me uncomfortable'];
+
 /** Customers cancel for free until this many hours before the start. */
 export const FREE_CANCEL_HOURS = 24;
