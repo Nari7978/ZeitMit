@@ -6,7 +6,7 @@ import { colors, font } from '../theme';
 import { BTAB, notifWhen, ST, type BTab } from '../data';
 import { useStore } from '../store';
 import { api, wsUrl } from '../api';
-import { bookAgain, openCustomer, toBookings } from '../nav';
+import { bookAgain, goBack, openCustomer, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, Row, Stripes, Txt, TypingDots, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, useKeyboardShown, usePullRefresh } from '../ui/common';
@@ -104,7 +104,7 @@ export default function Chat() {
         {missing ? (
           <>
             <Txt size={16} weight={700} align="center">This chat isn’t available</Txt>
-            <PrimaryButton label="Back" height={46} radius={14} size={14} onPress={() => router.back()} style={{ alignSelf: 'stretch' }} />
+            <PrimaryButton label="Back" height={46} radius={14} size={14} onPress={() => goBack()} style={{ alignSelf: 'stretch' }} />
           </>
         ) : (
           <ActivityIndicator color={colors.ink} />
@@ -161,7 +161,7 @@ export default function Chat() {
   return (
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.cream }}>
       <Row style={{ paddingTop: insets.top + 4, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: colors.white, borderBottomWidth: 2, borderBottomColor: colors.ink, gap: 10 }}>
-        <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
+        <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
         <Pressable accessibilityRole="button" accessibilityLabel={t(`View ${name}’s profile`)} disabled={!isComp} onPress={() => openCustomer(x.customerId)} style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 40, height: 40, borderRadius: 14, overflow: 'hidden' }}><Photo hue={x.hue} url={x.photoUrl} /></View>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -208,7 +208,7 @@ export default function Chat() {
           ) : (
             <Enter key={m.id} style={{ flexDirection: 'row', justifyContent: m.me ? 'flex-end' : 'flex-start', opacity: m.pending ? 0.6 : 1 }}>
               <View style={{ maxWidth: '76%', paddingTop: 10, paddingHorizontal: 14, paddingBottom: 8, borderWidth: 1, borderColor: colors.ink, backgroundColor: m.me ? colors.ink : colors.white, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: m.me ? 20 : 6, borderBottomRightRadius: m.me ? 6 : 20 }}>
-                <Txt size={15} lh={1.4} color={m.me ? colors.white : colors.ink}>{m.t}</Txt>
+                <Txt raw size={15} lh={1.4} color={m.me ? colors.white : colors.ink}>{m.t}</Txt>
                 <Txt size={10.5} color={m.me ? 'rgba(255,255,255,.72)' : colors.gray500} align="right" style={{ marginTop: 3 }}>{timeOf(m.at)}</Txt>
               </View>
             </Enter>

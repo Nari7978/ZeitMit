@@ -42,7 +42,7 @@ export default function Requests() {
                 <Txt size={12} color={colors.gray600}>
                   {r.customer.verified ? 'ID verified' : 'ID not verified'}{r.customer.since ? ' · ' + memberSince(r.customer.since) : ''}
                 </Txt>
-                {r.customer.bio ? <Txt size={13} lh={1.45} color={colors.gray800} numberOfLines={4}>{r.customer.bio}</Txt> : null}
+                {r.customer.bio ? <Txt raw size={13} lh={1.45} color={colors.gray800} numberOfLines={4}>{r.customer.bio}</Txt> : null}
                 <TextButton label="View full profile" icon="user-round" size={13} weight={700} onPress={() => openCustomer(r.customerId)} style={{ alignSelf: 'flex-start', paddingVertical: 4 }} />
               </View>
             ) : null}
@@ -53,7 +53,7 @@ export default function Requests() {
             <Row style={{ gap: 6 }}><Icon name="map-pin" size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={r.place ? colors.ink : colors.gray600}>{placeOr(r.place)}</Txt></Row>
             {r.note ? (
               <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun }}>
-                <Txt size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>
+                <Txt raw size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>
               </View>
             ) : null}
             <Txt size={12} color={colors.gray600}>{eur(r.payout / 100)} already paid and held by ZeitMit · released when you enter their meet code</Txt>

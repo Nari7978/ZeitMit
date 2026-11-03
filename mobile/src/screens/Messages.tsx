@@ -5,6 +5,7 @@ import { useStore, type Convo } from '../store';
 import { openChat } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
+import { t } from '../i18n';
 import { StatusCover, usePullRefresh, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 
@@ -39,8 +40,9 @@ export function ConvoRow({ x }: { x: Convo }) {
           ) : null}
         </Row>
         <Row style={{ gap: 8 }}>
-          <Txt size={14} color={unread ? colors.ink : colors.gray600} numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
-            {x.last ? (x.last.me ? 'You: ' : '') + x.last.t : x.canSend ? 'Say hello and suggest a plan' : 'No messages'}
+          {/* The last message as written (never translated); only "You:" and the placeholders are. */}
+          <Txt raw size={14} color={unread ? colors.ink : colors.gray600} numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
+            {x.last ? (x.last.me ? t('You:') + ' ' : '') + x.last.t : t(x.canSend ? 'Say hello and suggest a plan' : 'No messages')}
           </Txt>
           {unread ? (
             <View style={{ minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 999, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>

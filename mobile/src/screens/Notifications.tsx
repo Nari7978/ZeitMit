@@ -1,10 +1,10 @@
 import { Pressable, ScrollView, View } from 'react-native';
-import { router } from 'expo-router';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { notifWhen, TONE } from '../data';
 import { useStore, type Notif } from '../store';
-import { followGo } from '../nav';
+import { followGo, goBack } from '../nav';
 import { Icon } from '../ui/Icon';
 import { H, Row, Txt } from '../ui/primitives';
 import { CircleButton, StatusCover, TextButton, usePullRefresh } from '../ui/common';
@@ -25,7 +25,7 @@ export default function Notifications() {
       <StatusCover color={colors.white} />
       <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ justifyContent: 'space-between', paddingTop: 4, paddingHorizontal: 12 }}>
-          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
+          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
           {hasUnread ? <TextButton label="Mark all read" onPress={() => useStore.getState().markAllRead()} style={{ padding: 8 }} /> : null}
         </Row>
         <H size={30} ls={-0.035} style={{ marginTop: 6, marginHorizontal: 20, marginBottom: 8 }}>Notifications</H>

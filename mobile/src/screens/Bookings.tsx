@@ -8,9 +8,12 @@ import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { EmptyState, Pill, PrimaryButton, StatusCover, TextButton, usePullRefresh, useTopPad } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
+import { useAppWidth } from '../ui/layout';
 import { ReschedBox } from '../ui/ReschedBox';
 
 const TABS: BTab[] = ['upcoming', 'pending', 'completed', 'cancelled'];
+// Short labels, so all four fit on small phones in English and German ("Abgeschlossen" didn't).
+const TAB_LABEL: Record<BTab, string> = { upcoming: 'Upcoming', pending: 'Pending', completed: 'Past', cancelled: 'Cancelled' };
 const EMPTY: Record<BTab, [string, string]> = {
   upcoming: ['No upcoming plans', 'Confirmed bookings appear here once a companion accepts.'],
   pending: ['No pending requests', 'Requests wait here until the companion responds.'],
@@ -23,6 +26,7 @@ export default function Bookings() {
   const refresh = usePullRefresh();
   const bottom = useNavBottom() + 90;
   const btab = useStore((s) => s.btab);
+  const narrow = useAppWidth() < 360;
   const bookings = useStore((s) => s.bookings);
   const list = bookings.filter((b) => b.status === BTAB[btab]);
 
@@ -32,7 +36,7 @@ export default function Bookings() {
       <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }}>
         <Enter>
           <View style={{ paddingTop: 8, paddingHorizontal: 20 }}><H size={30} ls={-0.035}>Bookings</H></View>
-          <View accessibilityRole="tablist" style={{ marginTop: 16, marginHorizontal: 20, marginBottom: 18, padding: 4, borderRadius: 14, backgroundColor: 'rgba(17,17,17,.1)', flexDirection: 'row', gap: 2 }}>
+          <View accessibilityRole="tablist" style={{ marginTop: 16, marginHorizontal: narrow ? 14 : 20, marginBottom: 18, padding: 4, borderRadius: 14, backgroundColor: 'rgba(17,17,17,.1)', flexDirection: 'row', gap: narrow ? 0 : 2 }}>
             {TABS.map((k) => {
               const n = bookings.filter((b) => b.status === BTAB[k]).length;
               const on = btab === k;
@@ -42,12 +46,13 @@ export default function Bookings() {
                   accessibilityRole="tab"
                   accessibilityState={{ selected: on }}
                   onPress={() => useStore.setState({ btab: k })}
-                  style={{ flex: 1, height: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                  style={{ flex: 1, height: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: narrow ? 2 : 4, paddingHorizontal: 2 }}
                 >
                   {/* Shown or hidden, never recoloured, so Android keeps the rounded corners (as in the tab bar). */}
                   <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 11, backgroundColor: colors.white, opacity: on ? 1 : 0, shadowColor: 'rgb(23,21,43)', shadowOpacity: 0.1, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } }} />
-                  <Txt size={12.5} weight={600} color={on ? colors.ink : colors.gray600} numberOfLines={1}>{k[0].toUpperCase() + k.slice(1)}</Txt>
-                  <Txt size={11} weight={600} color={on ? colors.ink : colors.gray600} style={{ opacity: 0.6 }}>{n}</Txt>
+                  {/* Small phones: a smaller label that also shrinks to fit, so it isn't cut off ("Upcomi…"). */}
+                  <Txt size={narrow ? 11 : 12.5} weight={600} color={on ? colors.ink : colors.gray600} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flexShrink: 1 }}>{TAB_LABEL[k]}</Txt>
+                  {n ? <Txt size={narrow ? 10 : 11} weight={600} color={on ? colors.ink : colors.gray600} style={{ opacity: 0.6 }}>{n}</Txt> : null}
                 </Pressable>
               );
             })}

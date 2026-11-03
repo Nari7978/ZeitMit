@@ -6,7 +6,7 @@ import { useFonts } from 'expo-font';
 import { DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold } from '@expo-google-fonts/bricolage-grotesque';
 import { colors } from '../theme';
-import { useStore } from '../store';
+import { msSinceRefresh, useStore } from '../store';
 import { Toast, useNavBottom } from '../ui/chrome';
 import { APP_MAX_WIDTH, useAppFrame } from '../ui/layout';
 import { SheetHost } from '../sheets/SheetHost';
@@ -24,22 +24,27 @@ export default function RootLayout() {
 
   const session = useStore((s) => s.session);
 
-  // Restore the saved session, then keep data fresh: on app resume and every 30s while open.
+  // Live: the API says the moment something changes for you (a request, a cancellation, a message), so screens update
+  // at once. After a reconnect, reload what may have been missed meanwhile.
+  const live = useLive(session === 'in' ? '/live' : null, (e) => {
+    if (e.type === 'changed') useStore.getState().onLive(String(e.go ?? ''));
+  }, () => {
+    if (msSinceRefresh() > 5000) void useStore.getState().refresh();
+  });
+
+  // Restore the saved session, then keep data fresh: on app resume, every 30 s while live updates are down, and every
+  // 5 minutes regardless (new companions and ratings aren't sent live).
   useEffect(() => {
     void useStore.getState().boot();
     const sub = AppState.addEventListener('change', (st) => {
       if (st === 'active' && useStore.getState().session === 'in') void useStore.getState().refresh();
     });
     const t = setInterval(() => {
-      if (AppState.currentState === 'active' && useStore.getState().session === 'in') void useStore.getState().refresh();
+      if (AppState.currentState !== 'active' || useStore.getState().session !== 'in') return;
+      if (!live.current || msSinceRefresh() > 5 * 60000) void useStore.getState().refresh();
     }, 30000);
     return () => { sub.remove(); clearInterval(t); };
-  }, []);
-
-  // Live: the API says the moment something changes for you (a request, a cancellation, a message), so screens update at once.
-  useLive(session === 'in' ? '/live' : null, (e) => {
-    if (e.type === 'changed') useStore.getState().onLive(String(e.go ?? ''));
-  });
+  }, [live]);
 
   // Push: register once signed in; follow taps on notifications once the screens exist
   // (a tap can arrive before the navigator is mounted when it opened the app).

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
@@ -8,10 +8,10 @@ import { fitAt, useSlots } from '../lib/slots';
 
 const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
 import { useStore } from '../store';
-import { toBookings } from '../nav';
+import { goBack, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Confetti, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { CircleButton, PrimaryButton, TextButton, useKeyboardShown, useTopPad } from '../ui/common';
+import { CircleButton, PrimaryButton, TextButton, Unavailable, useKeyboardShown, useTopPad } from '../ui/common';
 import { t } from '../i18n';
 
 type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; agree: boolean };
@@ -19,8 +19,9 @@ type Draft = { act: ActId | null; date: string | null; time: string | null; dur:
 export default function BookingFlow() {
   const params = useLocalSearchParams<{ cid: string; date?: string }>();
   const c = useStore((s) => s.byId[params.cid]);
+  const listLoaded = useStore((s) => !s.loading);
   // Open times update live while you book: someone else's booking or cancellation shows up at once.
-  const { slots: liveSlots, reload } = useSlots(params.cid);
+  const { slots: liveSlots, reload } = useSlots(c ? params.cid : undefined);
   const slots = liveSlots ?? [];
   const [busy, setBusy] = useState(false);
   const top = useTopPad();
@@ -57,7 +58,8 @@ export default function BookingFlow() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lost]);
-  if (!c) return null;
+  if (!c && listLoaded) return <Unavailable title="This companion isn’t available" body="They may have paused or removed their profile." />;
+  if (!c) return <View style={{ flex: 1, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.ink} /></View>;
 
   const sub = b.dur ? c.rate * b.dur : 0;
   const fee = Math.round(sub * 10) / 100;
@@ -83,8 +85,8 @@ export default function BookingFlow() {
         setBusy(false);
       });
   };
-  const back = () => (step > 1 ? setStep(step - 1) : router.back());
-  const close = () => router.back();
+  const back = () => (step > 1 ? setStep(step - 1) : goBack());
+  const close = () => goBack();
   const days = slots.map((s, i) => slotDay(s.date, i));
   const dayLabel = di >= 0 ? days[di].full : '—';
   const durLabel = b.dur ? hours(b.dur) : '—';

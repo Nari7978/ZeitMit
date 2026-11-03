@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Pressable, ScrollView, TextInput, View, type TextInputInstance } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useShallow } from 'zustand/react/shallow';
 import { colors, font } from '../theme';
 import { A, ageStr, eur, isDateCompanion, PREF, ratingStr, reviewsStr, SORT, WHEN } from '../data';
 import { filterCount, filtered, toggleIn, useStore, type Filters } from '../store';
@@ -26,7 +27,9 @@ export function activeChips(f: Filters): [string, Partial<Filters>][] {
 export default function Search() {
   const top = useTopPad();
   const bottom = useNavBottom() + 90;
-  const { city, query, f, sort, set, setF, clearAll, openSheet } = useStore();
+  // Only what this screen shows: reading the whole store would redraw it on every change anywhere in the app.
+  const { city, query, f, sort } = useStore(useShallow((s) => ({ city: s.city, query: s.query, f: s.f, sort: s.sort })));
+  const { set, setF, clearAll, openSheet } = useStore.getState();
   const inputRef = useRef<TextInputInstance>(null);
   const params = useLocalSearchParams<{ focus?: string }>();
 
@@ -41,7 +44,7 @@ export default function Search() {
   const list = useStore((s) => s.companions);
   const refresh = usePullRefresh();
   const loading = useStore((s) => s.loading);
-  const results = filtered(list, query, f, sort);
+  const results = useMemo(() => filtered(list, query, f, sort), [list, query, f, sort]);
   const count = filterCount(f);
   const chips = activeChips(f);
 

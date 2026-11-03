@@ -24,6 +24,8 @@ type TxtProps = TextProps & {
   lh?: number;
   align?: TextStyle['textAlign'];
   style?: StyleProp<TextStyle>;
+  /** What people wrote (messages, bios, reviews): shown exactly as written, never translated (“Yes” must not become “Ja”). */
+  raw?: boolean;
 };
 
 /** Translates plain-text children. Mixed text like "Hi {name}!" is translated as one sentence first. */
@@ -38,14 +40,14 @@ function translate(children: ReactNode): ReactNode {
   return children.map((c) => (typeof c === 'string' ? t(c) : c));
 }
 
-export function Txt({ size = 15, weight = 400, color = colors.ink, kind = 'body', ls, lh, align, style, children, ...rest }: TxtProps) {
+export function Txt({ size = 15, weight = 400, color = colors.ink, kind = 'body', ls, lh, align, style, raw, children, ...rest }: TxtProps) {
   useStore((s) => s.user?.language); // re-render when the language changes
   return (
     <Text
       // Large system font settings still enlarge text, up to the point where fixed-size tiles and buttons would clip it.
       maxFontSizeMultiplier={1.3}
       {...rest}
-      children={translate(children)}
+      children={raw ? children : translate(children)}
       style={[
         font(kind, weight),
         { fontSize: size, color },
@@ -161,13 +163,17 @@ export function Stripes({ hue, l = [0.885, 0.855], c = [0.04, 0.05], style }: { 
 
 export const stripeBase = (hue: number) => oklch(0.885, 0.04, hue);
 
-/** A person's photo, falling back to the striped placeholder until one is uploaded. */
+/**
+ * A person's photo, falling back to the striped placeholder until one is uploaded. Behind a real photo there's just
+ * the tint while it loads: drawing the striped pattern under every photo made screens with many cards slow.
+ */
 export function Photo({ hue, url, style }: { hue: number; url?: string | null; style?: StyleProp<ViewStyle> }) {
   const uri = photoUri(url);
+  if (!uri) return <Stripes hue={hue} style={style} />;
   return (
     <>
-      <Stripes hue={hue} style={style} />
-      {uri ? <Image source={{ uri }} resizeMode="cover" style={[StyleSheet.absoluteFill, style as object]} accessibilityIgnoresInvertColors /> : null}
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: stripeBase(hue) }, style]} />
+      <Image source={{ uri }} resizeMode="cover" style={[StyleSheet.absoluteFill, style as object]} accessibilityIgnoresInvertColors />
     </>
   );
 }
@@ -236,7 +242,7 @@ export function Chip({
       ]}
     >
       {icon ? <Icon name={icon} size={iconSize} /> : null}
-      <Txt size={size} weight={weight} numberOfLines={1}>{label}</Txt>
+      <Txt size={size} weight={weight} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={{ flexShrink: 1 }}>{label}</Txt>
     </Pressable>
   );
 }

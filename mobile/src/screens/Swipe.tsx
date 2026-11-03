@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { AM, ageStr, eur } from '../data';
 import { useStore } from '../store';
-import { openBooking } from '../nav';
+import { goBack, openBooking } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, useTopPad } from '../ui/common';
@@ -60,7 +60,7 @@ export default function Swipe() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <Row style={{ paddingTop: top, paddingHorizontal: 16, gap: 10 }}>
-        <CircleButton icon="x" label="Close" size={44} iconSize={20} onPress={() => router.back()} />
+        <CircleButton icon="x" label="Close" size={44} iconSize={20} onPress={() => goBack()} />
         <H size={24} ls={-0.03} style={{ flex: 1 }}>Swipe mode</H>
         {cur ? (
           <View style={{ height: 32, paddingHorizontal: 12, borderRadius: 999, backgroundColor: colors.ink, justifyContent: 'center' }}>
@@ -93,7 +93,7 @@ export default function Swipe() {
                       <H size={28} ls={-0.03} numberOfLines={1} style={{ flexShrink: 1 }}>{cur.name}{ageStr(cur)}</H>
                       <Txt size={13}><Txt size={18} weight={700}>{eur(cur.rate)}</Txt>/h</Txt>
                     </Row>
-                    <Txt size={14} color={colors.gray800}>{cur.tagline}</Txt>
+                    <Txt raw size={14} color={colors.gray800}>{cur.tagline}</Txt>
                     <Row style={{ gap: 6, flexWrap: 'wrap' }}>
                       {cur.acts.slice(0, 3).map((a) => (
                         <View key={a} style={{ height: 26, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.butter, borderWidth: 1.5, borderColor: colors.ink, justifyContent: 'center' }}>
@@ -136,11 +136,11 @@ export default function Swipe() {
           <H size={30} ls={-0.03} align="center">{C.length ? 'That’s everyone for now' : 'No companions yet'}</H>
           <Txt size={15} color={colors.gray800} align="center">{C.length ? 'New companions join Berlin every week.' : 'We’re reviewing the first profiles now. Check back soon.'}</Txt>
           {!C.length ? (
-            <PressBox shadow={4} fx="push" onPress={() => router.back()} style={[endBtn, { marginTop: 10 }]}><Txt size={15} weight={700}>Back to Discover</Txt></PressBox>
+            <PressBox shadow={4} fx="push" onPress={() => goBack()} style={[endBtn, { marginTop: 10 }]}><Txt size={15} weight={700}>Back to Discover</Txt></PressBox>
           ) : (
           <Row style={{ gap: 10, marginTop: 10 }}>
             <PressBox shadow={4} fx="push" onPress={() => setI(0)} style={endBtn}><Txt size={15} weight={700}>Start again</Txt></PressBox>
-            <PressBox shadow={4} fx="push" onPress={() => { router.back(); useStore.getState().openSheet('saved'); }} style={[endBtn, { backgroundColor: colors.ink }]}>
+            <PressBox shadow={4} fx="push" onPress={() => { goBack(); useStore.getState().openSheet('saved'); }} style={[endBtn, { backgroundColor: colors.ink }]}>
               <Txt size={15} weight={700} color={colors.white}>See who I liked</Txt>
             </PressBox>
           </Row>

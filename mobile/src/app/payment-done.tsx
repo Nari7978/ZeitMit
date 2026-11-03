@@ -4,6 +4,7 @@
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '../nav';
 import { colors } from '../theme';
 import { api } from '../api';
 import { useStore } from '../store';
@@ -14,7 +15,7 @@ export default function PaymentDone() {
 
   useEffect(() => {
     if (router.canGoBack()) {
-      router.back();
+      goBack();
       return;
     }
     void (async () => {

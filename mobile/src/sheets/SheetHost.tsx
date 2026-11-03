@@ -1,14 +1,15 @@
 // Bottom sheets (filters, sort, gift, safety, meet code, …) rendered above every screen.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { router } from 'expo-router';
+
+import { useShallow } from 'zustand/react/shallow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, LANGS, PREF, SORT, WHEN } from '../data';
 import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
-import { openProfile } from '../nav';
+import { goBack, openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useKeyboardTop } from '../ui/common';
@@ -124,8 +125,9 @@ const Grid = ({ children, cols = 2 }: { children: ReactNode; cols?: number }) =>
 const Opt = ({ label, on, onPress, h = 42 }: { label: string; on: boolean; onPress: () => void; h?: number }) => <Chip label={label} on={on} onPress={onPress} height={h} radius={12} weight={600} />;
 
 function FilterSheet() {
-  const { f, setF, clearAll, query, sort, closeSheet, companions } = useStore();
-  const n = filtered(companions, query, f, sort).length;
+  const { f, query, sort, companions } = useStore(useShallow((s) => ({ f: s.f, query: s.query, sort: s.sort, companions: s.companions })));
+  const { setF, clearAll, closeSheet } = useStore.getState();
+  const n = useMemo(() => filtered(companions, query, f, sort).length, [companions, query, f, sort]);
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1 }}>
@@ -249,14 +251,14 @@ function ChatMenuSheet() {
       {cust ? (
         <MenuRow icon="user-round" label="View profile" onPress={() => {
           closeSheet();
-          router.back();
+          goBack();
           openProfile(cust.cid);
         }} />
       ) : null}
       <MenuRow icon="flag" label="Report" onPress={() => openSheet('report', { reportReason: null, reportTarget: other ?? null })} />
       <MenuRow icon="ban" label="Block" color={colors.red} last onPress={() => {
         if (!other) return;
-        void block(other).then((ok) => { if (ok) { closeSheet(); router.back(); } });
+        void block(other).then((ok) => { if (ok) { closeSheet(); goBack(); } });
       }} />
     </Pad>
   );

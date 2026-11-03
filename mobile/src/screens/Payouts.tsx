@@ -2,7 +2,8 @@
 // ZeitMit sends each payout by bank transfer and marks it as paid; see backend/src/routes/payouts.ts.
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, ScrollView, TextInput, View } from 'react-native';
-import { router } from 'expo-router';
+
+import { goBack } from '../nav';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { eur, whenShort } from '../data';
@@ -74,7 +75,7 @@ export default function Payouts() {
       <StatusCover color={colors.sun} />
       <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" refreshControl={refresh} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ paddingTop: 4, paddingHorizontal: 12 }}>
-          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
+          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
         </Row>
         <H size={30} ls={-0.035} style={{ marginTop: 6, marginHorizontal: 20, marginBottom: 16 }}>Payouts</H>
         <View style={{ paddingHorizontal: 20, gap: 14 }}>
@@ -214,7 +215,7 @@ function PayoutRow({ p, last }: { p: Payout; last: boolean }) {
         {p.status === 'paid' && p.decidedAt ? `Sent ${whenShort(p.decidedAt)} to ${p.ibanMasked}` : `Requested ${whenShort(p.createdAt)} · ${p.ibanMasked}`}
       </Txt>
       {p.reference ? <Txt size={12} color={colors.gray600}>Reference: {p.reference}</Txt> : null}
-      {p.note ? <Txt size={12} lh={1.45} color="#D9435F">{p.note}</Txt> : null}
+      {p.note ? <Txt raw size={12} lh={1.45} color="#D9435F">{p.note}</Txt> : null}
     </View>
   );
 }

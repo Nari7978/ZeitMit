@@ -66,7 +66,7 @@ export default function Calendar() {
               ['calendar-x', 'Cancel…', () => openSheet('cancel', { cancel: { bid: u.id, side: 'companion', reason: null, busy: false } })],
             ] as const).map(([, label, fn]) => (
               <Pressable key={label} accessibilityRole="button" accessibilityLabel={t(label)} onPress={fn} style={{ flex: 1, minWidth: 0, height: 40, paddingHorizontal: 4, borderRadius: 12, borderWidth: 1, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
-                <Txt size={13} weight={600} numberOfLines={1}>{label}</Txt>
+                <Txt size={13} weight={600} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{label}</Txt>
               </Pressable>
             ))}
           </Row>

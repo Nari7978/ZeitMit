@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { AM, ageStr, eur, LEVEL, NO, ratingStr, reviewsStr, slotDay, type Companion } from '../data';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { useStore } from '../store';
-import { canMessage, messageCompanion, openBooking } from '../nav';
+import { canMessage, goBack, messageCompanion, openBooking } from '../nav';
 import { useSlots, type DaySlots } from '../lib/slots';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
-import { CircleButton, SaveButton, SecondaryButton, usePullRefresh, useTopPad } from '../ui/common';
-import { locale, t } from '../i18n';
+import { CircleButton, SaveButton, SecondaryButton, Unavailable, usePullRefresh, useTopPad } from '../ui/common';
+import { getLang, locale, t } from '../i18n';
 import { useAppWidth } from '../ui/layout';
 
 /** About 4:5 like the uploaded photos, but at most ~60% of the screen's height (tablets turned sideways). */
@@ -79,23 +79,31 @@ export default function Profile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const listed = useStore((s) => s.byId[id]);
   const [detail, setDetail] = useState<Detail | null>(null);
+  // Paused, removed or never existed (an old link): the API says 404.
+  const [missing, setMissing] = useState(false);
   const loadDetail = useCallback(
-    () => api<Detail>('GET', `/companions/${id}`).then(setDetail).catch((e) => useStore.getState().showToast(e.message)),
+    () => api<Detail>('GET', `/companions/${id}`).then((d) => { setDetail(d); setMissing(false); }).catch((e) => {
+      if (e instanceof ApiError && e.status === 404) setMissing(true);
+      else useStore.getState().showToast(e.message);
+    }),
     [id],
   );
   useEffect(() => { void loadDetail(); }, [loadDetail]);
-  const { slots: liveSlots, reload: reloadSlots } = useSlots(id);
+  const { slots: liveSlots, reload: reloadSlots } = useSlots(missing ? undefined : id);
   const refresh = usePullRefresh(() => Promise.all([loadDetail(), reloadSlots()]));
-  const c: Companion | undefined = detail ?? listed;
+  const c: Companion | undefined = missing ? undefined : detail ?? listed;
   const insets = useSafeAreaInsets();
   const top = useTopPad();
   const [scrolled, setScrolled] = useState(false);
   const [allReviews, setAllReviews] = useState(false);
   const chatOpen = useStore((s) => canMessage(id, s));
   const photoH = usePhotoHeight();
-  const narrow = useAppWidth() < 360; // small phones: the Message button shows just its icon
+  // Small phones (and German, whose labels are longer, below 400 px): the Message button shows just its icon.
+  const appWidth = useAppWidth();
+  const narrow = appWidth < 360 || (getLang() === 'de' && appWidth < 400);
   const { showToast, openSheet } = useStore.getState();
-  if (!c) return null;
+  if (missing) return <Unavailable bg={colors.white} title="This companion isn’t available" body="They may have paused or removed their profile." />;
+  if (!c) return <View style={{ flex: 1, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.ink} /></View>;
 
   const reviews = detail?.reviewList ?? [];
   const slots = liveSlots ?? detail?.slots ?? [];
@@ -137,7 +145,7 @@ export default function Profile() {
               </Row>
             )}
           </Row>
-          <Txt size={16} lh={1.4} color={colors.gray800} style={{ marginTop: 8 }}>{c.tagline}</Txt>
+          <Txt raw size={16} lh={1.4} color={colors.gray800} style={{ marginTop: 8 }}>{c.tagline}</Txt>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, columnGap: 16, marginTop: 14 }}>
             <Row style={{ gap: 5 }}>
               <Icon name="map-pin" size={15} color={colors.gray600} />
@@ -148,7 +156,7 @@ export default function Profile() {
           <View style={{ height: 1, backgroundColor: colors.ink, marginVertical: 22 }} />
 
           <Section title="About" first />
-          <Txt size={15} lh={1.6} color={colors.gray900} align="justify">{c.bio}</Txt>
+          <Txt raw size={15} lh={1.6} color={colors.gray900} align="justify">{c.bio}</Txt>
 
           <Section title="Interests" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -238,7 +246,7 @@ export default function Profile() {
                   <Txt size={12} color={colors.gray600}>{new Intl.DateTimeFormat(locale(), { month: 'short', year: 'numeric' }).format(new Date(r.created_at * 1000))} · {r.a} · Verified booking</Txt>
                 </View>
               </Row>
-              <Txt size={14} lh={1.55} color={colors.gray900}>{r.t}</Txt>
+              <Txt raw size={14} lh={1.55} color={colors.gray900}>{r.t}</Txt>
             </View>
           ))}
           {reviews.length > 2 && !allReviews ? (
@@ -260,7 +268,7 @@ export default function Profile() {
 
       {/* Floating top buttons */}
       <Row style={{ position: 'absolute', top, left: 16, right: 16, justifyContent: 'space-between' }}>
-        <CircleButton icon="chevron-left" label="Back" iconSize={22} border={1} bg={btnBg} borderColor={btnBd} onPress={() => router.back()} />
+        <CircleButton icon="chevron-left" label="Back" iconSize={22} border={1} bg={btnBg} borderColor={btnBd} onPress={() => goBack()} />
         <Row style={{ gap: 8 }}>
           <CircleButton icon="share" label="Share" iconSize={18} border={1} bg={btnBg} borderColor={btnBd} onPress={() => showToast('Profile link copied')} />
           <SaveButton id={c.id} variant="profile" scrolled={scrolled} size={42} iconSize={19} />
@@ -271,7 +279,7 @@ export default function Profile() {
       <Row style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 14, paddingHorizontal: 20, paddingBottom: Math.max(30, insets.bottom + 8), backgroundColor: 'rgba(255,255,255,.96)', borderTopWidth: 2, borderTopColor: colors.ink, gap: 10 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Txt size={14} color={colors.gray600} numberOfLines={1}><H size={23} weight={700} ls={-0.02}>{eur(c.rate)}</H>/h</Txt>
-          <Txt size={12} color={colors.gray600} numberOfLines={1}>+10% fee</Txt>
+          <Txt size={12} color={colors.gray600} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>+10% fee</Txt>
         </View>
         <SecondaryButton label={narrow ? '' : 'Message'} accessibilityLabel={t('Message')} icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
         <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>

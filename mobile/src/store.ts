@@ -1,6 +1,6 @@
 // App state backed by the ZeitMit API. Navigation (which screen is open) lives in Expo Router;
 // everything else lives here. Actions show a toast and return false when a request fails.
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import { api, ApiError, setUnauthorizedHandler, tokenStore } from './api';
 import { pickAndUpload } from './lib/photos';
 import { askLocation, currentLocation } from './lib/location';
@@ -138,7 +138,8 @@ type Actions = {
   verifyCode: (email: string, code: string) => Promise<{ ok: boolean; isNew?: boolean }>;
   finishSignup: (name: string) => Promise<boolean>;
   logout: () => Promise<void>;
-  refresh: () => Promise<void>;
+  /** Reloads everything (`skipMe`: the profile was just loaded). */
+  refresh: (opts?: { skipMe?: boolean }) => Promise<void>;
   /** Live "something changed for you" from the API (`go` as in notifications): reloads what it touches. */
   onLive: (go: string) => void;
   loadCompanionSide: () => Promise<void>;
@@ -201,6 +202,34 @@ const msg = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.mes
 // Live updates come in bursts (a booking notifies several things at once): reload once for the lot.
 let liveTimer: ReturnType<typeof setTimeout> | undefined;
 let liveFull = false;
+let refreshedAt = 0;
+/** How long ago everything was last reloaded from the API (the app polls only as a fallback to live updates). */
+export const msSinceRefresh = () => Date.now() - refreshedAt;
+
+/** The current value when fresh data from the API is the same, so screens showing it don't redraw. */
+const keep = <T,>(cur: T, fresh: T): T => (cur === fresh || JSON.stringify(cur) === JSON.stringify(fresh) ? cur : fresh);
+/** `keep` for each property: the parts that didn't change (and the whole object, if nothing did) stay the same. */
+const keepEach = <T extends object>(cur: T, fresh: T): T => {
+  const c = cur as Record<string, unknown>; const f = fresh as Record<string, unknown>; const out: Record<string, unknown> = {};
+  let changed = Object.keys(c).length !== Object.keys(f).length;
+  for (const k of Object.keys(f)) { out[k] = keep(c[k], f[k]); if (out[k] !== c[k]) changed = true; }
+  return changed ? (out as T) : cur;
+};
+
+/**
+ * Drops updates that change nothing (every value is already the same). Zustand tells every screen about any update,
+ * and those that read several values redraw even when nothing they show changed (e.g. closing a sheet that was closed).
+ */
+const skipNoop = <T extends object>(creator: StateCreator<T>): StateCreator<T> => (set, get, api) => {
+  const guarded = ((partial: unknown, replace?: boolean) => {
+    const cur = get() as Record<string, unknown>;
+    const next = (typeof partial === 'function' ? (partial as (s: T) => unknown)(cur as T) : partial) as Record<string, unknown> | null;
+    if (!replace && next && Object.keys(next).every((k) => Object.is(next[k], cur[k]))) return;
+    (set as (p: unknown, r?: boolean) => void)(next, replace);
+  }) as typeof set;
+  api.setState = guarded;
+  return creator(guarded, get, api);
+};
 
 type MeResponse = {
   id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null;
@@ -211,7 +240,7 @@ type MeResponse = {
 /** Draft for the "Personal details" sheet. */
 export type ProfileEdit = { name: string; bio: string; gender: Gender | null; age: string; languages: string[]; interests: string[] };
 
-export const useStore = create<State & Actions>()((set, get) => {
+export const useStore = create<State & Actions>()(skipNoop((set, get) => {
   /** Runs a request, toasting the error on failure. */
   async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
     try {
@@ -231,15 +260,15 @@ export const useStore = create<State & Actions>()((set, get) => {
     if (f === EMPTY_FILTERS && me.prefs && (me.prefs.discoveryPref !== 'any' || me.prefs.discoveryMaxRate < 60)) {
       set({ f: { ...EMPTY_FILTERS, pref: me.prefs.discoveryPref, max: me.prefs.discoveryMaxRate } });
     }
-    set({
-      user: {
+    set((s) => ({
+      user: keep(s.user, {
         id: me.id, email: me.email, name: me.name, first: (me.name || me.email.split('@')[0]).split(' ')[0], bio: me.bio, ageConfirmed: !!me.age_confirmed,
         createdAt: me.created_at, avatarUrl: me.avatarUrl, credit: me.credit, prefs: me.prefs, language: me.language, idStatus: me.idStatus ?? 'none', idNote: me.idNote ?? null,
         gender: me.gender ?? null, age: me.age ?? null, languages: me.languages ?? [], interests: me.interests ?? [],
-      },
+      }),
       companionStatus: me.companionStatus,
-      saved: me.saved,
-    });
+      saved: keep(s.saved, me.saved),
+    }));
   };
 
   return {
@@ -278,7 +307,7 @@ export const useStore = create<State & Actions>()((set, get) => {
       try {
         applyMe(await api<MeResponse>('GET', '/me'));
         set({ session: 'in' });
-        await get().refresh();
+        await get().refresh({ skipMe: true });
       } catch (e) {
         // Offline: keep the session and let the screens retry; expired: log out.
         if (e instanceof ApiError && e.status === 401) await get().logout();
@@ -318,22 +347,31 @@ export const useStore = create<State & Actions>()((set, get) => {
       set({ session: 'out', user: null, bookings: [], convos: [], compConvos: [], notifs: [], saved: [], comp: EMPTY_COMP, companionStatus: 'none', checkin: null, sheet: null });
     },
 
-    refresh: async () => {
+    refresh: async (opts) => {
+      refreshedAt = Date.now();
+      // Everything at once: the companion side too when we already know they have one.
+      const side = get().companionStatus !== 'none' ? get().loadCompanionSide() : null;
+      void get().loadCheckin();
       const [list, me, bookings, convos, notifs] = await Promise.allSettled([
         api<Companion[]>('GET', '/companions'),
-        api<MeResponse>('GET', '/me'),
+        opts?.skipMe ? Promise.resolve(null) : api<MeResponse>('GET', '/me'),
         api<Booking[]>('GET', '/bookings'),
         api<Convo[]>('GET', '/conversations'),
         api<Notif[]>('GET', '/me/notifications'),
       ]);
-      if (list.status === 'fulfilled') set({ companions: list.value, byId: Object.fromEntries(list.value.map((c) => [c.id, c])), loading: false });
-      else if (get().loading) get().showToast(msg(list.reason));
-      if (me.status === 'fulfilled') applyMe(me.value);
-      if (bookings.status === 'fulfilled') set({ bookings: bookings.value });
-      if (convos.status === 'fulfilled') set({ convos: convos.value });
-      if (notifs.status === 'fulfilled') set({ notifs: notifs.value });
-      void get().loadCheckin();
-      if (get().companionStatus !== 'none') await get().loadCompanionSide();
+      if (list.status === 'fulfilled') {
+        const companions = keep(get().companions, list.value);
+        set({ companions, byId: companions === get().companions ? get().byId : Object.fromEntries(companions.map((c) => [c.id, c])), loading: false });
+      } else if (get().loading) get().showToast(msg(list.reason));
+      if (me.status === 'fulfilled' && me.value) applyMe(me.value);
+      set((s) => ({
+        bookings: bookings.status === 'fulfilled' ? keep(s.bookings, bookings.value) : s.bookings,
+        convos: convos.status === 'fulfilled' ? keep(s.convos, convos.value) : s.convos,
+        notifs: notifs.status === 'fulfilled' ? keep(s.notifs, notifs.value) : s.notifs,
+      }));
+      await side;
+      // Just became a companion (e.g. applied on another phone): load that side now.
+      if (!side && get().companionStatus !== 'none') await get().loadCompanionSide();
     },
     onLive: (go) => {
       // A new message only touches the inboxes; everything else may change bookings, earnings or the profile.
@@ -345,9 +383,9 @@ export const useStore = create<State & Actions>()((set, get) => {
         if (get().session !== 'in') return;
         if (full) return void get().refresh();
         void Promise.allSettled([
-          api<Convo[]>('GET', '/conversations').then((convos) => set({ convos })),
-          api<Notif[]>('GET', '/me/notifications').then((notifs) => set({ notifs })),
-          get().companionStatus !== 'none' ? api<Convo[]>('GET', '/conversations?side=companion').then((compConvos) => set({ compConvos })) : null,
+          api<Convo[]>('GET', '/conversations').then((convos) => set((s) => ({ convos: keep(s.convos, convos) }))),
+          api<Notif[]>('GET', '/me/notifications').then((notifs) => set((s) => ({ notifs: keep(s.notifs, notifs) }))),
+          get().companionStatus !== 'none' ? api<Convo[]>('GET', '/conversations?side=companion').then((compConvos) => set((s) => ({ compConvos: keep(s.compConvos, compConvos) }))) : null,
         ]);
       }, 400);
     },
@@ -358,12 +396,12 @@ export const useStore = create<State & Actions>()((set, get) => {
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
-        comp: {
+        comp: keepEach(s.comp, {
           ...s.comp,
           ...(bk.status === 'fulfilled' ? bk.value : {}),
           ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, gallery: profile.value.gallery?.length ?? 0 } : {}),
-        },
-        compConvos: convos.status === 'fulfilled' ? convos.value : s.compConvos,
+        }),
+        compConvos: convos.status === 'fulfilled' ? keep(s.compConvos, convos.value) : s.compConvos,
       }));
     },
 
@@ -637,7 +675,7 @@ export const useStore = create<State & Actions>()((set, get) => {
     loadCheckin: async () => {
       const ck = await api<Checkin | null>('GET', '/safety/checkins/active').catch(() => undefined);
       if (ck === undefined) return;
-      set({ checkin: ck });
+      set((s) => ({ checkin: keep(s.checkin, ck) }));
       if (ck?.share) void get().sendLocation();
     },
     /** Records the SOS for the ZeitMit team (never blocks: the WhatsApp alert opens either way). */
@@ -728,7 +766,7 @@ export const useStore = create<State & Actions>()((set, get) => {
       api('PATCH', '/me', { pushToken: token }).catch(() => {});
     },
   };
-});
+}));
 
 // ---- derived selectors ----
 

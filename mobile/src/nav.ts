@@ -3,6 +3,12 @@ import { router } from 'expo-router';
 import type { BTab } from './data';
 import { useStore, type Filters } from './store';
 
+/** Back to the previous screen, or to the start when there's none (a screen opened straight from a link). */
+export function goBack() {
+  if (router.canGoBack()) router.back();
+  else router.replace('/');
+}
+
 export function openProfile(id: string) {
   useStore.getState().closeSheet();
   router.push({ pathname: '/profile/[id]', params: { id } });

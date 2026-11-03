@@ -1,19 +1,20 @@
 // Picking a new time for a booking, from either side. The companion's open times update live; times that are too
 // short for the booking are crossed out. A request the companion hasn't answered is moved straight away; otherwise
 // the other side gets the suggestion to accept or decline.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { goBack } from '../nav';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { AM, hours, slotDay, type ActId, type BookingStatus } from '../data';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { useStore, type Resched } from '../store';
 import { fitAt, type DaySlots } from '../lib/slots';
 import { useLive } from '../lib/live';
 import { Icon } from '../ui/Icon';
 import { Box, Row, Txt } from '../ui/primitives';
-import { CircleButton, PrimaryButton, useTopPad } from '../ui/common';
+import { CircleButton, PrimaryButton, Unavailable, useTopPad } from '../ui/common';
 import { StepTitle } from './BookingFlow';
 
 const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
@@ -31,19 +32,31 @@ export default function Reschedule() {
   const [d, setD] = useState<Data | null>(null);
   const [pick, setPick] = useState<{ date: string | null; time: string | null }>({ date: null, time: null });
   const [busy, setBusy] = useState(false);
+  // Why it couldn't load: the API's answer (the booking is gone or can't move), or no connection.
+  const [failed, setFailed] = useState<{ message: string; offline: boolean } | null>(null);
+  const loaded = useRef(false);
   const { showToast } = useStore.getState();
 
   const load = useCallback(async () => {
     try {
       setD(await api<Data>('GET', `/bookings/${id}/reschedule`));
+      loaded.current = true;
+      setFailed(null);
     } catch (e) {
-      showToast((e as Error).message);
+      // Already showing the times: just say what went wrong. Nothing to show yet: a screen that explains it.
+      if (loaded.current) showToast((e as Error).message);
+      else setFailed({ message: (e as Error).message, offline: !(e instanceof ApiError) });
     }
   }, [id, showToast]);
   useEffect(() => { void load(); }, [load]);
   // Someone books or cancels meanwhile: reload (this view leaves the booking's own time out, so it can't use the pushed list).
   useLive(d ? `/live/slots/${d.cid}` : null, (e) => { if (e.type === 'slots') void load(); }, () => void load());
 
+  if (!d && failed) {
+    return failed.offline
+      ? <Unavailable title="Couldn’t load this booking" body="Check your connection and try again." onRetry={() => { setFailed(null); void load(); }} />
+      : <Unavailable title="This booking can’t be changed" body={failed.message} />;
+  }
   if (!d) return <View style={{ flex: 1, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.ink} /></View>;
 
   const days = d.slots.map((s, i) => slotDay(s.date, i));
@@ -68,7 +81,7 @@ export default function Reschedule() {
       const r = await api<{ moved: boolean; full: string }>('POST', `/bookings/${d.id}/reschedule`, { date: pick.date, time: pick.time });
       showToast(r.moved ? `Request moved to ${r.full}.` : `Suggested ${r.full}. We’ll let you know when ${d.other} answers.`);
       void useStore.getState().refresh();
-      router.back();
+      goBack();
     } catch (e) {
       showToast((e as Error).message);
       setPick((p) => ({ ...p, time: null }));
@@ -81,7 +94,7 @@ export default function Reschedule() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <Row style={{ paddingTop: top, paddingHorizontal: 16, gap: 10 }}>
-        <CircleButton icon="x" label="Close" iconSize={19} onPress={() => router.back()} />
+        <CircleButton icon="x" label="Close" iconSize={19} onPress={() => goBack()} />
         <Txt size={16} weight={700} style={{ flex: 1 }}>{d.side === 'customer' ? 'Change time' : 'Suggest another time'}</Txt>
       </Row>
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, paddingTop: 18 }}>

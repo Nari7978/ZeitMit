@@ -1,11 +1,54 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, Keyboard, Platform, Pressable, RefreshControl, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { goBack } from '../nav';
 import { colors, type Weight } from '../theme';
 import { useStore } from '../store';
 import { Icon } from './Icon';
-import { HeartGlyph, PressBox, Txt, Row } from './primitives';
+import { H, HeartGlyph, PressBox, Txt, Row } from './primitives';
 import { t } from '../i18n';
+
+/** Instead of a screen that needs your profile while it couldn't be loaded (e.g. the app started without internet). */
+export function NotLoaded() {
+  const [busy, setBusy] = useState(false);
+  const retry = async () => {
+    setBusy(true);
+    await useStore.getState().refresh().catch(() => {});
+    setBusy(false);
+  };
+  return (
+    <View style={{ alignItems: 'center', gap: 8, paddingVertical: 28, paddingHorizontal: 12 }}>
+      <Icon name="wifi-off" size={28} color={colors.gray600} />
+      <Txt size={16} weight={700} align="center">Couldn’t load your details</Txt>
+      <Txt size={13} lh={1.5} color={colors.gray600} align="center">Check your connection and try again.</Txt>
+      <SecondaryButton label={busy ? 'Loading…' : 'Try again'} icon="rotate-ccw" style={{ marginTop: 8, alignSelf: 'stretch' }} onPress={() => void retry()} />
+    </View>
+  );
+}
+
+/**
+ * A whole screen for something that isn't there (any more): a removed companion, a booking that can't be changed,
+ * an old link. Says what happened and always has a way back. `onRetry` adds "Try again" for connection problems.
+ */
+export function Unavailable({ title, body, bg = colors.sun, onRetry }: { title: string; body?: string; bg?: string; onRetry?: () => void }) {
+  const insets = useSafeAreaInsets();
+  const back = goBack;
+  return (
+    <View style={{ flex: 1, backgroundColor: bg, paddingTop: insets.top + 8, paddingHorizontal: 12 }}>
+      <StatusCover color={bg} />
+      <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={back} />
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 72 + insets.bottom }}>
+        <View style={{ width: 80, height: 80, marginBottom: 10, borderRadius: 26, backgroundColor: colors.white, borderWidth: 2.5, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name={onRetry ? 'wifi-off' : 'search-x'} size={34} />
+        </View>
+        <H size={24} ls={-0.03} align="center">{title}</H>
+        {body ? <Txt size={14} lh={1.5} color={colors.gray800} align="center">{body}</Txt> : null}
+        {onRetry ? <PrimaryButton label="Try again" icon="rotate-ccw" style={{ marginTop: 14, alignSelf: 'stretch' }} onPress={onRetry} /> : null}
+        <SecondaryButton label="Back" style={{ marginTop: onRetry ? 4 : 14, alignSelf: 'stretch' }} onPress={back} />
+      </View>
+    </View>
+  );
+}
 
 /** Fixed strip behind the status bar so scrolled content doesn't show through it. */
 export function StatusCover({ color }: { color: string }) {

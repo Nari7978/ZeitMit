@@ -2,15 +2,16 @@
 // meeting, never the email, phone or ID documents.
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { AM, hours, memberSince, ST, type ActId, type BookingStatus, type Gender } from '../data';
 import { api } from '../api';
 import { hueOf, useStore } from '../store';
-import { openBookingChat } from '../nav';
+import { goBack, openBookingChat } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, H, Row, Txt } from '../ui/primitives';
+import { t } from '../i18n';
 import { CircleButton, Pill, PrimaryButton, SecondaryButton, StatusCover, usePullRefresh } from '../ui/common';
 import { GENDERS } from './Become';
 import { Initial } from './companion/Shell';
@@ -42,7 +43,7 @@ export default function CustomerProfile() {
         {error ? (
           <>
             <Txt size={16} weight={700} align="center">{error}</Txt>
-            <PrimaryButton label="Back" height={46} radius={14} size={14} onPress={() => router.back()} style={{ alignSelf: 'stretch' }} />
+            <PrimaryButton label="Back" height={46} radius={14} size={14} onPress={() => goBack()} style={{ alignSelf: 'stretch' }} />
           </>
         ) : <ActivityIndicator color={colors.ink} />}
       </View>
@@ -58,7 +59,7 @@ export default function CustomerProfile() {
       <StatusCover color={colors.sun} />
       <ScrollView showsVerticalScrollIndicator={false} refreshControl={refresh} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ paddingTop: 4, paddingHorizontal: 12 }}>
-          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
+          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
         </Row>
         <View style={{ alignItems: 'center', gap: 6, paddingHorizontal: 20, marginTop: 4 }}>
           <Box shadow={4} style={{ borderRadius: 32, borderWidth: 2, borderColor: colors.ink, overflow: 'hidden' }}>
@@ -74,7 +75,7 @@ export default function CustomerProfile() {
 
         <View style={{ paddingHorizontal: 20, gap: 14, marginTop: 22 }}>
           <Card title="About">
-            <Txt size={15} lh={1.55} color={p.bio ? colors.gray900 : colors.gray600} align={p.bio ? 'justify' : undefined}>{p.bio || `${first} hasn’t written an intro yet.`}</Txt>
+            <Txt raw size={15} lh={1.55} color={p.bio ? colors.gray900 : colors.gray600} align={p.bio ? 'justify' : undefined}>{p.bio || t(`${first} hasn’t written an intro yet.`)}</Txt>
           </Card>
           {p.languages.length || p.interests.length ? (
             <Card>

@@ -1,23 +1,38 @@
 // ID check before the first booking: a photo of the ID document and a selfie holding it.
 import { useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { useStore } from '../store';
+import { useStore, type User } from '../store';
 import { pickAndUpload } from '../lib/photos';
-import { openBooking } from '../nav';
+import { goBack, openBooking } from '../nav';
 import { t } from '../i18n';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Row, Txt } from '../ui/primitives';
-import { CircleButton, IconTile, PrimaryButton, StatusCover, TextButton } from '../ui/common';
+import { CircleButton, IconTile, NotLoaded, PrimaryButton, StatusCover, TextButton } from '../ui/common';
 
 type Slot = 'doc' | 'selfie';
 
 export default function VerifyId() {
+  const user = useStore((s) => s.user);
+  const insets = useSafeAreaInsets();
+  // The profile couldn't be loaded (e.g. no internet when the app started): say so instead of a blank screen.
+  if (!user) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.sun, paddingTop: insets.top + 8, paddingHorizontal: 12 }}>
+        <StatusCover color={colors.sun} />
+        <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
+        <NotLoaded />
+      </View>
+    );
+  }
+  return <VerifyIdBody user={user} />;
+}
+
+function VerifyIdBody({ user }: { user: User }) {
   const { next } = useLocalSearchParams<{ next?: string }>();
   const insets = useSafeAreaInsets();
-  const user = useStore((s) => s.user!);
   const [photos, setPhotos] = useState<Partial<Record<Slot, string>>>({});
   const [uploading, setUploading] = useState<Slot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,9 +77,9 @@ export default function VerifyId() {
         </Txt>
         <View style={{ width: '100%', gap: 6, marginTop: 20 }}>
           {ok && next ? (
-            <PrimaryButton label="Continue booking" onPress={() => { router.back(); openBooking(next); }} />
+            <PrimaryButton label="Continue booking" onPress={() => { goBack(); openBooking(next); }} />
           ) : (
-            <PrimaryButton label="Done" onPress={() => router.back()} />
+            <PrimaryButton label="Done" onPress={() => goBack()} />
           )}
         </View>
       </View>
@@ -80,7 +95,7 @@ export default function VerifyId() {
       <StatusCover color={colors.sun} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ paddingTop: 4, paddingHorizontal: 12 }}>
-          <CircleButton icon="x" label="Close" size={40} iconSize={22} border={0} bg="transparent" onPress={() => router.back()} />
+          <CircleButton icon="x" label="Close" size={40} iconSize={22} border={0} bg="transparent" onPress={() => goBack()} />
         </Row>
         <View style={{ paddingHorizontal: 20, gap: 14 }}>
           <H size={30} ls={-0.035} style={{ marginTop: 6 }}>Verify your ID</H>
@@ -125,7 +140,7 @@ export default function VerifyId() {
             </Txt>
           </Row>
           <PrimaryButton label={busy ? 'Sending…' : 'Submit for review'} dim={!photos.doc || !photos.selfie || busy} onPress={() => void submit()} style={{ marginTop: 8 }} />
-          <View style={{ alignItems: 'center' }}><TextButton label="Not now" size={15} onPress={() => router.back()} style={{ paddingVertical: 12 }} /></View>
+          <View style={{ alignItems: 'center' }}><TextButton label="Not now" size={15} onPress={() => goBack()} style={{ paddingVertical: 12 }} /></View>
         </View>
       </ScrollView>
     </View>

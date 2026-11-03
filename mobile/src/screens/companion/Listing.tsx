@@ -179,7 +179,7 @@ export default function Listing() {
             </Row>
             <Txt size={12} weight={600} color={colors.gray600}>I am a</Txt>
             <Row style={{ gap: 8 }}>
-              {GENDERS.map(([k, l]) => <Chip key={k} label={l} height={40} radius={12} weight={600} style={{ flex: 1 }} on={d.gender === k} onPress={() => upd({ gender: k })} />)}
+              {GENDERS.map(([k, l]) => <Chip key={k} label={l} height={40} radius={12} weight={600} size={12.5} padL={6} padR={6} style={{ flex: 1 }} on={d.gender === k} onPress={() => upd({ gender: k })} />)}
             </Row>
             <Txt size={12} weight={600} color={colors.gray600}>Area</Txt>
             <TextInput value={d.area} onChangeText={(t) => upd({ area: t.slice(0, 40) })} placeholder={t("e.g. Kreuzberg")} placeholderTextColor={colors.gray400} accessibilityLabel="Area" style={[...input, { height: 46 }]} />

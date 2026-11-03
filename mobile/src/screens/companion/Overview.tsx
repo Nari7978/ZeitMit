@@ -11,27 +11,32 @@ import { CompShell, Initial } from './Shell';
 import { t } from '../../i18n';
 
 export default function Overview() {
-  const s = useStore();
-  const { requests, upcoming, earnings, rate, acts, gallery } = s.comp;
+  // Only what this screen shows (the whole store would redraw it on every change anywhere in the app).
+  const comp = useStore((s) => s.comp);
+  const status = useStore((s) => s.companionStatus);
+  const first = useStore((s) => s.user?.first ?? '');
+  const name = useStore((s) => s.user?.name ?? '');
+  const { openSheet, openFeedback } = useStore.getState();
+  const { requests, upcoming, earnings, rate, acts, gallery } = comp;
   const next = upcoming[0];
   const held = earnings.held / 100;
-  const live = s.companionStatus === 'approved';
+  const live = status === 'approved';
   // Meet-ups happening now (the code can be entered from 2 hours before): enter the customer's code right here.
   const nowS = Date.now() / 1000;
   const meeting = upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600);
   // The latest meet-up that ended in the past week without the private “How did it go?” answered.
-  const ask = s.comp.done
+  const ask = comp.done
     .filter((b) => !b.feedback && b.startsAt + b.dur * 3600 <= nowS && b.startsAt + b.dur * 3600 > nowS - 7 * 86400)
     .sort((a, b) => b.startsAt - a.startsAt)[0];
 
   return (
-    <CompShell title={'Hi, ' + (s.user?.first ?? '')}>
+    <CompShell title={'Hi, ' + first}>
       {!live ? (
         <Row style={{ gap: 12, padding: 16, borderRadius: 20, backgroundColor: colors.amberSoft, alignItems: 'flex-start' }}>
           <Icon name="hourglass" size={20} color="#B37112" style={{ marginTop: 1 }} />
           <View style={{ flex: 1, gap: 4 }}>
-            <Txt size={14} weight={700} color="#5E3D08">{s.companionStatus === 'rejected' ? 'Profile not approved' : 'Profile under review'}</Txt>
-            <Txt size={13} lh={1.45} color="#7A5413">{s.companionStatus === 'rejected' ? 'You can update your answers and apply again.' : 'Usually 1–3 working days. Your profile isn’t public yet, so requests start once it’s approved.'}</Txt>
+            <Txt size={14} weight={700} color="#5E3D08">{status === 'rejected' ? 'Profile not approved' : 'Profile under review'}</Txt>
+            <Txt size={13} lh={1.45} color="#7A5413">{status === 'rejected' ? 'You can update your answers and apply again.' : 'Usually 1–3 working days. Your profile isn’t public yet, so requests start once it’s approved.'}</Txt>
           </View>
         </Row>
       ) : null}
@@ -46,12 +51,12 @@ export default function Overview() {
           </Row>
           <PrimaryButton
             label="Enter meet code" icon="key-round" height={46} radius={12} size={14} shadowColor="transparent"
-            onPress={() => s.openSheet('otpin', { otpIn: { uid: b.id, val: '', err: false, done: false, busy: false } })}
+            onPress={() => openSheet('otpin', { otpIn: { uid: b.id, val: '', err: false, done: false, busy: false } })}
           />
         </Box>
       ))}
       {ask ? (
-        <PressBox shadow={4} fx="push" onPress={() => s.openFeedback(ask.id)} accessibilityLabel={t(`How did it go with ${ask.who.split(' ')[0]}?`)} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.lilac }]}>
+        <PressBox shadow={4} fx="push" onPress={() => openFeedback(ask.id)} accessibilityLabel={t(`How did it go with ${ask.who.split(' ')[0]}?`)} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.lilac }]}>
           <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
             <Icon name="shield-check" size={22} />
           </View>
@@ -62,7 +67,7 @@ export default function Overview() {
           <Icon name="chevron-right" size={18} color={colors.gray600} />
         </PressBox>
       ) : null}
-      {s.companionStatus !== 'rejected' && gallery !== null && gallery < GALLERY_MIN ? (
+      {status !== 'rejected' && gallery !== null && gallery < GALLERY_MIN ? (
         <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/listing')} accessibilityLabel={t('Add more photos')} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.blush }]}>
           <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
             <Icon name="images" size={22} />
@@ -93,7 +98,7 @@ export default function Overview() {
       ) : null}
       <PressBox shadow={4} fx="push" onPress={() => router.navigate('/companion/listing')} accessibilityLabel="Your listing" style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
         <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center' }}>
-          <Txt size={15} weight={800}>{initials(s.user?.name ?? '')}</Txt>
+          <Txt size={15} weight={800}>{initials(name)}</Txt>
         </View>
         <View style={{ flex: 1 }}>
           <Txt size={15} weight={700}>Your listing</Txt>

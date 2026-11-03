@@ -2,13 +2,13 @@ import { useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { pickAndUpload } from '../lib/photos';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { A, AM, CSTEPS, eur, INTERESTS, LANGS, OKOPTS, WEEK, WIN, type ActId } from '../data';
 import { GALLERY_MAX, GALLERY_MIN, toggleIn, useStore } from '../store';
-import { toCompanionMode } from '../nav';
+import { goBack, toCompanionMode } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Enter, H, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, IconTile, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useTopPad } from '../ui/common';
@@ -95,7 +95,7 @@ export default function Become() {
         <Txt size={15} lh={1.55} color={colors.gray800} align="center">We’ll review it and let you know, usually within 1–3 working days. Meanwhile you can explore companion mode; it isn’t public yet.</Txt>
         <View style={{ width: '100%', gap: 6, marginTop: 20 }}>
           <PrimaryButton label="Open companion mode" onPress={toCompanionMode} />
-          <View style={{ alignItems: 'center' }}><TextButton label="Back to profile" size={15} onPress={() => router.back()} style={{ paddingVertical: 12 }} /></View>
+          <View style={{ alignItems: 'center' }}><TextButton label="Back to profile" size={15} onPress={() => goBack()} style={{ paddingVertical: 12 }} /></View>
         </View>
       </View>
     );
@@ -110,7 +110,7 @@ export default function Become() {
             <Stripes hue={290} l={[0.42, 0.39]} c={[0.12, 0.12]} style={{ opacity: 0.55 }} />
             <Txt kind="mono" size={10} weight={500} color="rgba(255,255,255,.55)" style={{ position: 'absolute', top: 110, right: 20 }}>editorial · two friends, museum steps</Txt>
             <LinearGradient colors={['rgba(23,21,43,.2)', colors.ink]} locations={[0, 0.92]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-            <CircleButton icon="x" label="Close" iconSize={19} border={0} bg="rgba(255,255,255,.14)" color={colors.white} onPress={() => router.back()} style={{ position: 'absolute', top, left: 16 }} />
+            <CircleButton icon="x" label="Close" iconSize={19} border={0} bg="rgba(255,255,255,.14)" color={colors.white} onPress={() => goBack()} style={{ position: 'absolute', top, left: 16 }} />
             <View style={{ position: 'absolute', left: 20, right: 20, bottom: 24, gap: 10 }}>
               <Txt kind="mono" size={11} weight={600} ls={0.08} color={colors.sun}>BECOME A COMPANION</Txt>
               <H size={32} lh={1.08} ls={-0.035} color={colors.white}>Share your time, on your terms.</H>
@@ -153,7 +153,7 @@ export default function Become() {
           <Txt size={16} weight={700}>Become a Companion</Txt>
           <Txt size={12} color={colors.gray600}>Step {step} of 5 · {CSTEPS[step - 1]}</Txt>
         </View>
-        <CircleButton icon="x" label="Close" iconSize={19} onPress={() => router.back()} />
+        <CircleButton icon="x" label="Close" iconSize={19} onPress={() => goBack()} />
       </Row>
       <Row style={{ gap: 4, paddingTop: 16, paddingHorizontal: 20 }}>
         {CSTEPS.map((_, i) => <View key={i} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i < step ? colors.ink : colors.track }} />)}
@@ -205,7 +205,7 @@ export default function Become() {
             {b.aboutErr && b.age && !ageOk(b.age) ? <Txt size={12} color={colors.red} style={{ marginTop: 6 }}>You must be 18 or older to become a companion.</Txt> : null}
             <Label style={{ marginTop: 16 }}>I am a</Label>
             <Row style={{ gap: 8 }}>
-              {GENDERS.map(([k, l]) => <Chip key={k} label={l} height={44} radius={12} weight={600} style={{ flex: 1 }} on={b.gender === k} onPress={() => upd({ gender: k })} />)}
+              {GENDERS.map(([k, l]) => <Chip key={k} label={l} height={44} radius={12} weight={600} size={12.5} padL={6} padR={6} style={{ flex: 1 }} on={b.gender === k} onPress={() => upd({ gender: k })} />)}
             </Row>
             {b.aboutErr && !b.gender ? <Txt size={12} color={colors.red} style={{ marginTop: 6 }}>Choose how you identify. Customers can filter by it.</Txt> : null}
             <Box shadow={3} style={{ marginTop: 16, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>

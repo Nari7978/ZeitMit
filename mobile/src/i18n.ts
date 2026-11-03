@@ -22,7 +22,9 @@ const DE: Record<string, string> = {
   'Discover': 'Entdecken', 'Search': 'Suche', 'Bookings': 'Buchungen', 'Messages': 'Nachrichten', 'Profile': 'Profil',
   'Overview': 'Übersicht', 'Requests': 'Anfragen', 'Calendar': 'Kalender', 'Back': 'Zurück', 'Close': 'Schließen',
   'Save': 'Speichern', 'Edit': 'Bearbeiten', 'Done': 'Fertig', 'Delete': 'Löschen', 'Share': 'Teilen', 'Use': 'Einsetzen',
-  'Loading…': 'Lädt …', 'See all': 'Alle ansehen', 'Clear all': 'Alles löschen', 'New': 'Neu', 'NEW': 'NEU', 'optional': 'optional',
+  'Loading…': 'Lädt …', 'Couldn’t load your details': 'Deine Daten konnten nicht geladen werden', 'Check your connection and try again.': 'Prüf deine Verbindung und versuch es noch einmal.', 'Try again': 'Nochmal versuchen',
+  'This page doesn’t exist': 'Diese Seite gibt es nicht', 'This companion isn’t available': 'Diese Begleitperson ist nicht verfügbar', 'They may have paused or removed their profile.': 'Vielleicht hat sie ihr Profil pausiert oder entfernt.',
+  'Couldn’t load this booking': 'Diese Buchung konnte nicht geladen werden', 'This booking can’t be changed': 'Diese Buchung lässt sich nicht ändern', 'The link may be old or mistyped.': 'Der Link ist vielleicht alt oder falsch geschrieben.', 'Go to the start': 'Zur Startseite', 'See all': 'Alle ansehen', 'Clear all': 'Alles löschen', 'New': 'Neu', 'NEW': 'NEU', 'optional': 'optional',
   'Today': 'Heute', 'Tmrw': 'Morgen', 'Tomorrow': 'Morgen', 'This weekend': 'Dieses Wochenende', 'Any time': 'Jederzeit',
   'Mon': 'Mo', 'Tue': 'Di', 'Wed': 'Mi', 'Thu': 'Do', 'Fri': 'Fr', 'Sat': 'Sa', 'Sun': 'So',
   'Morning': 'Vormittag', 'Afternoon': 'Nachmittag', 'Evening': 'Abend',
@@ -116,7 +118,7 @@ const DE: Record<string, string> = {
   'Payment not finished yet. Tap Pay to continue.': 'Zahlung noch nicht abgeschlossen. Tippe auf Bezahlen, um fortzufahren.',
 
   // Bookings
-  'Upcoming': 'Anstehend', 'Pending': 'Offen', 'Completed': 'Abgeschlossen', 'Cancelled': 'Storniert', 'Confirmed': 'Bestätigt',
+  'Upcoming': 'Anstehend', 'Pending': 'Offen', 'Past': 'Vorbei', 'Completed': 'Abgeschlossen', 'Cancelled': 'Storniert', 'Confirmed': 'Bestätigt',
   'Awaiting reply': 'Wartet auf Antwort', 'Reviewed': 'Bewertet', 'Check-in': 'Check-in', 'Meet code': 'Treffcode', 'Cancel request': 'Anfrage stornieren',
   'Book again': 'Erneut buchen', 'Leave a review': 'Bewertung schreiben', 'Discover companions': 'Begleitpersonen entdecken',
   'No upcoming plans': 'Keine anstehenden Pläne', 'Confirmed bookings appear here once a companion accepts.': 'Bestätigte Buchungen erscheinen hier, sobald eine Begleitperson annimmt.',
@@ -394,7 +396,7 @@ const DE: Record<string, string> = {
   'Check in at the end': 'Check-in am Ende',
   'Share live link': 'Live-Link teilen',
   // Cancelling and one chat per booking
-  'Cancel…': 'Stornieren …',
+  'Cancel…': 'Absagen …',
   'Enter meet code': 'Treffcode eingeben',
   'Cancel this request?': 'Diese Anfrage stornieren?',
   'Cancel this booking?': 'Diese Buchung stornieren?',
@@ -667,7 +669,7 @@ const PATTERNS: [RegExp, string][] = [
   [/^Good morning, (.+)$/, 'Guten Morgen, $1'],
   [/^Hi, (.+)$/, 'Hallo, $1'],
   [/^(\d+½?) hours?$/, '$1 Std.'],
-  [/^(\d+) slots?$/, '$1 Termine'],
+  [/^(\d+) slots?$/, '$1 frei'],
   [/^(\d+) activities$/, '$1 Aktivitäten'],
   [/^(\d+) confirmed with code$/, '$1 mit Code bestätigt'],
   [/^From (\d+) completed bookings$/, 'Aus $1 abgeschlossenen Buchungen'],

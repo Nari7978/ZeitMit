@@ -7,6 +7,7 @@ import { useStore } from '../store';
 import { openProfile, searchWith } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, PressBox, Row, Shimmer, Stripes, Txt, Photo } from '../ui/primitives';
+import { t } from '../i18n';
 import { PrimaryButton, SaveButton, SectionHead, StatusCover, TextButton, usePullRefresh, useTopPad } from '../ui/common';
 import { FaceMarquee, Sticker, WordSwap, type SwapWord } from '../ui/playful';
 import { openSettings } from './Settings';
@@ -68,7 +69,6 @@ export default function Discover() {
   const saved = useStore((s) => s.saved);
   const newHere = useStore((s) => s.bookings.length === 0);
   const compStatus = useStore((s) => s.companionStatus);
-  const focused = useIsFocused(); // the loops pause while another tab is open
   const width = useAppWidth();
   const featured = C.slice(0, 5);
   // Right after launch there may be no approved companions yet.
@@ -124,7 +124,7 @@ export default function Discover() {
           <View accessible accessibilityLabel="Rent a date or a mate" style={{ paddingTop: 24, paddingHorizontal: 20 }}>
             <Txt size={15} color={colors.gray600} style={{ marginBottom: 2 }}>{`${greeting()}, ${first}`}</Txt>
             <H size={56} lh={56} ls={-0.055}>Rent</H>
-            <WordSwap words={HERO_WORDS} running={focused} />
+            <HeroWord />
             <Txt size={14} lh={1.5} color={colors.gray800} style={{ marginTop: 16, maxWidth: 330 }}>
               Real people for coffee, culture, dates and plus-ones. Always in public, paid safely through ZeitMit.
             </Txt>
@@ -168,7 +168,7 @@ export default function Discover() {
                       <Icon name={AM[st.id].icon} size={26} color={st.fg} />
                       <View>
                         <Txt kind="display" weight={800} size={16} lh={17} ls={-0.02} color={st.fg} numberOfLines={2}>{st.label}</Txt>
-                        {n ? <Txt size={11} weight={600} color={st.fg} numberOfLines={1} style={{ opacity: 0.8, marginTop: 2 }}>{n === 1 ? '1 person' : `${n} people`}</Txt> : null}
+                        {n ? <Txt size={11} weight={600} color={st.fg} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={{ opacity: 0.8, marginTop: 2 }}>{n === 1 ? '1 person' : `${n} people`}</Txt> : null}
                       </View>
                     </PressBox>
                   );
@@ -187,7 +187,7 @@ export default function Discover() {
                   <Txt size={12} weight={700}>{C.length === 1 ? `1 in ${city}` : `${C.length} in ${city}`}</Txt>
                 </Sticker>
               </Row>
-              <FaceMarquee people={C} running={focused} onOpen={openProfile} />
+              <Faces people={C} />
             </View>
           ) : null}
 
@@ -341,7 +341,7 @@ export default function Discover() {
                     <Txt size={15} weight={600} numberOfLines={1} style={{ flexShrink: 1 }}>{c.name}{ageStr(c)}</Txt>
                     <Txt size={13}><Txt size={13} color={colors.amber}>★</Txt> {ratingStr(c)}</Txt>
                   </Row>
-                  <Txt size={13} lh={1.35} color={colors.gray600} numberOfLines={1}>{c.tagline}</Txt>
+                  <Txt raw size={13} lh={1.35} color={colors.gray600} numberOfLines={1}>{c.tagline}</Txt>
                   <Txt size={13} weight={600} style={{ marginTop: 2 }}>{eur(c.rate)} <Txt size={13} color={colors.gray600}>/ hour</Txt></Txt>
                 </View>
               </Pressable>
@@ -386,7 +386,7 @@ export default function Discover() {
                   <View style={{ width: 52, height: 52, borderRadius: 26, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
                   <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                     <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
-                    <Txt size={13} color={colors.gray600}>{shared.length ? 'You both like ' + shared.slice(0, 2).join(' & ') : c.tagline}</Txt>
+                    <Txt raw size={13} color={colors.gray600}>{shared.length ? `${t('You both like')} ${shared.slice(0, 2).map(t).join(' & ')}` : c.tagline}</Txt>
                   </View>
                   <Txt size={14} weight={600}>{eur(c.rate)}<Txt size={14} color={colors.gray600}>/h</Txt></Txt>
                   <Icon name="chevron-right" size={18} color={colors.gray400} />
@@ -442,6 +442,16 @@ export function Logo({ size, bangColor = colors.pink, color = colors.ink }: { si
   );
 }
 
+/** The headline's changing word; it checks focus itself so switching tabs doesn't redraw the whole page. */
+function HeroWord() {
+  return <WordSwap words={HERO_WORDS} running={useIsFocused()} />;
+}
+
+/** The row of faces; pauses while another tab is open (again without redrawing the page). */
+function Faces({ people }: { people: Companion[] }) {
+  return <FaceMarquee people={people} running={useIsFocused()} onOpen={openProfile} />;
+}
+
 function FeaturedCard({ c, i, wide }: { c: Companion; i: number; wide?: number }) {
   const w = wide ?? 252;
   // A sticker that says what's special: free today, the rating, or that they're new.
@@ -471,7 +481,7 @@ function FeaturedCard({ c, i, wide }: { c: Companion; i: number; wide?: number }
               <Txt kind="display" weight={700} size={23} ls={-0.02} color={colors.white} numberOfLines={1}>{c.name}{ageStr(c)}</Txt>
               {c.verified ? <Icon name="badge-check" size={18} color={colors.sun} /> : null}
             </Row>
-            <Txt size={13} color="rgba(255,255,255,.82)">{c.tagline}</Txt>
+            <Txt raw size={13} color="rgba(255,255,255,.82)">{c.tagline}</Txt>
             <Row style={{ gap: 6, marginTop: 4 }}>
               {c.interests.slice(0, 2).map((t) => (
                 <View key={t} style={{ height: 26, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,.18)', justifyContent: 'center' }}>

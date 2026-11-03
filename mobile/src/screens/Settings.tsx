@@ -7,10 +7,10 @@ import { colors } from '../theme';
 import { eur, PREF } from '../data';
 import { api } from '../api';
 import { useStore, type Lang } from '../store';
-import { openVerify } from '../nav';
+import { goBack, openVerify } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, H, Row, Toggle, Txt } from '../ui/primitives';
-import { CircleButton, PrimaryButton, SecondaryButton, StatusCover } from '../ui/common';
+import { CircleButton, NotLoaded, PrimaryButton, SecondaryButton, StatusCover } from '../ui/common';
 
 export type SettingsPage =
   | 'payments' | 'notifications' | 'discovery' | 'language' | 'privacy' | 'blocked' | 'security' | 'verification'
@@ -30,16 +30,18 @@ export default function Settings() {
   const { page } = useLocalSearchParams<{ page: SettingsPage }>();
   const insets = useSafeAreaInsets();
   const Body = BODIES[page] ?? Help;
+  // Help, guidelines and terms work without the profile; the rest needs it loaded.
+  const ready = useStore((s) => !!s.user) || page === 'help' || page === 'guidelines' || page === 'terms' || !BODIES[page];
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusCover color={colors.sun} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: insets.top + 4, paddingBottom: 40 + insets.bottom }}>
         <Row style={{ paddingTop: 4, paddingHorizontal: 12 }}>
-          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => router.back()} />
+          <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
         </Row>
         <H size={30} ls={-0.035} style={{ marginTop: 6, marginHorizontal: 20, marginBottom: 16 }}>{TITLES[page] ?? 'Settings'}</H>
         <View style={{ paddingHorizontal: 20, gap: 14 }}>
-          <Body />
+          {ready ? <Body /> : <NotLoaded />}
         </View>
       </ScrollView>
     </View>
