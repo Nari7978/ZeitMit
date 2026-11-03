@@ -34,6 +34,15 @@
     "plugins": [
       "expo-router",
       "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFE94D",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 168,
+          "resizeMode": "contain"
+        }
+      ],
       "expo-secure-store",
       "expo-localization",
       [
@@ -64,6 +73,7 @@
       "eas": {
         "projectId": "d533e166-c6d9-4927-bf05-0cf884d22f35"
       }
-    }
+    },
+    "primaryColor": "#111111"
   }
 }

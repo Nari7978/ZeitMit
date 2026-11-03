@@ -3,6 +3,7 @@
 import { create, type StateCreator } from 'zustand';
 import { api, ApiError, setUnauthorizedHandler, tokenStore } from './api';
 import { pickAndUpload } from './lib/photos';
+import { welcomeStore } from './lib/welcome';
 import { askLocation, currentLocation } from './lib/location';
 import { runCheckout } from './lib/checkout';
 import { resolveLang, setLang } from './i18n';
@@ -94,6 +95,8 @@ export const GALLERY_MAX = 6;
 
 type State = {
   session: 'loading' | 'out' | 'in';
+  /** This phone has seen the welcome screens (they show once, before the first login). */
+  welcomed: boolean;
   user: User | null;
   companionStatus: CompanionStatus;
   companions: Companion[];
@@ -134,6 +137,8 @@ type Actions = {
   set: (patch: Partial<State>) => void;
   showToast: (msg: string) => void;
   boot: () => Promise<void>;
+  /** Done with the welcome screens: on to login, and they don't show again. */
+  finishWelcome: () => void;
   requestCode: (email: string) => Promise<{ ok: boolean; devCode?: string }>;
   verifyCode: (email: string, code: string) => Promise<{ ok: boolean; isNew?: boolean }>;
   finishSignup: (name: string) => Promise<boolean>;
@@ -272,7 +277,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
   };
 
   return {
-    session: 'loading', user: null, companionStatus: 'none',
+    session: 'loading', welcomed: false, user: null, companionStatus: 'none',
     companions: [], byId: {}, loading: true,
     saved: [], bump: null, city: 'Berlin',
     query: '', f: EMPTY_FILTERS, sort: 'recommended',
@@ -302,8 +307,11 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     // ---------- session ----------
     boot: async () => {
       setUnauthorizedHandler(() => { void get().logout(); });
-      const t = await tokenStore.load();
+      const [t, welcomed] = await Promise.all([tokenStore.load(), welcomeStore.load()]);
+      set({ welcomed });
       if (!t) return set({ session: 'out' });
+      // A slow connection shouldn't keep the start screen up: after 6 s the app opens and fills in when the profile arrives.
+      const slow = setTimeout(() => { if (get().session === 'loading') set({ session: 'in' }); }, 6000);
       try {
         applyMe(await api<MeResponse>('GET', '/me'));
         set({ session: 'in' });
@@ -312,7 +320,13 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
         // Offline: keep the session and let the screens retry; expired: log out.
         if (e instanceof ApiError && e.status === 401) await get().logout();
         else set({ session: 'in' });
+      } finally {
+        clearTimeout(slow);
       }
+    },
+    finishWelcome: () => {
+      set({ welcomed: true });
+      void welcomeStore.save();
     },
     requestCode: async (email) => {
       const r = await attempt(() => api<{ sent: boolean; devCode?: string }>('POST', '/auth/request-code', { email }));

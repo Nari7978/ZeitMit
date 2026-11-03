@@ -3,7 +3,8 @@
 import { getLocales } from 'expo-localization';
 
 export type Lang = 'en' | 'de';
-let current: Lang = 'en';
+// Before login (welcome, login): the phone's language. Once signed in, the profile's setting takes over.
+let current: Lang = resolveLang('auto');
 
 export function resolveLang(pref: 'auto' | 'en' | 'de' | undefined): Lang {
   if (pref === 'en' || pref === 'de') return pref;
@@ -23,6 +24,19 @@ const DE: Record<string, string> = {
   'Overview': 'Übersicht', 'Requests': 'Anfragen', 'Calendar': 'Kalender', 'Back': 'Zurück', 'Close': 'Schließen',
   'Save': 'Speichern', 'Edit': 'Bearbeiten', 'Done': 'Fertig', 'Delete': 'Löschen', 'Share': 'Teilen', 'Use': 'Einsetzen',
   'Loading…': 'Lädt …', 'Couldn’t load your details': 'Deine Daten konnten nicht geladen werden', 'Check your connection and try again.': 'Prüf deine Verbindung und versuch es noch einmal.', 'Try again': 'Nochmal versuchen',
+  // Welcome screens (first launch)
+  'Skip': 'Überspringen', 'Next': 'Weiter', 'Get started': 'Los geht’s',
+  'Real people in Berlin for coffee, city walks, culture, dinner and plus-ones. Always in public, always paid through ZeitMit.': 'Echte Menschen in Berlin für Kaffee, Spaziergänge, Kultur, Essen und als Begleitung. Immer an öffentlichen Orten, immer über ZeitMit bezahlt.',
+  'Safe by design': 'Sicher von Anfang an', 'Built so every meet-up is easy to trust, on both sides.': 'So gebaut, dass beide Seiten jedem Treffen vertrauen können.',
+  'ID-checked companions': 'Ausweisgeprüfte Begleitpersonen', 'Every companion shows us their ID before their profile goes live.': 'Jede Begleitperson zeigt uns ihren Ausweis, bevor ihr Profil online geht.',
+  'Cafés, parks, museums and venues. Never at someone’s home.': 'Cafés, Parks, Museen und Lokale. Nie bei jemandem zu Hause.',
+  'Paid safely in the app': 'Sicher in der App bezahlt', 'ZeitMit holds the money until you meet and share your meet code.': 'ZeitMit hält das Geld, bis ihr euch trefft und du deinen Treffcode teilst.',
+  'Check-ins and SOS': 'Check-ins und SOS', 'Someone you trust can follow your meet-up live.': 'Eine Vertrauensperson kann dein Treffen live verfolgen.',
+  'Share your time, too': 'Teile auch deine Zeit', 'Become a companion and get paid for coffee, walks and plus-ones.': 'Werde Begleitperson und verdiene mit Kaffee, Spaziergängen und Begleitungen.',
+  'You set your rate · Paid after each meet-up': 'Du legst deinen Preis fest · Geld nach jedem Treffen',
+  'Your hours': 'Deine Zeiten', 'Open only the times that suit you.': 'Gib nur die Zeiten frei, die dir passen.',
+  'Your rules': 'Deine Regeln', 'Pick activities and boundaries. Accept only what feels right.': 'Wähle Aktivitäten und Grenzen. Nimm nur an, was sich gut anfühlt.',
+  'Your money': 'Dein Geld', 'Withdraw to your bank account from €20.': 'Auszahlung auf dein Bankkonto ab €20.',
   'This page doesn’t exist': 'Diese Seite gibt es nicht', 'This companion isn’t available': 'Diese Begleitperson ist nicht verfügbar', 'They may have paused or removed their profile.': 'Vielleicht hat sie ihr Profil pausiert oder entfernt.',
   'Couldn’t load this booking': 'Diese Buchung konnte nicht geladen werden', 'This booking can’t be changed': 'Diese Buchung lässt sich nicht ändern', 'The link may be old or mistyped.': 'Der Link ist vielleicht alt oder falsch geschrieben.', 'Go to the start': 'Zur Startseite', 'See all': 'Alle ansehen', 'Clear all': 'Alles löschen', 'New': 'Neu', 'NEW': 'NEU', 'optional': 'optional',
   'Today': 'Heute', 'Tmrw': 'Morgen', 'Tomorrow': 'Morgen', 'This weekend': 'Dieses Wochenende', 'Any time': 'Jederzeit',

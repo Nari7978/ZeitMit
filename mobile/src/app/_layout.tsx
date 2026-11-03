@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
-import { AppState, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, AppState, Image, View } from 'react-native';
 import { Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
 import { DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold } from '@expo-google-fonts/bricolage-grotesque';
 import { colors } from '../theme';
@@ -16,13 +17,52 @@ import { followGo } from '../nav';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
 
+// The splash screen (app.json: yellow with the wordmark) stays up until the first real screen can show.
+void SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({ duration: 250, fade: true });
+
+const SPLASH = require('../../assets/splash-icon.png');
+const SPLASH_WIDTH = 168; // as in app.json
+const SPLASH_RATIO = 1426 / 356; // assets/splash-icon.png
+
+/**
+ * The splash screen drawn by the app: the same picture, for when loading takes longer than the native splash stays
+ * up (2.5 s). After a moment a spinner shows that it's still working.
+ */
+function BootScreen() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center' }}>
+      <StatusBar style="dark" />
+      <Image source={SPLASH} accessibilityLabel="ZeitMit" resizeMode="contain" style={{ width: SPLASH_WIDTH, height: Math.round(SPLASH_WIDTH / SPLASH_RATIO) }} />
+      <View style={{ position: 'absolute', top: '50%', marginTop: 56, opacity: slow ? 1 : 0 }}>
+        <ActivityIndicator color={colors.ink} />
+      </View>
+    </View>
+  );
+}
+
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold,
     BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold,
   });
 
   const session = useStore((s) => s.session);
+  const welcomed = useStore((s) => s.welcomed);
+  // Fonts that fail to load fall back to the system font rather than keeping the app from starting.
+  const ready = (fontsLoaded || !!fontError) && session !== 'loading';
+
+  // Hide the native splash once the first screen is there, or after 2.5 s (BootScreen looks the same and waits on).
+  useEffect(() => {
+    if (ready) { SplashScreen.hide(); return; }
+    const t = setTimeout(() => SplashScreen.hide(), 2500);
+    return () => clearTimeout(t);
+  }, [ready]);
 
   // Live: the API says the moment something changes for you (a request, a cancellation, a message), so screens update
   // at once. After a reconnect, reload what may have been missed meanwhile.
@@ -49,13 +89,13 @@ export default function RootLayout() {
   // Push: register once signed in; follow taps on notifications once the screens exist
   // (a tap can arrive before the navigator is mounted when it opened the app).
   useEffect(() => {
-    if (session !== 'in' || !fontsLoaded) return;
+    if (session !== 'in' || !ready) return;
     void registerForPush();
     return onNotificationTap((go) => {
       void useStore.getState().refresh();
       setTimeout(() => void followGo(go), 60);
     });
-  }, [session, fontsLoaded]);
+  }, [session, ready]);
 
   const path = usePathname();
   const checkin = useStore((s) => !!s.checkin);
@@ -64,7 +104,7 @@ export default function RootLayout() {
   const onTabs = TAB_PATHS.includes(path) || path.startsWith('/companion');
   const toastBottom = onTabs ? navBottom + (checkin && path !== '/notifications' ? 158 : 82) : navBottom + 98;
 
-  if (!fontsLoaded || session === 'loading') return <View style={{ flex: 1, backgroundColor: colors.sun }} />;
+  if (!ready) return <BootScreen />;
   const signedIn = session === 'in';
 
   return (
@@ -88,6 +128,10 @@ export default function RootLayout() {
           <Stack.Screen name="reschedule/[id]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
+        </Stack.Protected>
+        {/* First time on this phone: a few welcome screens, then login. */}
+        <Stack.Protected guard={!signedIn && !welcomed}>
+          <Stack.Screen name="welcome" />
         </Stack.Protected>
         <Stack.Protected guard={!signedIn}>
           <Stack.Screen name="login" />

@@ -16,7 +16,7 @@ import { useAppWidth } from '../ui/layout';
 import { oklch } from '../lib/oklch';
 
 /** "Rent …" — the headline's last word keeps changing. */
-const HERO_WORDS: SwapWord[] = [
+export const HERO_WORDS: SwapWord[] = [
   { text: 'a date.', bg: colors.pink, fg: colors.white },
   { text: 'a mate.', bg: colors.violet, fg: colors.white },
   { text: 'a plus-one.', bg: colors.mint, fg: colors.ink },
@@ -26,7 +26,7 @@ const HERO_WORDS: SwapWord[] = [
 ];
 
 /** Big tilted activity stickers (dates have their own section further down). Short labels so they fit, in German too. */
-const STICKERS: { id: ActId; label: string; bg: string; fg: string; tilt: string }[] = [
+export const STICKERS: { id: ActId; label: string; bg: string; fg: string; tilt: string }[] = [
   { id: 'coffee', label: 'Coffee', bg: colors.pink, fg: colors.white, tilt: '-3deg' },
   { id: 'walks', label: 'City walks', bg: colors.violet, fg: colors.white, tilt: '2deg' },
   { id: 'culture', label: 'Culture', bg: colors.mint, fg: colors.ink, tilt: '-1.5deg' },
