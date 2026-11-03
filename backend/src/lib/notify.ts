@@ -27,13 +27,20 @@ export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUnti
   else await send;
 }
 
-/** Sends a plain-text email via Brevo (or Resend). Returns false when email isn't configured (dev mode). */
-export async function sendEmail(env: Env, to: string, subject: string, text: string) {
+/** An HTML version and files (content in base64) to send along with the plain text. */
+export type MailExtras = { html?: string; attachments?: { name: string; content: string }[] };
+
+/** Sends an email via Brevo (or Resend). Returns false when email isn't configured (dev mode). */
+export async function sendEmail(env: Env, to: string, subject: string, text: string, extras: MailExtras = {}) {
+  const files = extras.attachments?.length ? extras.attachments : undefined;
   if (env.BREVO_API_KEY && env.EMAIL_FROM_ADDRESS) {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    const res = await fetch(`${env.BREVO_API_BASE ?? 'https://api.brevo.com'}/v3/smtp/email`, {
       method: 'POST',
       headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ sender: { name: env.APP_NAME, email: env.EMAIL_FROM_ADDRESS }, to: [{ email: to }], subject, textContent: text }),
+      body: JSON.stringify({
+        sender: { name: env.APP_NAME, email: env.EMAIL_FROM_ADDRESS }, to: [{ email: to }], subject, textContent: text,
+        ...(extras.html ? { htmlContent: extras.html } : {}), ...(files ? { attachment: files } : {}),
+      }),
     });
     return res.ok;
   }
@@ -41,7 +48,10 @@ export async function sendEmail(env: Env, to: string, subject: string, text: str
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.EMAIL_FROM, to, subject, text }),
+    body: JSON.stringify({
+      from: env.EMAIL_FROM, to, subject, text,
+      ...(extras.html ? { html: extras.html } : {}), ...(files ? { attachments: files.map((f) => ({ filename: f.name, content: f.content })) } : {}),
+    }),
   });
   return res.ok;
 }

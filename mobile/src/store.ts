@@ -192,6 +192,8 @@ let liveFull = false;
 type MeResponse = {
   id: string; email: string; name: string; bio: string; age_confirmed: number; created_at: number; companionStatus: CompanionStatus; saved: string[]; avatarUrl: string | null;
   credit: number; prefs: Prefs; language: Lang; idStatus: IdStatus; idNote: string | null; gender: Gender | null; age: number | null; languages: string[]; interests: string[];
+  /** The language the app last reported showing (emails use it when the setting follows the phone). */
+  uiLang?: 'en' | 'de' | null;
 };
 /** Draft for the "Personal details" sheet. */
 export type ProfileEdit = { name: string; bio: string; gender: Gender | null; age: string; languages: string[]; interests: string[] };
@@ -208,7 +210,9 @@ export const useStore = create<State & Actions>()((set, get) => {
   }
 
   const applyMe = (me: MeResponse) => {
-    setLang(resolveLang(me.language));
+    const shown = resolveLang(me.language);
+    setLang(shown);
+    if (me.uiLang !== shown) api('PATCH', '/me', { uiLanguage: shown }).catch(() => {});
     // Discovery preferences pre-fill the search filters (until the user changes them).
     const f = get().f;
     if (f === EMPTY_FILTERS && me.prefs && (me.prefs.discoveryPref !== 'any' || me.prefs.discoveryMaxRate < 60)) {
@@ -672,9 +676,10 @@ export const useStore = create<State & Actions>()((set, get) => {
       });
     },
     setLanguage: (lang) => {
-      setLang(resolveLang(lang));
+      const shown = resolveLang(lang);
+      setLang(shown);
       set((s) => ({ user: s.user ? { ...s.user, language: lang } : s.user }));
-      api('PATCH', '/me', { language: lang }).catch(() => {});
+      api('PATCH', '/me', { language: lang, uiLanguage: shown }).catch(() => {});
     },
     redeemGift: async (code) => {
       const r = await attempt(() => api<{ added: number; credit: number }>('POST', '/gifts/redeem', { code }));

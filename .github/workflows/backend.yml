@@ -24,6 +24,7 @@ jobs:
       BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
       EMAIL_FROM_ADDRESS: ${{ vars.EMAIL_FROM_ADDRESS }}
       ADMIN_EMAILS: ${{ vars.ADMIN_EMAILS }}
+      INVOICE_DETAILS: ${{ vars.INVOICE_DETAILS }}
     steps:
       - uses: actions/checkout@v5
 
@@ -80,6 +81,7 @@ jobs:
           set -o pipefail
           ARGS=()
           [ -n "$ADMIN_EMAILS" ] && ARGS+=(--var "ADMIN_EMAILS:$ADMIN_EMAILS")
+          [ -n "$INVOICE_DETAILS" ] && ARGS+=(--var "INVOICE_DETAILS:$INVOICE_DETAILS")
           [ -z "$ADMIN_EMAILS" ] && echo "::warning::Variable ADMIN_EMAILS is not set (Settings → Secrets and variables → Actions → Variables tab)."
           [ -n "$BREVO_API_KEY" ] && [ -z "$EMAIL_FROM_ADDRESS" ] && echo "::warning::BREVO_API_KEY is set but the variable EMAIL_FROM_ADDRESS is not (Variables tab, not Secrets), so on-screen test login codes stay on."
           if [ -n "$BREVO_API_KEY" ] && [ -n "$EMAIL_FROM_ADDRESS" ]; then

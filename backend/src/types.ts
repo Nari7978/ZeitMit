@@ -20,6 +20,10 @@ export type Env = {
   STRIPE_SECRET_KEY?: string;
   /** Override for tests (mock Stripe server). */
   STRIPE_API_BASE?: string;
+  /** Override for tests (mock Brevo server). */
+  BREVO_API_BASE?: string;
+  /** Seller details printed on every invoice (legal name, address, tax number or VAT ID), one per line or split by "|". */
+  INVOICE_DETAILS?: string;
 };
 
 export type AuthUser = { id: string; email: string; role: 'customer' | 'admin' };
@@ -46,3 +50,5 @@ export const BOUNDARY_OPTIONS = ['Holding hands', 'Arm in arm', 'Hug hello', 'Co
 export const LANGUAGES = ['German', 'English', 'French', 'Spanish', 'Italian', 'Turkish', 'Japanese'];
 export const WINDOWS = ['am', 'pm', 'eve'] as const;
 export const SERVICE_FEE = 0.1;
+/** Customers cancel for free until this many hours before the start. */
+export const FREE_CANCEL_HOURS = 24;

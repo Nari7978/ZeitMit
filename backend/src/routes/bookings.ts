@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
-import { ACT_LABEL, ACTIVITIES, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
+import { ACT_LABEL, ACTIVITIES, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
 import { berlinToUnix, hoursText, MAX_HOURS, MIN_HOURS, slotsFor, validLength } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { notify } from '../lib/notify';
+import { inBackground, sendBookingConfirmation, sendBookingInvoice } from '../lib/mail';
 import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
 import { cancelIntent, capture, createCheckout, expireSession, getSession, intentOf, stripeOn } from '../lib/stripe';
 import { balanceOf } from './payouts';
@@ -20,7 +21,6 @@ type BookingRow = {
 };
 
 /** Customers cancel for free until this many hours before the start; later the companion keeps their pay. */
-export const FREE_CANCEL_HOURS = 24;
 
 /** Reasons people can pick when cancelling (fixed, so they can be translated and never carry contact details). */
 export const CANCEL_REASONS = {
@@ -154,6 +154,7 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
   const when = berlinWhen(b.starts_at);
   await notify(env, b.customer_id, { icon: 'hourglass', tone: 'warning', title: 'Request sent to ' + b.companion_name, body: `${ACT_LABEL[b.activity]} on ${when.day}. ${b.companion_name} has 24 hours to respond.`, go: 'tab:pending' }, ctx);
   await notify(env, b.companion_id, { icon: 'inbox', tone: 'violet', title: 'New booking request', body: `${b.customer_name || 'A customer'} · ${ACT_LABEL[b.activity]} · ${when.full}. ${euros(b.subtotal)} is already paid and held.`, go: 'comp:requests' }, ctx);
+  await inBackground(ctx, () => sendBookingInvoice(env, b.id));
 }
 
 /** Marks a booking paid if its Checkout session went through. Returns true when paid. */
@@ -419,6 +420,8 @@ bookings.post('/:id/reschedule/accept', async (c) => {
     icon: 'calendar-check', tone: 'success', title: `${names[side]} accepted the new time`,
     body: `${ACT_LABEL[b.activity]} is now on ${when.full}${confirmed ? '. Your booking is confirmed' : ''}.`, go: goFor(confirmed ? 'confirmed' : b.status, other),
   }, c.executionCtx);
+  // Confirmation emails: for a request this confirms, or with the new time for a booking that was confirmed already.
+  if (confirmed || b.status === 'confirmed') await inBackground(c.executionCtx, () => sendBookingConfirmation(c.env, b.id, !confirmed));
   return c.json({ ok: true, confirmed, ...when });
 });
 
@@ -548,6 +551,7 @@ companionBookings.post('/:id/accept', async (c) => {
   if (b.resched_at) void slotsChanged(c.env, b.companion_id, c.executionCtx);
   const name = (await c.env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())!.display_name;
   await notify(c.env, b.customer_id, { icon: 'calendar-check', tone: 'success', title: 'Booking accepted', body: `${name} accepted your ${ACT_LABEL[b.activity].toLowerCase()} request.`, go: 'tab:upcoming' }, c.executionCtx);
+  await inBackground(c.executionCtx, () => sendBookingConfirmation(c.env, b.id));
   return c.json({ ok: true });
 });
 

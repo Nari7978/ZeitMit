@@ -12,6 +12,9 @@ EMAIL_FROM = "ZeitMit <login@zeitmit.app>"
 # Testing only: return login codes in the API response until RESEND_API_KEY is set.
 # Admin logins are refused while this is "true". Set to "false" before real users join.
 DEV_LOGIN_CODES = "true"
+# Seller details printed on every invoice email: legal name, address, tax number or VAT ID (one per line, or split by "|").
+# The deploy also takes them from the INVOICE_DETAILS repository variable.
+INVOICE_DETAILS = ""
 
 [[d1_databases]]
 binding = "DB"

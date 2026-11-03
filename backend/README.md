@@ -28,6 +28,8 @@ node scripts/reschedule.mjs    # moving bookings and the customer profile compan
 ```
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
+`scripts/emails.mjs` checks the invoice and confirmation emails against a mock Brevo (it records what it's asked to send): run the API with
+`npx wrangler dev --port 8789 --var BREVO_API_KEY:test --var EMAIL_FROM_ADDRESS:hello@zeitmit.app --var BREVO_API_BASE:http://localhost:9998`.
 
 ## Test-mode features
 - **`DEV_LOGIN_CODES = "true"`**: login codes come back in the API response instead of by email, and admin access is disabled. The deploy workflow switches this off once `BREVO_API_KEY` and `EMAIL_FROM_ADDRESS` are set.
@@ -45,6 +47,12 @@ node scripts/reschedule.mjs    # moving bookings and the customer profile compan
 - Companions see the profile of whoever booked them (name, photo, optional age, gender, languages, interests, About, ID-verified badge, meet-ups so far), never their email, phone or documents.
 - Each paid booking has its own chat thread, open while the booking is pending or confirmed. It ends for both sides when the meet code is entered or the booking is cancelled.
 - Customers cancel for free until `FREE_CANCEL_HOURS` (24) before the start; later the booking is cancelled without a refund and the companion keeps their pay. Companions can cancel any time before the meeting; the customer always gets everything back. Support can refund any booking from the admin panel.
+
+## Emails
+- After every payment (a booking or a gift card) the customer gets an invoice: numbered `ZM-<year>-<seq>` in one unbroken sequence, with the line items, the 10% fee and how it was paid (gift credit, card). Each number is stored once in `invoices` and kept when accounts are deleted, so an invoice is never sent twice.
+- Seller details on invoices (legal name, address, tax number or VAT ID) come from `INVOICE_DETAILS`, one per line or split by `|`: set the repository variable of that name (Settings → Secrets and variables → Actions → Variables) and the deploy passes it on.
+- When a booking is confirmed (the companion accepts, or the customer accepts the companion's suggested time), both sides get a confirmation with an `.ics` calendar file. If a confirmed booking moves, it's sent again with the new time; the calendar entry keeps its UID with a higher `SEQUENCE`, so calendars update it. The meet code is never emailed.
+- Emails follow the person's language setting; on "automatic" they use the language the app last reported showing (`PATCH /me { uiLanguage }`). Without email configured (local development) nothing is sent, but invoice numbers are still given out.
 
 ## Payouts (sent by hand)
 - A booking's money is earned when the meet code is entered (or the customer cancels late). It becomes withdrawable `PAYOUT_HOLD_DAYS` (2) days later, so there's time for complaints and refunds.

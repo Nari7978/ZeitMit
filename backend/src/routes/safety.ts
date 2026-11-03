@@ -3,6 +3,7 @@ import type { AppEnv, Env } from '../types';
 import { alertAdmins, notify } from '../lib/notify';
 import { berlinWhen, digits, fail, newId, now } from '../lib/util';
 import { createCheckout, getSession, stripeOn } from '../lib/stripe';
+import { inBackground, sendGiftInvoice } from '../lib/mail';
 
 export const safety = new Hono<AppEnv>();
 
@@ -169,7 +170,10 @@ gifts.post('/', async (c) => {
   const paidNow = !stripeOn(c.env); // without Stripe, gifts are free test credit
   await c.env.DB.prepare('INSERT INTO gifts (id, sender_id, recipient, amount, message, code, expires_at, paid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(id, u.id, to.trim().slice(0, 120), amount * 100, (message ?? '').slice(0, 140), code, now() + 365 * 86400, paidNow ? 1 : 0).run();
-  if (paidNow) return c.json({ id, code, amount }, 201);
+  if (paidNow) {
+    await inBackground(c.executionCtx, () => sendGiftInvoice(c.env, id));
+    return c.json({ id, code, amount }, 201);
+  }
   try {
     const s = await createCheckout(c.env, { amount: amount * 100, name: `ZeitMit gift for ${to.trim().slice(0, 40)}`, ref: id, kind: 'gift', origin: new URL(c.req.url).origin, email: u.email });
     await c.env.DB.prepare('UPDATE gifts SET payment_ref = ? WHERE id = ?').bind(s.id, id).run();
@@ -190,6 +194,7 @@ gifts.post('/:id/confirm-payment', async (c) => {
     const s = g!.payment_ref && stripeOn(c.env) ? await getSession(c.env, g!.payment_ref) : null;
     if (s?.payment_status !== 'paid') return c.json({ paid: false }, 402);
     await c.env.DB.prepare('UPDATE gifts SET paid = 1 WHERE id = ?').bind(g!.id).run();
+    await inBackground(c.executionCtx, () => sendGiftInvoice(c.env, g!.id));
   }
   return c.json({ paid: true, code: g!.code, amount: g!.amount / 100 });
 });
