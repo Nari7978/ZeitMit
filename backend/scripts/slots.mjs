@@ -60,11 +60,13 @@ for (const u of [a, b]) {
 const A = a.token;
 const B = b.token;
 const N = (await login('noah@demo.zeitmit.app')).token;
-const book = (token, date, time, dur = 1) => call('POST', '/bookings', token, { companionId: CID, act: 'movies', date, time, dur, place: 'Café Einstein', boundariesAgreed: true });
+const book = (token, date, time, dur = 1, place = 'Café Einstein') => call('POST', '/bookings', token, { companionId: CID, act: 'movies', date, time, dur, place, boundariesAgreed: true });
+const toMidnight = (t) => 24 - (Number(t.slice(0, 2)) + Number(t.slice(3)) / 60);
 
 // Two times 90 minutes apart on the same day, the later one free for at least 2 hours.
 let list = await slots();
-ok(list.length === 7 && list.every((d) => Array.isArray(d.fit) && d.fit.length === d.times.length && d.fit.every((h) => h >= 1 && h <= 4)), 'every open time says how long it can be booked for (1–4 h)');
+ok(list.length === 7 && list.every((d) => Array.isArray(d.fit) && d.fit.length === d.times.length && d.fit.every((h) => h >= 1 && h <= 8 && Number.isInteger(h * 2))), 'every open time says how long it can be booked for (1–8 h, in half hours)');
+ok(list.every((d) => d.times.every((t, i) => d.fit[i] <= toMidnight(t))), 'no booking runs past midnight');
 const pick = list.flatMap((d) => d.times.slice(1).map((t, i) => ({ date: d.date, early: d.times[i], time: t, fit: d.fit[i + 1], earlyFit: d.fit[i] })))
   .reverse().find((x) => x.fit >= 2 && x.earlyFit >= 2 && Number(x.time.slice(0, 2)) * 60 + Number(x.time.slice(3)) - (Number(x.early.slice(0, 2)) * 60 + Number(x.early.slice(3))) === 90);
 if (!pick) throw new Error(`No suitable times for ${CID}: seed the demo companions again.`);
@@ -88,9 +90,9 @@ ok(r.status === 201, `customer A books ${time} for 2 hours`);
 let id = r.data.id;
 let e = await viewer.next((x) => gone(x, date, time));
 ok(!!e, 'someone else on the profile sees the time go at once');
-ok(fitOf(e.slots, date, early) === 1, `${early} now fits 1 hour at most (it would run into the booking)`);
+ok(fitOf(e.slots, date, early) === 1.5, `${early} now fits 1½ hours at most (it would run into the booking)`);
 r = await book(B, date, early, 2);
-ok(r.status === 409 && /only free for 1 hour/.test(r.data.error), 'a booking that would overlap the next one is refused');
+ok(r.status === 409 && /only free for 1½ hours/.test(r.data.error), 'a booking that would overlap the next one is refused');
 r = await book(B, date, time, 1);
 ok(r.status === 409 && /just taken/.test(r.data.error), 'the same time cannot be booked twice');
 e = await noahRoom.next((x) => x.type === 'changed' && x.go === 'comp:requests');
@@ -175,6 +177,38 @@ ok(!!(await viewer.next((x) => showsAgain(x, date, time))), 'and get them back w
 // 7) Keep-alive pings are answered
 const pong = await new Promise((res) => { viewer.ws.onmessage = (m) => m.data === 'pong' && res(true); viewer.ws.send('ping'); setTimeout(() => res(false), 3000); });
 ok(pong, 'keep-alive ping gets a pong');
+
+// 8) Any length from 1 to 8 hours in half-hour steps, priced by the hour; the meeting place is optional
+const rate = (await call('GET', `/companions/${CID}`)).data.rate;
+const priced = (dur) => Math.round(rate * dur * 100 * 1.1);
+list = await slots();
+const long = list.slice().reverse().flatMap((d) => d.times.map((t, i) => ({ date: d.date, time: t, fit: d.fit[i] }))).find((x) => x.fit >= 6);
+if (!long) throw new Error('No time with room for 6 hours.');
+for (const bad of [0.5, 1.25, 8.5, 9, '2', -1]) ok((await book(A, long.date, long.time, bad)).status === 400, `a length of ${JSON.stringify(bad)} hours is refused`);
+r = await book(A, long.date, long.time, 6);
+ok(r.status === 201 && r.data.dur === 6 && r.data.total === priced(6), `6 hours at ${long.time} (${long.date}): €${r.data.total / 100} = 6 × €${rate} + 10%`);
+const six = r.data.id;
+const after = (await slots()).find((d) => d.date === long.date);
+ok(!after.times.some((t) => { const m = Number(t.slice(0, 2)) * 60 + Number(t.slice(3)); const s0 = Number(long.time.slice(0, 2)) * 60 + Number(long.time.slice(3)); return m >= s0 && m < s0 + 360; }), 'it blocks all 6 hours');
+await call('POST', `/bookings/${six}/cancel`, A);
+r = await book(A, long.date, long.time, 2.5, '');
+ok(r.status === 201 && r.data.dur === 2.5 && r.data.total === priced(2.5), `2½ hours: €${r.data.total / 100} (2.5 × €${rate} + 10%)`);
+const mine = (await call('GET', '/bookings', A)).data.find((x) => x.id === r.data.id);
+ok(mine?.place === '' && mine.dur === 2.5, 'no meeting place is fine: they can agree on it in the chat');
+ok(fitOf(await slots(), long.date, long.time) === undefined, 'the half-hour booking holds its time');
+const req = (await call('GET', '/companion/bookings', N)).data.requests.find((x) => x.id === r.data.id);
+ok(req?.dur === 2.5 && req.payout === rate * 250, `the companion sees 2½ hours and earns €${req?.payout / 100}`);
+await call('POST', `/bookings/${r.data.id}/cancel`, A);
+r = await book(A, long.date, long.time, 1, '   ');
+ok(r.status === 201 && (await call('GET', '/bookings', A)).data.find((x) => x.id === r.data.id)?.place === '', 'a blank place is saved as none');
+await call('POST', `/bookings/${r.data.id}/cancel`, A);
+r = await book(A, long.date, long.time, 1, 'Call me on 0151 2345678');
+ok(r.status === 400, 'contact details in the place are still refused');
+const late = list.flatMap((d) => d.times.map((t, i) => ({ date: d.date, time: t, fit: d.fit[i] }))).find((x) => x.time === '20:00');
+if (late) {
+  ok(late.fit <= 4, `from 20:00 at most 4 hours (until midnight): ${late.fit}`);
+  ok((await book(A, late.date, '20:00', 4.5)).status === 409, 'a booking past midnight is refused');
+}
 
 viewer.ws.close();
 noahRoom.ws.close();

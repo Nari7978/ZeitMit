@@ -3,7 +3,7 @@ import { KeyboardAvoidingView, Pressable, ScrollView, TextInput, View } from 're
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { AM, BSTEPS, eur, hours, NO, ROM, slotDay, type ActId } from '../data';
+import { AM, BSTEPS, eur, hours, MAX_HOURS, MIN_HOURS, NO, placeOr, ROM, slotDay, type ActId } from '../data';
 import { fitAt, useSlots } from '../lib/slots';
 
 const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
@@ -14,7 +14,7 @@ import { Box, Confetti, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/p
 import { CircleButton, PrimaryButton, TextButton, useKeyboardShown, useTopPad } from '../ui/common';
 import { t } from '../i18n';
 
-type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; placeErr: boolean; agree: boolean };
+type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; agree: boolean };
 
 export default function BookingFlow() {
   const params = useLocalSearchParams<{ cid: string; date?: string }>();
@@ -28,7 +28,7 @@ export default function BookingFlow() {
   const keyboard = useKeyboardShown();
   const [step, setStep] = useState(1);
   const [done, setDone] = useState(false);
-  const [b, setB] = useState<Draft>({ act: null, date: params.date ?? null, time: null, dur: null, place: '', note: '', placeErr: false, agree: false });
+  const [b, setB] = useState<Draft>({ act: null, date: params.date ?? null, time: null, dur: null, place: '', note: '', agree: false });
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
   const di = slots.findIndex((s) => s.date === b.date);
   const day = di >= 0 ? slots[di] : undefined;
@@ -69,7 +69,6 @@ export default function BookingFlow() {
 
   const next = () => {
     if (!valid) return;
-    if (step === 4 && !b.place.trim()) return upd({ placeErr: true });
     if (step < 6) return setStep(step + 1);
     if (busy) return;
     setBusy(true);
@@ -89,6 +88,8 @@ export default function BookingFlow() {
   const days = slots.map((s, i) => slotDay(s.date, i));
   const dayLabel = di >= 0 ? days[di].full : '—';
   const durLabel = b.dur ? hours(b.dur) : '—';
+  // What limits the length from the picked time: midnight (bookings end by then) or the companion's next booking.
+  const toMidnight = b.time ? 24 - (+b.time.slice(0, 2) + +b.time.slice(3) / 60) : 0;
   const actLabel = b.act ? AM[b.act].label : '—';
 
   if (done) {
@@ -212,7 +213,7 @@ export default function BookingFlow() {
 
         {step === 3 && (
           <>
-            <StepTitle title="How long?" sub={`${eur(c.rate)} per hour. Minimum one hour.`} />
+            <StepTitle title="How long?" sub={`${eur(c.rate)} per hour. Book ${MIN_HOURS} to ${MAX_HOURS} hours, in half-hour steps.`} />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
               {[1, 2, 3, 4].map((d) => {
                 const on = b.dur === d;
@@ -225,10 +226,13 @@ export default function BookingFlow() {
                 );
               })}
             </View>
-            {fit > 0 && fit < 4 ? (
+            <LengthStepper dur={b.dur} max={Math.min(MAX_HOURS, fit)} rate={c.rate} onChange={(d) => upd({ dur: d })} />
+            {fit > 0 && fit < MAX_HOURS ? (
               <Row style={{ marginTop: 14, gap: 8, alignItems: 'flex-start' }}>
                 <Icon name="clock" size={15} color={colors.gray600} style={{ marginTop: 2 }} />
-                <Txt size={13} lh={1.5} color={colors.gray600} style={{ flex: 1 }}>{c.name} has another booking later, so from {b.time} you can book up to {hours(fit)}.</Txt>
+                <Txt size={13} lh={1.5} color={colors.gray600} style={{ flex: 1 }}>
+                  {fit >= toMidnight ? `Bookings end by midnight, so from ${b.time} you can book up to ${hours(fit)}.` : `${c.name} has another booking later, so from ${b.time} you can book up to ${hours(fit)}.`}
+                </Txt>
               </Row>
             ) : null}
           </>
@@ -236,25 +240,20 @@ export default function BookingFlow() {
 
         {step === 4 && (
           <>
-            <StepTitle title="Where will you meet?" sub="A café, park entrance or public venue." />
-            <Row style={{ height: 54, gap: 10, paddingHorizontal: 16, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: b.placeErr ? colors.red : colors.ink }}>
+            <StepTitle title="Where will you meet?" sub="Optional. A café, park entrance or public venue. You can also agree on it in the chat." />
+            <Row style={{ height: 54, gap: 10, paddingHorizontal: 16, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.ink }}>
               <Icon name="map-pin" size={18} color={colors.gray600} />
-              <TextInput value={b.place} onChangeText={(t) => upd({ place: t, placeErr: false })} accessibilityLabel="Meeting place" placeholder={t("e.g. Café at Paul-Lincke-Ufer")} placeholderTextColor={colors.gray400} style={[font('body'), inputReset, { flex: 1, fontSize: 16 }]} />
+              <TextInput value={b.place} onChangeText={(t) => upd({ place: t })} accessibilityLabel="Meeting place" placeholder={t("e.g. Café at Paul-Lincke-Ufer")} placeholderTextColor={colors.gray400} style={[font('body'), inputReset, { flex: 1, fontSize: 16 }]} />
+              {b.place ? <Pressable accessibilityRole="button" accessibilityLabel={t('Clear meeting place')} hitSlop={10} onPress={() => upd({ place: '' })}><Icon name="x" size={17} color={colors.gray600} /></Pressable> : null}
             </Row>
-            {b.placeErr ? (
-              <Row style={{ gap: 6, marginTop: 8 }}>
-                <Icon name="circle-alert" size={14} color={colors.red} />
-                <Txt size={13} color={colors.red}>Add a public meeting place to continue.</Txt>
-              </Row>
-            ) : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
               {['A café in ' + c.area, c.area + ' U-Bahn station exit', 'Museum or gallery lobby'].map((t) => (
-                <Pressable key={t} accessibilityRole="button" onPress={() => upd({ place: t, placeErr: false })} style={pill}><Txt size={13}>{t}</Txt></Pressable>
+                <Pressable key={t} accessibilityRole="button" onPress={() => upd({ place: t })} style={pill}><Txt size={13}>{t}</Txt></Pressable>
               ))}
             </View>
             <Row style={{ marginTop: 22, gap: 12, padding: 16, borderRadius: 16, backgroundColor: colors.lilac, alignItems: 'flex-start' }}>
               <Icon name="shield-check" size={18} />
-              <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>Choose a public place. ZeitMit never asks for your home address, and {c.name} only sees this once they accept.</Txt>
+              <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>Always meet in a public place. ZeitMit never asks for your home address.</Txt>
             </Row>
           </>
         )}
@@ -293,7 +292,7 @@ export default function BookingFlow() {
               <ReviewRow icon="sparkles" label="Activity" value={actLabel} onEdit={() => setStep(1)} />
               <ReviewRow icon="calendar" label="When" value={`${dayLabel} · ${b.time}`} onEdit={() => setStep(2)} />
               <ReviewRow icon="clock" label="Duration" value={durLabel} onEdit={() => setStep(3)} />
-              <ReviewRow icon="map-pin" label="Meeting place" value={b.place || '—'} onEdit={() => setStep(4)} />
+              <ReviewRow icon="map-pin" label="Meeting place" value={placeOr(b.place.trim())} onEdit={() => setStep(4)} />
               <ReviewRow icon="message-square-text" label="Note" value={b.note || 'No note added'} onEdit={() => setStep(5)} last />
             </Box>
             <Box shadow={4} style={{ marginTop: 14, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 20, padding: 16, gap: 10 }}>
@@ -348,7 +347,7 @@ export default function BookingFlow() {
           <Txt size={12} color={colors.gray600}>{b.dur ? 'Total incl. fees' : 'Select a duration'}</Txt>
           <H size={21} ls={-0.02}>{total}</H>
         </View>
-        <PrimaryButton label={step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
+        <PrimaryButton label={step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
       </Row>
     </KeyboardAvoidingView>
   );
@@ -378,6 +377,32 @@ function ReviewRow({ icon, label, value, onEdit, last }: { icon: string; label: 
     </Row>
   );
 }
+
+/** Any length from 1 hour up to what fits from the picked time, in half hours. */
+function LengthStepper({ dur, max, rate, onChange }: { dur: number | null; max: number; rate: number; onChange: (d: number) => void }) {
+  const own = !!dur && ![1, 2, 3, 4].includes(dur);
+  const go = (d: number) => onChange(Math.min(max, Math.max(MIN_HOURS, d)));
+  return (
+    <View style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 18, borderWidth: 1.5, borderColor: colors.ink, backgroundColor: own ? colors.butter : colors.white }}>
+      <StepButton icon="minus" label="Half an hour shorter" on={!!dur && dur > MIN_HOURS} onPress={() => go((dur ?? MIN_HOURS) - 0.5)} />
+      <View style={{ flex: 1, minWidth: 0, alignItems: 'center' }}>
+        <Txt size={12} weight={600} color={colors.gray600}>Your own length</Txt>
+        <Txt size={17} weight={700} numberOfLines={1}>{dur ? hours(dur) : 'Half-hour steps'}</Txt>
+        {dur ? <Txt size={14} color={colors.gray600}>{eur(rate * dur)}</Txt> : null}
+      </View>
+      <StepButton icon="plus" label="Half an hour longer" on={(dur ?? 0) < max} onPress={() => go(dur ? dur + 0.5 : MIN_HOURS)} />
+    </View>
+  );
+}
+
+const StepButton = ({ icon, label, on, onPress }: { icon: string; label: string; on: boolean; onPress: () => void }) => (
+  <Pressable
+    accessibilityRole="button" accessibilityLabel={t(label)} accessibilityState={{ disabled: !on }} disabled={!on} hitSlop={6} onPress={onPress}
+    style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 2, borderColor: on ? colors.ink : colors.gray350, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' }}
+  >
+    <Icon name={icon} size={18} color={on ? colors.ink : colors.gray350} />
+  </Pressable>
+);
 
 const PriceRow = ({ l, r }: { l: string; r: string }) => (
   <Row style={{ justifyContent: 'space-between' }}>

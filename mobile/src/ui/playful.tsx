@@ -5,6 +5,7 @@ import { Animated, Easing, Pressable, View, type StyleProp, type ViewStyle } fro
 import { colors } from '../theme';
 import { type Companion } from '../data';
 import { motionOff, Photo, Txt } from './primitives';
+import { useAppWidth } from './layout';
 
 /**
  * A content-sized box with the design's hard offset shadow. Unlike Box it never stretches its face, so it stays as
@@ -62,8 +63,11 @@ const GAP = 14;
  */
 export function FaceMarquee({ people, running, onOpen }: { people: Companion[]; running: boolean; onOpen: (id: string) => void }) {
   const x = useRef(new Animated.Value(0)).current;
+  const screen = useAppWidth();
   const moving = people.length >= 4 && running && !motionOff();
   const width = people.length * (FACE + GAP);
+  // Enough copies that the row never runs out on the right while it slides by one copy's width.
+  const copies = Math.ceil((screen + width) / width);
   useEffect(() => {
     if (!moving) return;
     x.setValue(0);
@@ -71,7 +75,7 @@ export function FaceMarquee({ people, running, onOpen }: { people: Companion[]; 
     loop.start();
     return () => loop.stop();
   }, [moving, width, people.length, x]);
-  const row = moving ? [...people, ...people] : people;
+  const row = moving ? Array.from({ length: copies }, () => people).flat() : people;
   return (
     <View style={{ overflow: 'hidden' }}>
       <Animated.View style={{ flexDirection: 'row', gap: GAP, paddingHorizontal: 20, paddingTop: 4, paddingBottom: 6, transform: [{ translateX: x }] }}>

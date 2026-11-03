@@ -62,14 +62,19 @@ export function berlinDate(unix: number) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(unix * 1000));
 }
 
-/** Longest booking the app offers, in hours. */
-export const MAX_HOURS = 4;
+/** Booking lengths: 1 to 8 hours in half-hour steps. */
+export const MIN_HOURS = 1;
+export const MAX_HOURS = 8;
+export const validLength = (h: unknown): h is number => typeof h === 'number' && h >= MIN_HOURS && h <= MAX_HOURS && Number.isInteger(h * 2);
+/** "1 hour", "2½ hours": the same wording as the app. */
+export const hoursText = (h: number) => `${Math.floor(h)}${h % 1 ? '½' : ''} ${h === 1 ? 'hour' : 'hours'}`;
 
 export type DaySlots = { date: string; times: string[]; fit: number[] };
 
 /**
  * Open slots for the next 7 days: weekly windows minus existing bookings, at least 1h from now.
- * `fit[i]` is the longest booking (1–4 hours) that can start at `times[i]` without running into another one.
+ * `fit[i]` is the longest booking (1–8 hours, in half hours) that can start at `times[i]` without running into
+ * another one or past midnight.
  * Requests (including a checkout in progress), confirmed bookings, meet-ups already under way and suggested new times
  * block their time; cancelled ones don't, so a cancelled time is bookable again straight away.
  * `except` leaves one booking out (its own time and suggestion), for picking a new time for it.
@@ -96,9 +101,10 @@ export async function slotsFor(env: Env, companionId: string, except = ''): Prom
       if (start < now() + 3600) continue;
       const { day, hour } = berlinParts(start);
       if (!open.has(`${day}-${windowOf(hour)}`)) continue;
+      const midnight = berlinToUnix(berlinDate(start + 86400), '00:00');
       let h = 0;
-      while (h < MAX_HOURS && free(start, start + (h + 1) * 3600)) h++;
-      if (!h) continue;
+      while (h < MAX_HOURS && start + (h + 0.5) * 3600 <= midnight && free(start, start + (h + 0.5) * 3600)) h += 0.5;
+      if (h < MIN_HOURS) continue;
       times.push(t);
       fit.push(h);
     }

@@ -54,7 +54,7 @@ export function NavBar({ state, navigateToTab, items }: BottomTabBarProps & { it
                 </View>
               ) : null}
             </View>
-            <Txt size={11} weight={on ? 700 : 500} color={color}>{it.label}</Txt>
+            <Txt size={11} weight={on ? 700 : 500} color={color} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{it.label}</Txt>
           </Pressable>
         );
       })}

@@ -13,7 +13,7 @@ const T = {
     missed: 'Missed a check-in', missedSub: (a: string, t: string) => `${a} hasn’t answered since ${t}. Try calling them. If you can’t reach them and you’re worried, call 112.`,
     sos: 'SOS pressed', sosSub: (a: string, t: string) => `${a} pressed SOS at ${t}. Call them now. If you can’t reach them, call 112 and give the location below.`,
     ended: 'Check-in ended', endedSub: 'This check-in is over. The location is no longer shared.',
-    when: 'When', where: 'Where', loc: 'Last location', locAgo: (m: string) => `updated ${m}`, noLoc: 'Location sharing is off.', waitLoc: 'Waiting for the first location. It updates while the app is open.',
+    when: 'When', where: 'Where', noPlace: 'Not set in the booking', loc: 'Last location', locAgo: (m: string) => `updated ${m}`, noLoc: 'Location sharing is off.', waitLoc: 'Waiting for the first location. It updates while the app is open.',
     maps: 'Open in Google Maps', call: 'Call 112', refresh: 'This page refreshes every minute.',
     min: (n: number) => (n < 1 ? 'just now' : n === 1 ? '1 minute ago' : `${n} minutes ago`), notFound: 'This link doesn’t exist or has expired.',
   },
@@ -23,7 +23,7 @@ const T = {
     missed: 'Check-in verpasst', missedSub: (a: string, t: string) => `${a} hat seit ${t} nicht reagiert. Versuch anzurufen. Wenn du niemanden erreichst und dir Sorgen machst, ruf 112.`,
     sos: 'SOS gedrückt', sosSub: (a: string, t: string) => `${a} hat um ${t} SOS gedrückt. Ruf jetzt an. Wenn du niemanden erreichst, ruf 112 und nenne den Standort unten.`,
     ended: 'Check-in beendet', endedSub: 'Dieser Check-in ist vorbei. Der Standort wird nicht mehr geteilt.',
-    when: 'Wann', where: 'Wo', loc: 'Letzter Standort', locAgo: (m: string) => `aktualisiert ${m}`, noLoc: 'Standortfreigabe ist aus.', waitLoc: 'Warte auf den ersten Standort. Er wird aktualisiert, solange die App offen ist.',
+    when: 'Wann', where: 'Wo', noPlace: 'In der Buchung nicht angegeben', loc: 'Letzter Standort', locAgo: (m: string) => `aktualisiert ${m}`, noLoc: 'Standortfreigabe ist aus.', waitLoc: 'Warte auf den ersten Standort. Er wird aktualisiert, solange die App offen ist.',
     maps: 'In Google Maps öffnen', call: '112 anrufen', refresh: 'Diese Seite aktualisiert sich jede Minute.',
     min: (n: number) => (n < 1 ? 'gerade eben' : n === 1 ? 'vor 1 Minute' : `vor ${n} Minuten`), notFound: 'Dieser Link existiert nicht oder ist abgelaufen.',
   },
@@ -92,7 +92,7 @@ export function livePage(live: Live, lang: Lang) {
   const body = `<h1>${esc(t.title)}</h1>
 <p style="margin:0">${esc(t.meeting(self, other))}</p>
 <div class="status ${kind}"><h2>${esc(head)}</h2><div>${esc(sub)}</div></div>
-${ended ? '' : `<div class="card"><div class="row"><span class="label">${esc(t.when)}</span><span>${esc(when)}</span></div><div class="row"><span class="label">${esc(t.where)}</span><span>${esc(bk.place)}</span></div></div>`}
+${ended ? '' : `<div class="card"><div class="row"><span class="label">${esc(t.when)}</span><span>${esc(when)}</span></div><div class="row"><span class="label">${esc(t.where)}</span><span>${esc(bk.place || t.noPlace)}</span></div></div>`}
 ${location}
 ${kind === 'sos' || kind === 'missed' ? `<a class="btn red" href="tel:112">${esc(t.call)}</a>` : ''}
 ${ended ? '' : `<p class="muted" style="margin:0;text-align:center">${esc(t.refresh)}</p>`}`;

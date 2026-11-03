@@ -13,11 +13,11 @@ const when = (ck: Checkin) => {
 export function shareMessage(ck: Checkin) {
   const link = ck.shareUrl ?? '';
   if (getLang() === 'de') {
-    return `Hallo ${ck.contactName}, ich treffe ${ck.otherName} über ZeitMit: ${when(ck)}, ${ck.place}. ` +
+    return `Hallo ${ck.contactName}, ich treffe ${ck.otherName} über ZeitMit: ${when(ck)}${ck.place ? `, ${ck.place}` : ''}. ` +
       `Hier kannst du meine Check-ins${ck.share ? ' und meinen Standort' : ''} live sehen: ${link}\n` +
       'Wenn etwas nicht stimmt, schicke ich dir ein SOS.';
   }
-  return `Hi ${ck.contactName}, I’m meeting ${ck.otherName} through ZeitMit: ${when(ck)}, ${ck.place}. ` +
+  return `Hi ${ck.contactName}, I’m meeting ${ck.otherName} through ZeitMit: ${when(ck)}${ck.place ? `, ${ck.place}` : ''}. ` +
     `You can follow my check-ins${ck.share ? ' and live location' : ''} here: ${link}\n` +
     'If something’s wrong I’ll send you an SOS.';
 }
@@ -26,9 +26,9 @@ export function shareMessage(ck: Checkin) {
 export function sosMessage(ck: Checkin, me: string) {
   const link = ck.shareUrl ? ck.shareUrl : '';
   if (getLang() === 'de') {
-    return `🆘 SOS von ${me}: Ich brauche Hilfe. Ich treffe ${ck.otherName} über ZeitMit, ${ck.place}.` +
+    return `🆘 SOS von ${me}: Ich brauche Hilfe. Ich treffe ${ck.otherName} über ZeitMit${ck.place ? `, ${ck.place}` : ''}.` +
       (link ? `\nMein Standort: ${link}` : '') + '\nBitte ruf mich an. Wenn du mich nicht erreichst, ruf 112.';
   }
-  return `🆘 SOS from ${me}: I need help. I’m meeting ${ck.otherName} through ZeitMit at ${ck.place}.` +
+  return `🆘 SOS from ${me}: I need help. I’m meeting ${ck.otherName} through ZeitMit${ck.place ? ` at ${ck.place}` : ''}.` +
     (link ? `\nMy location: ${link}` : '') + '\nPlease call me. If you can’t reach me, call 112.';
 }

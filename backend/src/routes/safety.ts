@@ -91,7 +91,7 @@ function alertText(ck: Checkin, bk: BookingInfo | null, who: { name: string; ema
   const when = bk ? `${berlinWhen(bk.starts_at).full} for ${bk.duration_h} h` : '';
   return [
     `${what}: ${who.name || who.email} (${who.email})`,
-    bk ? `Booking: ${first(bk.customer_name)} with ${bk.companion_name}, ${when}, at ${bk.place}` : '',
+    bk ? `Booking: ${first(bk.customer_name)} with ${bk.companion_name}, ${when}, ${bk.place ? `at ${bk.place}` : 'place not set in the booking'}` : '',
     ck.last_lat != null ? `Last location: https://maps.google.com/?q=${ck.last_lat},${ck.last_lng}` : 'No location shared.',
     `Trusted contact: ${ck.contact_name}, ${ck.contact_phone}`,
     shareUrl(ck) ? `Live page: ${shareUrl(ck)}` : '',

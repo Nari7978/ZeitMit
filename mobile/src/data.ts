@@ -140,7 +140,12 @@ export const eur = (n: number) => {
   return '€' + (Number.isInteger(v) ? v : v.toFixed(2));
 };
 export const memberSince = (unix: number) => 'Member since ' + new Date(unix * 1000).getFullYear();
-export const hours = (d: number) => t(d + (d === 1 ? ' hour' : ' hours'));
+export const hours = (d: number) => t(`${Math.floor(d)}${d % 1 ? '½' : ''} ${d === 1 ? 'hour' : 'hours'}`);
+/** Booking lengths: 1 to 8 hours in half-hour steps (the server allows the same). */
+export const MIN_HOURS = 1;
+export const MAX_HOURS = 8;
+/** A booking's meeting place, or the reminder shown when it was left for the chat. */
+export const placeOr = (place: string) => place || 'Agree on a place in the chat';
 export const ageStr = (c: { age: number | null }) => (c.age ? ', ' + c.age : '');
 export const ratingStr = (c: Companion) => (c.rating ? c.rating.toFixed(1) : 'New');
 export const reviewsStr = (c: Companion) => (c.rating ? '(' + c.reviews + ')' : '');

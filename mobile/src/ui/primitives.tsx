@@ -42,6 +42,8 @@ export function Txt({ size = 15, weight = 400, color = colors.ink, kind = 'body'
   useStore((s) => s.user?.language); // re-render when the language changes
   return (
     <Text
+      // Large system font settings still enlarge text, up to the point where fixed-size tiles and buttons would clip it.
+      maxFontSizeMultiplier={1.3}
       {...rest}
       children={translate(children)}
       style={[

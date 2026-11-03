@@ -8,6 +8,7 @@ import { BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGr
 import { colors } from '../theme';
 import { useStore } from '../store';
 import { Toast, useNavBottom } from '../ui/chrome';
+import { APP_MAX_WIDTH, useAppFrame } from '../ui/layout';
 import { SheetHost } from '../sheets/SheetHost';
 import { onNotificationTap, registerForPush } from '../lib/push';
 import { useLive } from '../lib/live';
@@ -54,6 +55,7 @@ export default function RootLayout() {
   const path = usePathname();
   const checkin = useStore((s) => !!s.checkin);
   const navBottom = useNavBottom();
+  const { framed } = useAppFrame();
   const onTabs = TAB_PATHS.includes(path) || path.startsWith('/companion');
   const toastBottom = onTabs ? navBottom + (checkin && path !== '/notifications' ? 158 : 82) : navBottom + 98;
 
@@ -63,6 +65,8 @@ export default function RootLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
       <StatusBar style="dark" />
+      {/* Tablets: the phone layout in a framed column (screens get exactly APP_MAX_WIDTH inside the frame). */}
+      <View style={framed ? { flex: 1, width: APP_MAX_WIDTH + 4, alignSelf: 'center', borderLeftWidth: 2, borderRightWidth: 2, borderColor: colors.ink, overflow: 'hidden' } : { flex: 1 }}>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.sun }, animation: 'fade' }}>
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="(tabs)" />
@@ -86,6 +90,7 @@ export default function RootLayout() {
       </Stack>
       {signedIn ? <SheetHost /> : null}
       <Toast bottom={toastBottom} />
+      </View>
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { colors } from '../theme';
@@ -11,6 +11,7 @@ import { PrimaryButton, SaveButton, SectionHead, StatusCover, TextButton, usePul
 import { FaceMarquee, Sticker, WordSwap, type SwapWord } from '../ui/playful';
 import { openSettings } from './Settings';
 import { useNavBottom } from '../ui/chrome';
+import { useAppWidth } from '../ui/layout';
 import { oklch } from '../lib/oklch';
 
 /** "Rent …" — the headline's last word keeps changing. */
@@ -68,7 +69,7 @@ export default function Discover() {
   const newHere = useStore((s) => s.bookings.length === 0);
   const compStatus = useStore((s) => s.companionStatus);
   const focused = useIsFocused(); // the loops pause while another tab is open
-  const { width } = useWindowDimensions();
+  const width = useAppWidth();
   const featured = C.slice(0, 5);
   // Right after launch there may be no approved companions yet.
   const hasCompanions = loading || C.length > 0;
@@ -87,7 +88,6 @@ export default function Discover() {
     .filter((x) => x.shared.length > 0)
     .sort((a, b) => b.shared.length - a.shared.length)
     .slice(0, 3);
-  const tileW = (Math.min(width, 520) - 40 - 24) / 3;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
@@ -149,27 +149,32 @@ export default function Discover() {
             </Pressable>
           </View>
 
-          {/* Activity stickers */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingTop: 26, paddingHorizontal: 20 }}>
-            {STICKERS.map((st) => {
-              const n = C.filter((c) => c.acts.includes(st.id)).length;
-              return (
-                <PressBox
-                  key={st.id}
-                  fx="push"
-                  shadow={4}
-                  onPress={() => searchWith({ acts: [st.id] })}
-                  accessibilityLabel={AM[st.id].label}
-                  style={{ width: tileW, height: tileW * 0.98, borderRadius: 20, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: st.bg, padding: 12, justifyContent: 'space-between', transform: [{ rotate: st.tilt }] }}
-                >
-                  <Icon name={AM[st.id].icon} size={26} color={st.fg} />
-                  <View>
-                    <Txt kind="display" weight={800} size={16} lh={17} ls={-0.02} color={st.fg} numberOfLines={2}>{st.label}</Txt>
-                    {n ? <Txt size={11} weight={600} color={st.fg} style={{ opacity: 0.8, marginTop: 2 }}>{n === 1 ? '1 person' : `${n} people`}</Txt> : null}
-                  </View>
-                </PressBox>
-              );
-            })}
+          {/* Activity stickers: rows of three sharing the width. (Widths worked out from the screen size can round
+              past the row on some phones, which pushed the third sticker onto its own line.) */}
+          <View style={{ gap: 12, paddingTop: 26, paddingHorizontal: 20 }}>
+            {[STICKERS.slice(0, 3), STICKERS.slice(3)].map((row, r) => (
+              <Row key={r} style={{ gap: 12, alignItems: 'stretch' }}>
+                {row.map((st) => {
+                  const n = C.filter((c) => c.acts.includes(st.id)).length;
+                  return (
+                    <PressBox
+                      key={st.id}
+                      fx="push"
+                      shadow={4}
+                      onPress={() => searchWith({ acts: [st.id] })}
+                      accessibilityLabel={AM[st.id].label}
+                      style={{ flex: 1, aspectRatio: 1 / 0.98, borderRadius: 20, borderWidth: 2.5, borderColor: colors.ink, backgroundColor: st.bg, padding: 12, justifyContent: 'space-between', transform: [{ rotate: st.tilt }] }}
+                    >
+                      <Icon name={AM[st.id].icon} size={26} color={st.fg} />
+                      <View>
+                        <Txt kind="display" weight={800} size={16} lh={17} ls={-0.02} color={st.fg} numberOfLines={2}>{st.label}</Txt>
+                        {n ? <Txt size={11} weight={600} color={st.fg} numberOfLines={1} style={{ opacity: 0.8, marginTop: 2 }}>{n === 1 ? '1 person' : `${n} people`}</Txt> : null}
+                      </View>
+                    </PressBox>
+                  );
+                })}
+              </Row>
+            ))}
           </View>
           <TextButton label="All activities →" size={14} weight={700} onPress={() => router.navigate('/search')} style={{ alignSelf: 'center', marginTop: 10 }} />
 

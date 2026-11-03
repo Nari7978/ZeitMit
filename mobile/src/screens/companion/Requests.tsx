@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, eur, memberSince } from '../../data';
+import { AM, eur, memberSince, placeOr } from '../../data';
 import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, Enter, Row, Txt } from '../../ui/primitives';
@@ -50,7 +50,7 @@ export default function Requests() {
               <Row style={{ gap: 6 }}><Icon name="calendar" size={15} color={colors.gray600} /><Txt size={13}>{r.day}</Txt></Row>
               <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{r.time}</Txt></Row>
             </Row>
-            <Row style={{ gap: 6 }}><Icon name="map-pin" size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }}>{r.place}</Txt></Row>
+            <Row style={{ gap: 6 }}><Icon name="map-pin" size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={r.place ? colors.ink : colors.gray600}>{placeOr(r.place)}</Txt></Row>
             {r.note ? (
               <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun }}>
                 <Txt size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>

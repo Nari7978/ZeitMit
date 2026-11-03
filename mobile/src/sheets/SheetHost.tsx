@@ -553,7 +553,7 @@ function CancelSheet() {
         <BigTitle>{pending ? 'Cancel this request?' : 'Cancel this booking?'}</BigTitle>
         <View style={{ padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, gap: 4 }}>
           <Txt size={15} weight={700}>{other} · {AM[b.act].label}</Txt>
-          <Txt size={13} color={colors.gray600}>{b.day} · {b.time} · {b.place}</Txt>
+          <Txt size={13} color={colors.gray600}>{b.day} · {b.time}{b.place ? ` · ${b.place}` : ''}</Txt>
         </View>
         <Row style={{ gap: 10, padding: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: policy.bg, alignItems: 'flex-start' }}>
           <Icon name={policy.icon} size={18} />

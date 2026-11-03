@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, hours, WEEK, WIN, whenShort } from '../../data';
+import { AM, hours, placeOr, WEEK, WIN, whenShort } from '../../data';
 import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, PressBox, Row, Txt } from '../../ui/primitives';
@@ -54,7 +54,7 @@ export default function Calendar() {
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
               <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
-              <Txt size={12} color={colors.gray600} numberOfLines={1}>{u.place}</Txt>
+              <Txt size={12} color={colors.gray600} numberOfLines={1}>{placeOr(u.place)}</Txt>
             </View>
             <Icon name="chevron-right" size={16} color={colors.gray400} />
           </Pressable>

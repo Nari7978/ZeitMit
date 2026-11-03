@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { AM, BTAB, eur, hours, ST, whenShort, type BTab } from '../data';
+import { AM, BTAB, eur, hours, placeOr, ST, whenShort, type BTab } from '../data';
 import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
 import { bookAgain, openBookingChat, openProfile, openReschedule } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -143,7 +143,7 @@ function BookingCard({ b }: { b: Booking }) {
           </Row>
           <Row style={{ gap: 7 }}>
             <Icon name="map-pin" size={15} color={colors.gray600} />
-            <Txt size={13} numberOfLines={1} style={{ flex: 1 }}>{b.place}</Txt>
+            <Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={b.place ? colors.ink : colors.gray600}>{placeOr(b.place)}</Txt>
           </Row>
           <Row style={{ gap: 7 }}>
             <Icon name="receipt" size={15} color={colors.gray600} />

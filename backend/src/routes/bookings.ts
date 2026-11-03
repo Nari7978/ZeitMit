@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
 import { ACT_LABEL, ACTIVITIES, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
-import { berlinToUnix, slotsFor } from '../lib/companions';
+import { berlinToUnix, hoursText, MAX_HOURS, MIN_HOURS, slotsFor, validLength } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { notify } from '../lib/notify';
 import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
@@ -199,9 +199,9 @@ bookings.post('/', async (c) => {
     .bind(u.id, comp!.user_id, comp!.user_id, u.id).first();
   if (blocked) fail(403, 'You can’t book this companion.');
   if (!ACTIVITIES.includes(b.act) || !parseJson<string[]>(comp!.activities, []).includes(b.act)) fail(400, `${comp!.display_name} doesn’t offer that activity.`);
-  if (![1, 2, 3, 4].includes(b.dur)) fail(400, 'Choose 1 to 4 hours.');
+  if (!validLength(b.dur)) fail(400, `Choose ${MIN_HOURS} to ${MAX_HOURS} hours, in half-hour steps.`);
+  // Optional: the two can agree on a place in the chat after the request is accepted.
   const place = (b.place ?? '').trim();
-  if (!place) fail(400, 'Add a public meeting place to continue.');
   if (ROMANTIC.includes(b.act) && !b.boundariesAgreed) fail(400, `Please agree to respect ${comp!.display_name}’s boundaries.`);
 
   // A checkout this customer left unpaid with the same companion mustn't block their new try.
@@ -213,7 +213,7 @@ bookings.post('/', async (c) => {
   const at = day ? day.times.indexOf(b.time) : -1;
   if (at < 0) fail(409, 'That time was just taken. Pick another slot.');
   const fits = day!.fit[at];
-  if (fits < b.dur) fail(409, `From ${b.time}, ${comp!.display_name} is only free for ${fits === 1 ? '1 hour' : `${fits} hours`}. Choose a shorter booking or another time.`);
+  if (fits < b.dur) fail(409, `From ${b.time}, ${comp!.display_name} is only free for ${hoursText(fits)}. Choose a shorter booking or another time.`);
 
   const startsAt = berlinToUnix(b.date, b.time);
   const subtotal = comp!.rate * b.dur * 100;
@@ -364,7 +364,7 @@ bookings.post('/:id/reschedule', async (c) => {
   const at = day ? day.times.indexOf(time) : -1;
   if (at < 0) fail(409, 'That time isn’t free. Pick another one.');
   const fits = day!.fit[at];
-  if (fits < b.duration_h) fail(409, `From ${time} there’s only room for ${fits === 1 ? '1 hour' : `${fits} hours`}. Pick another time.`);
+  if (fits < b.duration_h) fail(409, `From ${time} there’s only room for ${hoursText(fits)}. Pick another time.`);
   const startsAt = berlinToUnix(date, time);
   if (startsAt === b.starts_at) fail(400, 'That’s the current time. Pick a different one.');
   const names = await namesOf(c.env, b);

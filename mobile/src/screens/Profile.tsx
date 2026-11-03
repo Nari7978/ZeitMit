@@ -14,12 +14,18 @@ import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, usePullRefresh, useTopPad } from '../ui/common';
 import { locale, t } from '../i18n';
+import { useAppWidth } from '../ui/layout';
 
-const PHOTO_H = 470;
+/** About 4:5 like the uploaded photos, but at most ~60% of the screen's height (tablets turned sideways). */
+function usePhotoHeight() {
+  const width = useAppWidth();
+  const { height } = useWindowDimensions();
+  return Math.round(Math.min(width * 1.2, height * 0.62));
+}
 
 /** Profile photo first, then the companion's other photos: swipe through them, the dots show where you are. */
-function PhotoSlides({ c }: { c: Companion }) {
-  const { width } = useWindowDimensions();
+function PhotoSlides({ c, height }: { c: Companion; height: number }) {
+  const width = useAppWidth();
   const [at, setAt] = useState(0);
   const slides = [c.photoUrl, ...(c.gallery ?? [])].filter((u): u is string => !!u);
   const shade = (
@@ -48,7 +54,7 @@ function PhotoSlides({ c }: { c: Companion }) {
         accessibilityLabel={t(`${slides.length} photos`)}
       >
         {slides.map((u) => (
-          <View key={u} style={{ width, height: PHOTO_H }}>
+          <View key={u} style={{ width, height }}>
             <Photo hue={c.hue} url={u} />
           </View>
         ))}
@@ -86,6 +92,8 @@ export default function Profile() {
   const [scrolled, setScrolled] = useState(false);
   const [allReviews, setAllReviews] = useState(false);
   const chatOpen = useStore((s) => canMessage(id, s));
+  const photoH = usePhotoHeight();
+  const narrow = useAppWidth() < 360; // small phones: the Message button shows just its icon
   const { showToast, openSheet } = useStore.getState();
   if (!c) return null;
 
@@ -102,13 +110,13 @@ export default function Profile() {
         refreshControl={refresh}
         scrollEventThrottle={32}
         onScroll={(e) => {
-          const v = e.nativeEvent.contentOffset.y > 380;
+          const v = e.nativeEvent.contentOffset.y > photoH - 90;
           if (v !== scrolled) setScrolled(v);
         }}
         contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
       >
-        <View style={{ height: PHOTO_H }}>
-          <PhotoSlides c={c} />
+        <View style={{ height: photoH }}>
+          <PhotoSlides c={c} height={photoH} />
         </View>
 
         <View style={{ marginTop: -26, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.white, paddingTop: 26, paddingHorizontal: 20 }}>
@@ -265,7 +273,7 @@ export default function Profile() {
           <Txt size={14} color={colors.gray600} numberOfLines={1}><H size={23} weight={700} ls={-0.02}>{eur(c.rate)}</H>/h</Txt>
           <Txt size={12} color={colors.gray600} numberOfLines={1}>+10% fee</Txt>
         </View>
-        <SecondaryButton label="Message" icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
+        <SecondaryButton label={narrow ? '' : 'Message'} accessibilityLabel={t('Message')} icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
         <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
           <Txt size={15} weight={600} color={colors.white}>Book now</Txt>
         </PressBox>
