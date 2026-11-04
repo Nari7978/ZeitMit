@@ -32,7 +32,8 @@ export const tokenStore = {
 };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** `code`: what kind of refusal, when the server says (e.g. `meet_code`). */
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -52,10 +53,10 @@ export async function api<T = unknown>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' 
   } catch {
     throw new ApiError(0, 'No connection. Check your internet and try again.');
   }
-  const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  const data = (await res.json().catch(() => null)) as (T & { error?: string; code?: string }) | null;
   if (!res.ok) {
     if (res.status === 401 && token) onUnauthorized();
-    throw new ApiError(res.status, data?.error ?? 'Something went wrong. Please try again.');
+    throw new ApiError(res.status, data?.error ?? 'Something went wrong. Please try again.', data?.code);
   }
   return data as T;
 }

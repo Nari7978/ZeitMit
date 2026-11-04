@@ -406,6 +406,10 @@ const DE: Record<string, string> = {
   'Chat opens once you’ve booked. Add a note to your request instead.': 'Der Chat öffnet sich, sobald du gebucht hast. Schreib stattdessen eine Notiz in deine Anfrage.',
   'This chat is closed. Chats are open while you have a paid booking, and for 7 days after you meet.': 'Dieser Chat ist geschlossen. Chats sind offen, solange ihr eine bezahlte Buchung habt, und 7 Tage nach eurem Treffen.',
   'For everyone’s safety, phone numbers, email addresses and social media handles can’t be shared on ZeitMit. Keep talking here in the app.': 'Zur Sicherheit aller können Telefonnummern, E-Mail-Adressen und Social-Media-Namen auf ZeitMit nicht geteilt werden. Schreibt einfach hier in der App weiter.',
+  'Meet codes can’t be shared in chat. Show yours in person when you meet: that’s what confirms the meet-up and releases the payment.': 'Treffcodes können nicht im Chat geteilt werden. Zeig deinen persönlich, wenn ihr euch trefft: Das bestätigt das Treffen und gibt die Zahlung frei.',
+  'Meet codes can’t be shared in chat. Ask for it in person when you meet.': 'Treffcodes können nicht im Chat geteilt werden. Frag beim Treffen persönlich danach.',
+  'Customers can’t send their meet code in chat. Ask for it in person when you meet.': 'Kund*innen können ihren Treffcode nicht im Chat senden. Frag beim Treffen persönlich danach.',
+  'Never send your meet code in chat. Show it only in person, when you meet.': 'Schick deinen Treffcode nie im Chat. Zeig ihn nur persönlich, wenn ihr euch trefft.',
   // Check-in with WhatsApp
   'A friend who can check on you. Use their WhatsApp number.': 'Jemand, der nach dir sehen kann. Nimm die WhatsApp-Nummer.',
   'Check-in is on': 'Check-in ist aktiv',
@@ -699,6 +703,7 @@ const PATTERNS: [RegExp, string][] = [
   [/^Bookings end by midnight, so from (\d{2}:\d{2}) you can book up to (.+)\.$/, 'Buchungen enden spätestens um Mitternacht, daher kannst du ab $1 bis zu {$2} buchen.'],
   [/^Hi (.+), I’d love to…$/, 'Hallo $1, ich würde gern …'],
   [/^Message (.+)…$/, 'Nachricht an $1 …'],
+  [/^Your meet code can’t be sent in chat\. Show it to (.+) in person when you meet: that’s what confirms you met and releases the payment\.$/, 'Dein Treffcode kann nicht im Chat gesendet werden. Zeig ihn $1 persönlich, wenn ihr euch trefft: Das bestätigt euer Treffen und gibt die Zahlung frei.'],
   [/^Good morning, (.+)$/, 'Guten Morgen, $1'],
   [/^Hi, (.+)$/, 'Hallo, $1'],
   [/^(\d+½?) hours?$/, '$1 Std.'],

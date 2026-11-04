@@ -27,6 +27,7 @@ node scripts/slots.mjs         # open times: lengths, every kind of cancellation
 node scripts/reschedule.mjs    # moving bookings and the customer profile companions see; edits the local DB
 node scripts/feedback.mjs      # private safety feedback after meet-ups and the admin list; edits the local DB
 node scripts/custom-dates.mjs  # companions' own hours for specific dates and days off; edits the local DB
+node scripts/meet-code.mjs     # meet codes can't be sent in chat (also checks the app's copy of the check); edits the local DB
 ```
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
@@ -50,6 +51,7 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 - A companion application needs a profile photo plus `GALLERY_MIN` (3) to `GALLERY_MAX` (6) more photos (`kind: 'gallery'` uploads), shown as slides on the profile. `PUT /companion/gallery` (`{ ids }`, in order) replaces them later; once a listing has 3 it can't drop below 3, and removed photos are deleted.
 - Companions see the profile of whoever booked them (name, photo, optional age, gender, languages, interests, About, ID-verified badge, meet-ups so far), never their email, phone or documents.
 - Each paid booking has its own chat thread, open while the booking is pending or confirmed. It ends for both sides when the meet code is entered or the booking is cancelled.
+- Meet codes never go through chat: entering one is what proves the two met and releases the payment, so it's shown in person only. A message containing the code of one of the pair's open bookings is refused (`400`, `code: 'meet_code'`), however it's written: spaced out, with symbols or emoji between the digits, as number words (English or German), or split over the sender's last 3 messages in 15 minutes. Times and dates ("18:30", "28.11.") are left alone, and new codes never look like one (`src/lib/meetCode.ts`; the app runs the same check before sending, `mobile/src/lib/meetCode.ts`).
 - Customers cancel for free until `FREE_CANCEL_HOURS` (24) before the start; later the booking is cancelled without a refund and the companion keeps their pay. Companions can cancel any time before the meeting; the customer always gets everything back. Support can refund any booking from the admin panel.
 
 ## Emails

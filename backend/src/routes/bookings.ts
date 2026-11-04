@@ -5,7 +5,8 @@ import { berlinToUnix, hoursText, MAX_HOURS, MIN_HOURS, slotsFor, validLength } 
 import { slotsChanged } from '../lib/live';
 import { alertAdmins, notify } from '../lib/notify';
 import { inBackground, sendBookingConfirmation, sendBookingInvoice } from '../lib/mail';
-import { berlinWhen, CONTACT_MSG, digits, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
+import { berlinWhen, CONTACT_MSG, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
+import { newMeetCode } from '../lib/meetCode';
 import { cancelIntent, capture, createCheckout, expireSession, getSession, intentOf, stripeOn } from '../lib/stripe';
 import { balanceOf } from './payouts';
 
@@ -239,7 +240,7 @@ bookings.post('/', async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO bookings (id, customer_id, companion_id, activity, starts_at, duration_h, place, note, boundaries_agreed, rate, subtotal, fee, total, meet_code, credit_used)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, u.id, comp!.user_id, b.act, startsAt, b.dur, place.slice(0, 160), (b.note ?? '').slice(0, 240), b.boundariesAgreed ? 1 : 0, comp!.rate * 100, subtotal, fee, total, digits(4), creditUsed).run();
+  ).bind(id, u.id, comp!.user_id, b.act, startsAt, b.dur, place.slice(0, 160), (b.note ?? '').slice(0, 240), b.boundariesAgreed ? 1 : 0, comp!.rate * 100, subtotal, fee, total, newMeetCode(), creditUsed).run();
   // Two people can pick the same time at the same moment: the booking saved first keeps it.
   // A suggested new time is a hold too: it was set after our slot check, so it wins.
   const beaten = await c.env.DB.prepare(

@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { BTAB, notifWhen, ST, type BTab } from '../data';
 import { useStore } from '../store';
-import { api, wsUrl } from '../api';
+import { api, ApiError, wsUrl } from '../api';
+import { asksForCode, sharesCode } from '../lib/meetCode';
 import { bookAgain, goBack, openCustomer, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, Row, Stripes, Txt, TypingDots, Photo } from '../ui/primitives';
@@ -34,6 +35,8 @@ export default function Chat() {
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState('');
+  // The message would have shared a meet code: it stays in the box with a note saying why it can't be sent.
+  const [codeNote, setCodeNote] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   const ws = useRef<WebSocket | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -116,8 +119,11 @@ export default function Chat() {
   const st = x.status !== 'none' ? ST[x.status] : null;
   const canSend = draft.trim().length > 0;
 
+  // Your meet codes with this companion (customers only: companions don't have one).
+  const myCodes = () => (isComp ? [] : useStore.getState().bookings.filter((b) => b.cid === x.cid && b.otp).map((b) => b.otp!));
   const onDraft = (t: string) => {
     setDraft(t);
+    if (codeNote && !myCodes().some((c) => sharesCode(t, c))) setCodeNote(false);
     if (t && Date.now() - lastTypingSent.current > 2000 && ws.current?.readyState === 1) {
       ws.current.send(JSON.stringify({ type: 'typing' }));
       lastTypingSent.current = Date.now();
@@ -126,6 +132,15 @@ export default function Chat() {
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
+    // A meet code is for the meet-up itself (entering it releases the payment), so it never goes through chat: not in
+    // one message, spelled out, or split over a few. The server checks the same.
+    const since = Date.now() / 1000 - 15 * 60;
+    const before = (msgs ?? []).filter((m) => m.me && !m.pending && m.at > since).slice(-3).reverse().map((m) => m.t);
+    if (myCodes().some((c) => sharesCode(text, c, before))) {
+      setCodeNote(true);
+      return;
+    }
+    setCodeNote(false);
     setDraft('');
     const tmp: Msg = { id: 'tmp' + Date.now(), me: true, t: text, at: Math.floor(Date.now() / 1000), pending: true };
     setMsgs((m) => [...(m ?? []), tmp]);
@@ -135,9 +150,18 @@ export default function Chat() {
     } catch (e) {
       setMsgs((m) => (m ?? []).filter((y) => y.id !== tmp.id));
       setDraft(text);
-      useStore.getState().showToast((e as Error).message);
+      if (e instanceof ApiError && e.code === 'meet_code') setCodeNote(true);
+      else useStore.getState().showToast((e as Error).message);
     }
   };
+  // Above the message box: why a code can't be sent, or (companions) a heads-up while asking for one.
+  const note = codeNote
+    ? isComp
+      ? 'Meet codes can’t be shared in chat. Ask for it in person when you meet.'
+      : `Your meet code can’t be sent in chat. Show it to ${name} in person when you meet: that’s what confirms you met and releases the payment.`
+    : isComp && asksForCode(draft)
+      ? 'Customers can’t send their meet code in chat. Ask for it in person when you meet.'
+      : null;
   const openCtx = () => {
     if (isComp) {
       router.dismissTo('/companion/calendar');
@@ -206,11 +230,18 @@ export default function Chat() {
           'sep' in m ? (
             <Txt key={'s' + i} size={11} weight={600} ls={0.06} color={colors.gray500} style={{ alignSelf: 'center', marginTop: 10, marginBottom: 4, textTransform: 'uppercase' }}>{m.sep}</Txt>
           ) : (
-            <Enter key={m.id} style={{ flexDirection: 'row', justifyContent: m.me ? 'flex-end' : 'flex-start', opacity: m.pending ? 0.6 : 1 }}>
+            <Enter key={m.id} style={{ alignItems: m.me ? 'flex-end' : 'flex-start', opacity: m.pending ? 0.6 : 1 }}>
               <View style={{ maxWidth: '76%', paddingTop: 10, paddingHorizontal: 14, paddingBottom: 8, borderWidth: 1, borderColor: colors.ink, backgroundColor: m.me ? colors.ink : colors.white, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: m.me ? 20 : 6, borderBottomRightRadius: m.me ? 6 : 20 }}>
                 <Txt raw size={15} lh={1.4} color={m.me ? colors.white : colors.ink}>{m.t}</Txt>
                 <Txt size={10.5} color={m.me ? 'rgba(255,255,255,.72)' : colors.gray500} align="right" style={{ marginTop: 3 }}>{timeOf(m.at)}</Txt>
               </View>
+              {/* Someone asks for a code in chat: remind the customer it's only for in person. */}
+              {!m.me && !isComp && open && asksForCode(m.t) ? (
+                <Row style={{ maxWidth: '86%', gap: 6, alignItems: 'flex-start', marginTop: 6, marginBottom: 2, paddingHorizontal: 4 }}>
+                  <Icon name="shield-alert" size={14} color={colors.redDeep} />
+                  <Txt size={12} lh={1.4} color={colors.gray800} style={{ flexShrink: 1 }}>Never send your meet code in chat. Show it only in person, when you meet.</Txt>
+                </Row>
+              ) : null}
             </Enter>
           ),
         )}
@@ -233,7 +264,14 @@ export default function Chat() {
           {!isComp && x ? <PrimaryButton label="Book again" height={46} radius={14} size={14} onPress={() => bookAgain(x.cid)} /> : null}
         </View>
       ) : (
-      <Row style={{ paddingTop: 10, paddingHorizontal: 12, paddingBottom: barBottom, backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 8 }}>
+      <View style={{ paddingTop: 10, paddingHorizontal: 12, paddingBottom: barBottom, backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 8 }}>
+      {note ? (
+        <View accessibilityLiveRegion="polite" style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 9, paddingHorizontal: 12, borderRadius: 12, backgroundColor: codeNote ? colors.redSoft : colors.butter }}>
+          <Icon name={codeNote ? 'lock' : 'info'} size={16} color={codeNote ? colors.redDeep : colors.ink} style={{ marginTop: 1 }} />
+          <Txt size={13} lh={1.4} color={colors.ink} style={{ flex: 1 }}>{note}</Txt>
+        </View>
+      ) : null}
+      <Row style={{ gap: 8 }}>
         <TextInput
           value={draft}
           onChangeText={onDraft}
@@ -249,6 +287,7 @@ export default function Chat() {
           <Icon name="arrow-up" size={20} color={canSend ? colors.white : colors.gray500} />
         </Pressable>
       </Row>
+      </View>
       )}
     </KeyboardAvoidingView>
   );

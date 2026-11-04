@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
 import { notify } from './lib/notify';
 import { CONTACT_MSG, fail, hasContactDetails, newId, now, shouldFlag } from './lib/util';
+import { CODE_MSG, sharesCode } from './lib/meetCode';
 import { ensureThread } from './routes/bookings';
 
 /**
@@ -154,6 +155,16 @@ chat.post('/:id/messages', async (c) => {
   const body = (text ?? '').trim().slice(0, 2000);
   if (!body) fail(400, 'Message is empty.');
   if (!(await threadOpen(c.env, cv.id))) fail(403, 'This chat has ended. Each booking has its own chat, open until you meet.');
+  // Meet codes are shown in person only (entering one releases the payment), so they never go through chat: not in
+  // one message, not spelled out, not split over a few.
+  const codes = await c.env.DB.prepare("SELECT meet_code FROM bookings WHERE customer_id = ? AND companion_id = ? AND paid = 1 AND status IN ('pending', 'confirmed')")
+    .bind(cv.customer_id, cv.companion_id).all<{ meet_code: string }>();
+  if (codes.results.length) {
+    const recent = await c.env.DB.prepare('SELECT body FROM messages WHERE conversation_id = ? AND sender_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 3')
+      .bind(cv.id, u.id, now() - 15 * 60).all<{ body: string }>();
+    const before = recent.results.map((m) => m.body);
+    if (codes.results.some((b) => sharesCode(body, b.meet_code, before))) return c.json({ error: CODE_MSG, code: 'meet_code' }, 400);
+  }
   if (hasContactDetails(body)) fail(400, CONTACT_MSG);
   const other = cv.customer_id === u.id ? cv.companion_id : cv.customer_id;
   const blocked = await c.env.DB.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').bind(other, u.id).first();
