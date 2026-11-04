@@ -84,16 +84,29 @@ function split(style: StyleProp<ViewStyle>) {
   return { wrap: wrap as ViewStyle, face: face as ViewStyle, radius: (flat.borderRadius as number) ?? 0 };
 }
 
-type ShadowOpts = { shadow?: number; shadowColor?: string };
+type ShadowOpts = {
+  shadow?: number;
+  shadowColor?: string;
+  /**
+   * Size to the content instead of filling the box. Needed in centred or start-aligned columns: there React Native's
+   * layout engine on phones (Yoga with its legacy errata) stretches a filling face to the whole screen height, so a
+   * small box turns into a tall bar (the browser lays it out fine). On by itself when the box sets `alignSelf`.
+   */
+  fit?: boolean;
+};
+
+/** The face fills its box (rows of equal-height cards, boxes given a size) unless it has to fit its content. */
+const fills = (fit: boolean | undefined, wrap: ViewStyle) =>
+  !fit && !(wrap.alignSelf === 'center' || wrap.alignSelf === 'flex-start' || wrap.alignSelf === 'flex-end' || wrap.alignSelf === 'baseline');
 
 /** A view with the design's offset hard shadow (`box-shadow: Npx Npx 0 #111`). */
-export function Box({ style, shadow = 0, shadowColor = colors.ink, children }: ShadowOpts & { style?: StyleProp<ViewStyle>; children?: ReactNode }) {
+export function Box({ style, shadow = 0, shadowColor = colors.ink, fit, children }: ShadowOpts & { style?: StyleProp<ViewStyle>; children?: ReactNode }) {
   if (!shadow) return <View style={style}>{children}</View>;
   const { wrap, face, radius } = split(style);
   return (
     <View style={wrap}>
       <View pointerEvents="none" style={{ position: 'absolute', top: shadow, left: shadow, right: -shadow, bottom: -shadow, borderRadius: radius, backgroundColor: shadowColor }} />
-      <View style={[face, { flexGrow: 1 }]}>{children}</View>
+      <View style={[face, fills(fit, wrap) && { flexGrow: 1 }]}>{children}</View>
     </View>
   );
 }
@@ -107,8 +120,9 @@ type PressBoxProps = ShadowOpts & Omit<PressableProps, 'style' | 'children'> & {
 };
 
 /** Pressable variant of Box with the design's :active feedback. */
-export function PressBox({ style, shadow = 0, shadowColor = colors.ink, children, fx = 'fade', ...rest }: PressBoxProps) {
+export function PressBox({ style, shadow = 0, shadowColor = colors.ink, fit, children, fx = 'fade', ...rest }: PressBoxProps) {
   const { wrap, face, radius } = split(style);
+  const grow = fills(fit, wrap);
   return (
     // Screen readers get the label in the app's language, like the text on the button.
     <Pressable accessibilityRole="button" {...rest} accessibilityLabel={rest.accessibilityLabel ? t(rest.accessibilityLabel) : undefined} style={wrap}>
@@ -124,7 +138,7 @@ export function PressBox({ style, shadow = 0, shadowColor = colors.ink, children
             <View
               style={[
                 face,
-                { flexGrow: 1 },
+                grow && { flexGrow: 1 },
                 push && { transform: [{ translateX: shadow - off }, { translateY: shadow - off }] },
                 p && fx === 'scale' && { transform: [{ scale: 0.97 }] },
                 p && fx === 'fade' && { opacity: 0.85 },

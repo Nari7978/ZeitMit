@@ -26,6 +26,7 @@ node scripts/local-flows.mjs   # time-dependent flows (meet code, late cancel); 
 node scripts/slots.mjs         # open times: lengths, every kind of cancellation, live updates; edits the local DB
 node scripts/reschedule.mjs    # moving bookings and the customer profile companions see; edits the local DB
 node scripts/feedback.mjs      # private safety feedback after meet-ups and the admin list; edits the local DB
+node scripts/custom-dates.mjs  # companions' own hours for specific dates and days off; edits the local DB
 ```
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
@@ -41,6 +42,7 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 
 ## Booking rules
 - Open times (`GET /companions/:id/slots`) are the companion's weekly windows minus bookings, at least an hour ahead. Each time comes with `fit`, the longest booking that fits before the next one and before midnight; a longer request is refused. Bookings last `MIN_HOURS` (1) to `MAX_HOURS` (8) hours in half-hour steps and are priced by the hour (rate × hours, plus the 10% fee).
+- Companions can set their own hours for a specific date, up to `CUSTOM_DAYS_AHEAD` (60) days ahead: `PUT /companion/dates/:date` with `{ ranges: [['18:00', '23:00'], …] }` (up to 3 ranges in half hours from 06:00 to `24:00`, each at least an hour, not overlapping), or `{ ranges: [] }` for a day off. That date's hours replace the weekly windows: start times are every half hour within them (the day comes with `custom: true`) and a booking ends by its range's end. Bookings already made that day stay (the answer's `kept` says how many). `DELETE /companion/dates/:date` goes back to the weekly windows; `GET /companion` lists the dates. Customers still book up to 7 days ahead, and the list's "available today" and open days (`GET /companions`) follow the dates too.
 - The meeting place is optional: when it's left empty the two agree on it in the chat, and the check-in page and alerts say it isn't set. Requests, confirmed bookings and meet-ups under way block their time; any cancellation frees it at once.
 - While someone is on Stripe Checkout their time is held for others. Leaving checkout releases it straight away (`POST /bookings/:id/release` closes the checkout page first, so it can't be paid later); trying again with other details replaces your own open checkout. Abandoned ones expire after 35 minutes. If two people book the same time at the same moment, the first one saved keeps it.
 - Live updates go over WebSockets (`?token=`), through the chat Durable Object: `/live/slots/:id` sends a companion's new open times whenever they change, and `/live` tells your open app to reload when something changes for you (every notification does).
@@ -57,7 +59,7 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 - Emails follow the person's language setting; on "automatic" they use the language the app last reported showing (`PATCH /me { uiLanguage }`). Without email configured (local development) nothing is sent, but invoice numbers are still given out.
 
 ## Safety feedback after meet-ups
-- Once a meet-up has ended (its meet code was entered and its time is over), the cron asks both sides privately how it went, once, up to 3 days after the end: a notification and push that opens the form (`go: "feedback:<booking id>"`). The app also shows it on the completed booking (customers) and on the Overview (companions, for a week).
+- Once a meet-up has ended (its meet code was entered and its time is over), the cron asks both sides privately how it went, once, up to 3 days after the end: a notification and push that opens the form (`go: "feedback:<booking id>"`). The app also shows it on the completed booking and on Discover (customers), on the Overview and in the booking history (companions), and opens the form by itself once per meet-up on the home screen, up to 3 days after it ended.
 - `POST /bookings/:id/feedback` with `{ safe: 'yes' | 'unsure' | 'no', stars: 1–5, tags?, note? }`: whether they felt safe, how respectful the other person was, optional tags (the lists are `FEEDBACK_GOOD` and `FEEDBACK_CONCERNS` in `src/types.ts`; others are dropped) and a note of up to 600 characters. One answer per person per booking, only by the two people who met.
 - The other person never sees it. It's a concern when they didn't feel safe or weren't sure, gave 2 stars or fewer, or picked a worrying tag. Didn't feel safe, 1 star or "Crossed boundaries" also emails and notifies the admins (`ADMIN_EMAILS`) straight away.
 - Admins see it under Safety feedback: concerns first (open, then reviewed), everything with "All answers", each with what everyone said about the same person (answers, average stars, how many didn't feel safe), and can mark it reviewed or suspend the person. Customers can still leave a public review afterwards; the two are separate.
@@ -78,7 +80,7 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 | Customer bookings | `GET/POST /bookings`, `POST /bookings/:id/confirm-payment·release·cancel·review` |
 | After a meet-up (either side) | `POST /bookings/:id/feedback` (private, for the safety team) |
 | Moving a booking (either side) | `GET/POST/DELETE /bookings/:id/reschedule`, `POST /bookings/:id/reschedule/accept` |
-| Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/gallery`, `PUT /companion/availability`, `GET /companion/customers/:id`, `GET /companion/bookings`, `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
+| Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/gallery`, `PUT /companion/availability`, `PUT/DELETE /companion/dates/:date`, `GET /companion/customers/:id`, `GET /companion/bookings` (requests, upcoming, the latest 100 meet-ups as `done`, and `history`: those plus the latest 60 cancellations, newest first), `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
 | Payouts | `GET/POST /companion/payouts`, `PUT /companion/payouts/account` |
 | Chat | `GET /conversations`, `POST /conversations` (`{ bookingId }` or `{ companionId }`), `GET/POST /conversations/:id/messages`, `GET /conversations/:id/ws` (WebSocket, `?token=`) |
 | Live | `GET /live` (your updates), `GET /live/slots/:id` (a companion's open times); WebSockets, `?token=` |

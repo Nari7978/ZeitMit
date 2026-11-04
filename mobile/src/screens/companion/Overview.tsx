@@ -8,7 +8,9 @@ import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
 import { PrimaryButton } from '../../ui/common';
 import { initials } from '../Account';
 import { CompShell, Initial } from './Shell';
+import { historyLine } from './History';
 import { t } from '../../i18n';
+import { feedbackDue, useFeedbackPopup } from '../../lib/feedbackPrompt';
 
 export default function Overview() {
   // Only what this screen shows (the whole store would redraw it on every change anywhere in the app).
@@ -24,10 +26,10 @@ export default function Overview() {
   // Meet-ups happening now (the code can be entered from 2 hours before): enter the customer's code right here.
   const nowS = Date.now() / 1000;
   const meeting = upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600);
-  // The latest meet-up that ended in the past week without the private “How did it go?” answered.
-  const ask = comp.done
-    .filter((b) => !b.feedback && b.startsAt + b.dur * 3600 <= nowS && b.startsAt + b.dur * 3600 > nowS - 7 * 86400)
-    .sort((a, b) => b.startsAt - a.startsAt)[0];
+  // The latest meet-up that ended in the past week without the private “How did it go?” answered; it also pops up
+  // once by itself.
+  const ask = feedbackDue(comp.done);
+  useFeedbackPopup('companion');
 
   return (
     <CompShell title={'Hi, ' + first}>
@@ -103,6 +105,16 @@ export default function Overview() {
         <View style={{ flex: 1 }}>
           <Txt size={15} weight={700}>Your listing</Txt>
           <Txt size={13} color={colors.gray600}>{`${eur(rate)}/h · ${acts.length} ${acts.length === 1 ? 'activity' : 'activities'}`}</Txt>
+        </View>
+        <Icon name="chevron-right" size={18} color={colors.gray400} />
+      </PressBox>
+      <PressBox shadow={4} fx="push" onPress={() => router.push('/history')} accessibilityLabel="Booking history" style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
+        <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.butter, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="history" size={22} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Txt size={15} weight={700}>Booking history</Txt>
+          <Txt size={13} color={colors.gray600}>{comp.history.length ? historyLine(comp.history) : 'Past bookings will show here.'}</Txt>
         </View>
         <Icon name="chevron-right" size={18} color={colors.gray400} />
       </PressBox>

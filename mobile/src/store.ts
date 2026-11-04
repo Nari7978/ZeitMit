@@ -49,10 +49,14 @@ export type CompBooking = {
   dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number; feedback?: boolean;
   customer?: { bio: string; verified: boolean; since: number | null };
   resched?: Resched | null; reschedLeft?: number;
+  /** Cancelled bookings: who cancelled, and the note shown for it. */
+  cancelledBy?: 'customer' | 'companion' | 'support' | 'system'; cancelNote?: string;
 };
+/** A companion's own hours for one date (they replace the weekly windows that day); no ranges = a day off. */
+export type CustomDate = { date: string; ranges: [string, string][] };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback';
+  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'customDate';
 
 /** Private answers after a meet-up: only the safety team sees them. `about` is the other person's user id. */
 export type Feedback = {
@@ -111,7 +115,8 @@ type State = {
   notifs: Notif[];
   toast: string | null;
   /** `gallery`: how many photos the listing has besides the profile photo (null until loaded). */
-  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; gallery: number | null };
+  /** `history`: past meet-ups and cancellations, newest first; `dates`: own hours for specific dates. */
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; dates: CustomDate[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; gallery: number | null };
   edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
   feedback: Feedback;
@@ -124,6 +129,8 @@ type State = {
   otpFor: string | null;
   /** Draft for the cancel sheet: which booking, from whose side, and the reason picked. */
   cancel: { bid: string | null; side: 'customer' | 'companion'; reason: string | null; busy: boolean };
+  /** The "hours for a date" sheet: the picked date, a day off or these ranges. */
+  customDate: { date: string | null; off: boolean; ranges: [string, string][]; busy: boolean };
   otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
   gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
   checkin: Checkin | null;
@@ -155,6 +162,10 @@ type Actions = {
   /** Opens the private “How did it go?” sheet for a meet-up of yours (either side). */
   openFeedback: (bookingId: string) => void;
   submitFeedback: () => Promise<void>;
+  /** Saves a companion's hours for one date (`ranges` empty = a day off); false if it didn't work. */
+  saveDate: (date: string, ranges: [string, string][]) => Promise<boolean>;
+  /** Back to the weekly windows on this date. */
+  removeDate: (date: string) => Promise<boolean>;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
@@ -196,7 +207,7 @@ type Actions = {
 
 export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
 
-const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [], gallery: null };
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], dates: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [], gallery: null };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;
@@ -291,6 +302,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
     cancel: { bid: null, side: 'customer', reason: null, busy: false },
+    customDate: { date: null, off: false, ranges: [['18:00', '22:00']], busy: false },
     otpFor: null, otpIn: { uid: null, val: '', err: false, done: false, busy: false },
     gift: { amt: 100, to: '', msg: '', done: false },
     checkin: null,
@@ -405,15 +417,15 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     },
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
-        api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'earnings'>>('GET', '/companion/bookings'),
-        api<Companion & { avail: string[] }>('GET', '/companion'),
+        api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'history' | 'earnings'>>('GET', '/companion/bookings'),
+        api<Companion & { avail: string[]; dates?: CustomDate[] }>('GET', '/companion'),
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
         comp: keepEach(s.comp, {
           ...s.comp,
           ...(bk.status === 'fulfilled' ? bk.value : {}),
-          ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, gallery: profile.value.gallery?.length ?? 0 } : {}),
+          ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, dates: profile.value.dates ?? [], gallery: profile.value.gallery?.length ?? 0 } : {}),
         }),
         compConvos: convos.status === 'fulfilled' ? keep(s.compConvos, convos.value) : s.compConvos,
       }));
@@ -549,7 +561,8 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       const r = await attempt(() => api<{ concern: boolean }>('POST', `/bookings/${f.bid}/feedback`, { safe: f.safe, stars: f.stars, tags: f.tags, note: f.note }));
       if (!r) return set((s) => ({ feedback: { ...s.feedback, busy: false } }));
       const mark = <T extends { id: string; feedback?: boolean }>(list: T[]) => list.map((b) => (b.id === f.bid ? { ...b, feedback: true } : b));
-      set((s) => ({ feedback: { ...s.feedback, busy: false, sent: { concern: r.concern } }, bookings: mark(s.bookings), comp: { ...s.comp, done: mark(s.comp.done) } }));
+      const markComp = (c: State['comp']) => ({ ...c, done: mark(c.done), history: mark(c.history) });
+      set((s) => ({ feedback: { ...s.feedback, busy: false, sent: { concern: r.concern } }, bookings: mark(s.bookings), comp: markComp(s.comp) }));
     },
     submitReview: async () => {
       const { review } = get();
@@ -643,6 +656,20 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
         set((s) => ({ comp: { ...s.comp, avail: on ? s.comp.avail.filter((x) => x !== key) : [...s.comp.avail, key] } }));
         get().showToast(msg(e));
       });
+    },
+    saveDate: async (date, ranges) => {
+      const r = await attempt(() => api<{ date: string; ranges: [string, string][]; kept: number }>('PUT', `/companion/dates/${date}`, { ranges }));
+      if (!r) return false;
+      set((s) => ({ comp: { ...s.comp, dates: [...s.comp.dates.filter((d) => d.date !== date), { date, ranges: r.ranges }].sort((a, b) => a.date.localeCompare(b.date)) } }));
+      // Bookings already made that day aren't touched.
+      get().showToast(r.kept ? (r.kept === 1 ? 'Saved. Your booking that day stays.' : `Saved. Your ${r.kept} bookings that day stay.`) : 'Saved');
+      return true;
+    },
+    removeDate: async (date) => {
+      const ok = await attempt(() => api('DELETE', `/companion/dates/${date}`));
+      if (!ok) return false;
+      set((s) => ({ comp: { ...s.comp, dates: s.comp.dates.filter((d) => d.date !== date) } }));
+      return true;
     },
     setListing: (patch) => {
       set((s) => ({ comp: { ...s.comp, ...patch } }));

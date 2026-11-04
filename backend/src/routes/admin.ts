@@ -260,6 +260,7 @@ admin.delete('/companions/:id', async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE companions SET status = 'rejected', id_verified = 0, id_photo_id = NULL WHERE user_id = ?").bind(id),
     c.env.DB.prepare('DELETE FROM availability WHERE companion_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM availability_dates WHERE companion_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM saved WHERE companion_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM photos WHERE id = ?').bind(cp!.id_photo_id ?? ''),
   ]);

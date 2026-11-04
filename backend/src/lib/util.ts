@@ -56,12 +56,12 @@ export function berlinWhen(unix: number) {
   return { day, time, full: `${day} · ${time}` };
 }
 
-/** Weekday index (0=Mon) and hour in Berlin for a unix time. */
+/** Weekday index (0=Mon), hour and minute in Berlin for a unix time. */
 export function berlinParts(unix: number) {
   const d = new Date(unix * 1000);
   const wd = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', weekday: 'short' }).format(d);
-  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', hour: '2-digit', hour12: false }).format(d));
-  return { day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(wd), hour };
+  const [hour, minute] = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d).split(':').map(Number);
+  return { day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(wd), hour, minute };
 }
 
 export const windowOf = (hour: number) => (hour < 12 ? 'am' : hour < 17 ? 'pm' : 'eve');

@@ -1,12 +1,14 @@
 // Bottom sheets (filters, sort, gift, safety, meet code, …) rendered above every screen.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Animated, BackHandler, Easing, KeyboardAvoidingView, Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View, type ScrollViewInstance, type TextInputInstance } from 'react-native';
 import Slider from '@react-native-community/slider';
 
 import { useShallow } from 'zustand/react/shallow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, LANGS, PREF, SORT, WHEN } from '../data';
+import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, LANGS, PREF, SORT, WEEK, WHEN } from '../data';
+import { addDays, berlinToday, clock, CUSTOM_DAYS_AHEAD, dateLabel, MAX_RANGES, minutes, nextRange, rangeProblem, weekdayOf, weeklyRanges, type Range } from '../lib/dates';
+import { locale } from '../i18n';
 import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { goBack, openProfile } from '../nav';
@@ -80,6 +82,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'delete': return <DeleteSheet />;
     case 'redeem': return <RedeemSheet />;
     case 'feedback': return <FeedbackSheet />;
+    case 'customDate': return <CustomDateSheet />;
   }
 }
 
@@ -389,6 +392,154 @@ const FeedbackTag = ({ label, good, on, onPress }: { label: string; good?: boole
   </Pressable>
 );
 
+// ---------- Companion: hours for a specific date ----------
+
+/** A companion's own hours for one date (or a day off), replacing the weekly windows that day. */
+function CustomDateSheet() {
+  const cd = useStore((s) => s.customDate);
+  const dates = useStore((s) => s.comp.dates);
+  const { saveDate, removeDate, closeSheet, showToast } = useStore.getState();
+  const set = (o: Partial<typeof cd>) => useStore.setState((s) => ({ customDate: { ...s.customDate, ...o } }));
+  const existing = dates.find((d) => d.date === cd.date);
+  // Start from what's set for that date, or that weekday's weekly times.
+  const pick = useCallback((date: string) => {
+    const { comp } = useStore.getState();
+    const ex = comp.dates.find((d) => d.date === date);
+    const weekly = weeklyRanges(comp.avail, WEEK[weekdayOf(date)]);
+    useStore.setState((s) => ({ customDate: { ...s.customDate, date, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : weekly.length ? weekly : [['18:00', '22:00']] } }));
+  }, []);
+  const setRange = (i: number, r: Range) => set({ ranges: cd.ranges.map((x, k) => (k === i ? r : x)) });
+  const more = nextRange(cd.ranges);
+  const problem = cd.off ? null : rangeProblem(cd.ranges);
+  const save = async () => {
+    if (!cd.date || problem || cd.busy) return;
+    set({ busy: true });
+    const ok = await saveDate(cd.date, cd.off ? [] : [...cd.ranges].sort((a, b) => minutes(a[0]) - minutes(b[0])));
+    set({ busy: false });
+    if (ok) closeSheet();
+  };
+  const reset = async () => {
+    if (!cd.date || cd.busy) return;
+    set({ busy: true });
+    const ok = await removeDate(cd.date);
+    set({ busy: false });
+    if (ok) { closeSheet(); showToast('Back to your weekly times for that day.'); }
+  };
+
+  return (
+    <Pad scroll>
+      <SheetTitle style={{ marginBottom: 2 }}>Hours for a date</SheetTitle>
+      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>They replace your weekly times on that day. Bookings you already have stay.</Txt>
+      <DateStrip selected={cd.date} marked={dates.map((d) => d.date).join()} onPick={pick} />
+      {cd.date ? (
+        <>
+          <Txt size={15} weight={700} style={{ marginTop: 16 }}>{dateLabel(cd.date)}</Txt>
+          <Row style={{ gap: 8, marginTop: 10 }}>
+            <Chip label="Available" icon="clock" on={!cd.off} onPress={() => set({ off: false, ranges: cd.ranges.length ? cd.ranges : [['18:00', '22:00']] })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
+            <Chip label="Day off" icon="calendar-x" on={cd.off} onPress={() => set({ off: true })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
+          </Row>
+          {cd.off ? (
+            <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>Customers can’t book you that day.</Txt>
+          ) : (
+            <View style={{ gap: 10, marginTop: 14 }}>
+              {cd.ranges.map(([from, to], i) => (
+                <Row key={i} style={{ gap: 8, alignItems: 'center' }}>
+                  <TimeStepper label="From" value={from} min="06:00" max={clock(minutes(to) - 60)} onChange={(v) => setRange(i, [v, to])} />
+                  <TimeStepper label="To" value={to} min={clock(minutes(from) + 60)} max="24:00" onChange={(v) => setRange(i, [from, v])} />
+                  {cd.ranges.length > 1 ? <CircleButton icon="x" label="Remove these hours" size={34} iconSize={16} bg={colors.butter} border={0} onPress={() => set({ ranges: cd.ranges.filter((_, k) => k !== i) })} /> : null}
+                </Row>
+              ))}
+              {cd.ranges.length < MAX_RANGES && more ? (
+                <TextButton label="Add more hours" icon="plus" size={14} onPress={() => set({ ranges: [...cd.ranges, more] })} style={{ alignSelf: 'flex-start' }} />
+              ) : null}
+            </View>
+          )}
+          {problem ? <Txt size={13} color={colors.redDeep} style={{ marginTop: 10 }}>{problem}</Txt> : null}
+          <PrimaryButton label={cd.busy ? 'Saving…' : 'Save'} dim={!!problem || cd.busy} style={{ marginTop: 16 }} onPress={() => void save()} />
+          {existing ? <TextButton label="Use my weekly times again" size={14} onPress={() => void reset()} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
+        </>
+      ) : (
+        <Txt size={14} color={colors.gray600} style={{ marginTop: 16 }}>Pick a date.</Txt>
+      )}
+    </Pad>
+  );
+}
+
+/**
+ * The next CUSTOM_DAYS_AHEAD days as tiles (a dot on dates with their own hours), scrolled to the picked one.
+ * Labels are made once and the strip only redraws when the pick or the dots change, not on every time step.
+ */
+const DateStrip = memo(function DateStrip({ selected, marked, onPick }: { selected: string | null; marked: string; onPick: (date: string) => void }) {
+  const today = berlinToday();
+  const days = useMemo(() => {
+    const wd = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
+    const mo = new Intl.DateTimeFormat(locale(), { month: 'short', timeZone: 'UTC' });
+    return Array.from({ length: CUSTOM_DAYS_AHEAD + 1 }, (_, i) => {
+      const d = addDays(today, i);
+      const day = new Date(d + 'T12:00:00Z');
+      // The month on the first tile and on each 1st, the weekday otherwise.
+      return { d, top: i === 0 || day.getUTCDate() === 1 ? mo.format(day) : wd.format(day), num: String(day.getUTCDate()), label: dateLabel(d) };
+    });
+  }, [today]);
+  const has = useMemo(() => new Set(marked.split(',')), [marked]);
+  const ref = useRef<ScrollViewInstance>(null);
+  const scrolled = useRef(false);
+  const TILE = 60; // 54 wide + 6 gap
+  return (
+    <ScrollView
+      ref={ref} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 2, paddingRight: 4 }}
+      onContentSizeChange={(w) => {
+        if (scrolled.current || !w) return;
+        scrolled.current = true;
+        const i = days.findIndex((x) => x.d === selected);
+        if (i > 2) ref.current?.scrollTo({ x: (i - 2) * TILE, animated: false });
+      }}
+    >
+      {days.map(({ d, top, num, label }) => {
+        const on = selected === d;
+        return (
+          <Pressable
+            key={d} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: on }} onPress={() => onPick(d)}
+            style={{ width: 54, height: 72, borderRadius: 14, borderWidth: 2, borderColor: on ? colors.ink : colors.hairline, backgroundColor: on ? colors.ink : colors.white, alignItems: 'center', justifyContent: 'center', gap: 1 }}
+          >
+            <Txt size={10.5} weight={600} color={on ? colors.sun : colors.gray600} numberOfLines={1}>{top}</Txt>
+            <Txt size={18} weight={700} color={on ? colors.white : colors.ink}>{num}</Txt>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: has.has(d) ? colors.pink : 'transparent' }} />
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+});
+
+/** A time in half-hour steps between `min` and `max`. */
+function TimeStepper({ label, value, min, max, onChange }: { label: string; value: string; min: string; max: string; onChange: (v: string) => void }) {
+  const m = minutes(value);
+  const step = (d: number) => {
+    const next = m + d;
+    if (next >= minutes(min) && next <= minutes(max)) onChange(clock(next));
+  };
+  const btn = (icon: string, a11y: string, d: number) => {
+    const off = m + d < minutes(min) || m + d > minutes(max);
+    return (
+      <Pressable accessibilityRole="button" accessibilityLabel={t(a11y)} accessibilityState={{ disabled: off }} disabled={off} onPress={() => step(d)} hitSlop={6}
+        style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: off ? colors.track : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
+        <Icon name={icon} size={16} color={off ? colors.gray400 : colors.ink} />
+      </Pressable>
+    );
+  };
+  return (
+    <View style={{ flex: 1, minWidth: 0, paddingVertical: 6, paddingHorizontal: 6, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}>
+      <Txt size={11} color={colors.gray600} align="center">{label}</Txt>
+      <Row style={{ alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+        {btn('minus', `${label}: earlier`, -30)}
+        <Txt size={17} weight={700}>{value}</Txt>
+        {btn('plus', `${label}: later`, 30)}
+      </Row>
+    </View>
+  );
+}
+
 // ---------- Account ----------
 
 function ReviewSheet() {
@@ -543,7 +694,7 @@ function GiftSheet() {
           </View>
           <H size={26} ls={-0.03} align="center">Gift sent to {to}</H>
           <Txt size={14} color={colors.gray600} align="center">Share this gift code with {to}. It’s valid for 12 months on any booking.</Txt>
-          <Box shadow={3} style={{ marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.butter }}>
+          <Box shadow={3} fit style={{ marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.butter }}>
             <Txt kind="mono" size={20} weight={700} ls={0.08} selectable>{gift.code}</Txt>
           </Box>
           <PrimaryButton label="Done" weight={700} style={{ marginTop: 10, alignSelf: 'stretch' }} onPress={() => useStore.getState().closeSheet()} />

@@ -1,19 +1,34 @@
 import { Pressable, View } from 'react-native';
+import { router } from 'expo-router';
 import { colors } from '../../theme';
 import { AM, hours, placeOr, WEEK, WIN, whenShort } from '../../data';
 import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
+import { addDays, berlinToday, dateLabel, rangesText, weekdayOf, weeklyRanges } from '../../lib/dates';
 import { Icon } from '../../ui/Icon';
 import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
+import { PastRow } from './History';
 import { t } from '../../i18n';
 import { openBookingChat, openCustomer, openReschedule } from '../../nav';
-import { TextButton } from '../../ui/common';
+import { SecondaryButton, TextButton } from '../../ui/common';
 import { ReschedBox } from '../../ui/ReschedBox';
 
 export default function Calendar() {
   const avail = useStore((s) => s.comp.avail);
   const up = useStore((s) => s.comp.upcoming);
+  const all = useStore((s) => s.comp.dates);
+  const today = berlinToday();
+  const dates = all.filter((d) => d.date >= today); // a date that just passed, with the app left open
+  const history = useStore((s) => s.comp.history);
+  const done = useStore((s) => s.comp.done);
   const { openSheet, setAvail } = useStore.getState();
+  // Opens the date sheet: on a date that has hours, those; a new one starts tomorrow with that weekday's weekly times.
+  const editDate = (date?: string) => {
+    const d = date ?? addDays(today, 1);
+    const ex = dates.find((x) => x.date === d);
+    const weekly = weeklyRanges(avail, WEEK[weekdayOf(d)]);
+    openSheet('customDate', { customDate: { date: d, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : weekly.length ? weekly : [['18:00', '22:00']], busy: false } });
+  };
   return (
     <CompShell title="Calendar">
       <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
@@ -46,6 +61,27 @@ export default function Calendar() {
           </Row>
         ))}
       </Box>
+
+      {/* Own hours for specific dates, or days off */}
+      <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 10 }}>
+        <Txt size={15} weight={700}>Specific dates</Txt>
+        <Txt size={12.5} lh={1.45} color={colors.gray600}>Set your own hours for a date, or take a day off. They replace your weekly times on that day. Customers can book up to 7 days ahead.</Txt>
+        {dates.map((d) => (
+          <Pressable key={d.date} accessibilityRole="button" accessibilityLabel={`${dateLabel(d.date)}, ${rangesText(d.ranges)}`} onPress={() => editDate(d.date)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+            <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: d.ranges.length ? colors.mintSoft : colors.redSoft, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name={d.ranges.length ? 'clock' : 'calendar-x'} size={17} color={d.ranges.length ? colors.greenDeep : colors.redDeep} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Txt size={14} weight={600}>{dateLabel(d.date)}</Txt>
+              <Txt size={13} color={colors.gray600} numberOfLines={1}>{rangesText(d.ranges)}</Txt>
+            </View>
+            <Icon name="pencil" size={15} color={colors.gray600} />
+          </Pressable>
+        ))}
+        <SecondaryButton label="Add a date" icon="calendar-plus" height={44} radius={12} onPress={() => editDate()} />
+      </Box>
+
       <Txt size={15} weight={700} style={{ marginTop: 6 }}>Upcoming</Txt>
       {up.map((u) => (
         <Box key={u.id} shadow={4} style={{ padding: 14, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
@@ -95,6 +131,18 @@ export default function Calendar() {
         </Box>
       ))}
       {!up.length ? <Txt size={14} color={colors.gray600}>No upcoming bookings yet.</Txt> : null}
+
+      {/* Booking history: past meet-ups and cancellations, newest first */}
+      <Txt size={15} weight={700} style={{ marginTop: 6 }}>Booking history</Txt>
+      {history.length ? (
+        <Box shadow={4} style={{ paddingHorizontal: 14, paddingVertical: 4, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
+          {/* The latest meet-ups (where "How did it go?" matters); See all has the cancellations too. */}
+          {(done.length ? done : history).slice(0, 3).map((b, i) => <PastRow key={b.id} b={b} first={i === 0} />)}
+        </Box>
+      ) : <Txt size={14} color={colors.gray600}>Past bookings will show here.</Txt>}
+      {history.length > 3 ? (
+        <TextButton label={`See all ${history.length}`} size={14} weight={700} onPress={() => router.push('/history')} style={{ alignSelf: 'center' }} />
+      ) : null}
     </CompShell>
   );
 }

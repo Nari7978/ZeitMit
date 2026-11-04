@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
-import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
+import { berlinDate, berlinToUnix, cleanRanges, CUSTOM_DAYS_AHEAD, GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
-import { berlinWhen, CONTACT_MSG, fail, hasContactDetails, parseJson } from '../lib/util';
+import { berlinWhen, CONTACT_MSG, fail, hasContactDetails, now, parseJson } from '../lib/util';
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -38,8 +38,14 @@ companionProfile.get('/', async (c) => {
   const id = c.get('user').id;
   const row = await c.env.DB.prepare('SELECT * FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
   if (!row) return c.json({ status: 'none' });
-  const avail = await c.env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(id).all<{ day: number; win: string }>();
-  return c.json({ ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []), avail: avail.results.map((a) => `${WEEK[a.day]}-${a.win}`) });
+  const [avail, dates] = await Promise.all([
+    c.env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(id).all<{ day: number; win: string }>(),
+    c.env.DB.prepare('SELECT date, ranges FROM availability_dates WHERE companion_id = ? AND date >= ? ORDER BY date').bind(id, berlinDate(now())).all<{ date: string; ranges: string }>(),
+  ]);
+  return c.json({
+    ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []), avail: avail.results.map((a) => `${WEEK[a.day]}-${a.win}`),
+    dates: dates.results.map((d) => ({ date: d.date, ranges: parseJson<[string, string][]>(d.ranges, []) })),
+  });
 });
 
 /** "Become a Companion" submission. Goes to the admin review queue. */
@@ -157,6 +163,55 @@ companionProfile.put('/availability', async (c) => {
   await c.env.DB.prepare(on ? 'INSERT OR IGNORE INTO availability (companion_id, day, win) VALUES (?, ?, ?)' : 'DELETE FROM availability WHERE companion_id = ? AND day = ? AND win = ?')
     .bind(u.id, d, win).run();
   void slotsChanged(c.env, u.id, c.executionCtx); // open profiles show the new times at once
+  return c.json({ ok: true });
+});
+
+/** A date in the next CUSTOM_DAYS_AHEAD days (Berlin), as YYYY-MM-DD. */
+function checkDate(date: string) {
+  const today = berlinDate(now());
+  const last = berlinDate(berlinToUnix(today, '12:00') + CUSTOM_DAYS_AHEAD * 86400);
+  const d = new Date(date + 'T12:00:00Z');
+  const real = /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date; // no 30 February
+  if (!real || date < today || date > last) {
+    fail(400, `Pick a date in the next ${CUSTOM_DAYS_AHEAD} days.`);
+  }
+}
+
+/**
+ * Hours for one date, replacing the weekly windows that day. Body: { ranges: [['18:00', '23:00'], …] }; an empty list
+ * is a day off. Bookings already made that day stay (`kept` says how many), so the app can mention them.
+ */
+companionProfile.put('/dates/:date', async (c) => {
+  const u = c.get('user');
+  const date = c.req.param('date');
+  checkDate(date);
+  let ranges: [string, string][] = [];
+  try {
+    ranges = cleanRanges((await c.req.json<{ ranges?: unknown }>()).ranges);
+  } catch (e) {
+    fail(400, (e as Error).message);
+  }
+  const has = await c.env.DB.prepare('SELECT 1 FROM companions WHERE user_id = ?').bind(u.id).first();
+  if (!has) fail(404, 'You don’t have a companion profile yet.');
+  const dayStart = berlinToUnix(date, '00:00');
+  const dayEnd = berlinToUnix(berlinDate(berlinToUnix(date, '12:00') + 86400), '00:00'); // 23 or 25 hours on clock-change days
+  const [, kept] = await Promise.all([
+    c.env.DB.prepare(
+      `INSERT INTO availability_dates (companion_id, date, ranges) VALUES (?, ?, ?)
+       ON CONFLICT (companion_id, date) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()`,
+    ).bind(u.id, date, JSON.stringify(ranges)).run(),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at >= ? AND starts_at < ?")
+      .bind(u.id, dayStart, dayEnd).first<{ n: number }>(),
+  ]);
+  void slotsChanged(c.env, u.id, c.executionCtx);
+  return c.json({ ok: true, date, ranges, kept: kept?.n ?? 0 });
+});
+
+/** Back to the weekly windows on this date. */
+companionProfile.delete('/dates/:date', async (c) => {
+  const u = c.get('user');
+  await c.env.DB.prepare('DELETE FROM availability_dates WHERE companion_id = ? AND date = ?').bind(u.id, c.req.param('date')).run();
+  void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });
 

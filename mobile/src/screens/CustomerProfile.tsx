@@ -62,7 +62,7 @@ export default function CustomerProfile() {
           <CircleButton icon="chevron-left" label="Back" size={40} iconSize={24} border={0} bg="transparent" onPress={() => goBack()} />
         </Row>
         <View style={{ alignItems: 'center', gap: 6, paddingHorizontal: 20, marginTop: 4 }}>
-          <Box shadow={4} style={{ borderRadius: 32, borderWidth: 2, borderColor: colors.ink, overflow: 'hidden' }}>
+          <Box shadow={4} fit style={{ borderRadius: 32, borderWidth: 2, borderColor: colors.ink, overflow: 'hidden' }}>
             <Initial who={p.name} hue={hueOf(p.id)} url={p.avatarUrl} size={128} radius={30} fontSize={46} />
           </Box>
           <H size={28} ls={-0.03} align="center" style={{ marginTop: 10 }}>{p.age ? `${first}, ${p.age}` : p.name}</H>

@@ -14,6 +14,7 @@ import { openSettings } from './Settings';
 import { useNavBottom } from '../ui/chrome';
 import { useAppWidth } from '../ui/layout';
 import { oklch } from '../lib/oklch';
+import { feedbackDue, useFeedbackPopup } from '../lib/feedbackPrompt';
 
 /** "Rent …" — the headline's last word keeps changing. */
 export const HERO_WORDS: SwapWord[] = [
@@ -63,12 +64,16 @@ export default function Discover() {
   const loading = useStore((s) => s.loading);
   const hasUnread = useStore((s) => s.notifs.some((n) => !n.read));
   const openSheet = useStore((s) => s.openSheet);
+  const { openFeedback } = useStore.getState();
 
   const C = useStore((s) => s.companions);
   const refresh = usePullRefresh();
   const saved = useStore((s) => s.saved);
   const newHere = useStore((s) => s.bookings.length === 0);
   const compStatus = useStore((s) => s.companionStatus);
+  // The private "How did it go?" for the latest meet-up (pops up once by itself, then stays here as a card).
+  const ask = useStore((s) => feedbackDue(s.bookings));
+  useFeedbackPopup('customer');
   const width = useAppWidth();
   const featured = C.slice(0, 5);
   // Right after launch there may be no approved companions yet.
@@ -119,6 +124,20 @@ export default function Discover() {
               </Pressable>
             </Row>
           </Row>
+
+          {ask ? (
+            <PressBox shadow={4} fx="push" onPress={() => openFeedback(ask.id)} accessibilityLabel={`How did it go with ${ask.companionName}?`}
+              style={{ marginTop: 16, marginHorizontal: 20, padding: 14, borderRadius: 20, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.lilac, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="shield-check" size={20} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Txt size={15} weight={700}>{`How did it go with ${ask.companionName}?`}</Txt>
+                <Txt size={13} lh={1.4} color={colors.gray800}>Tell us privately whether you felt safe. Only the safety team sees it.</Txt>
+              </View>
+              <Icon name="chevron-right" size={18} color={colors.gray600} />
+            </PressBox>
+          ) : null}
 
           {/* Hero: "Rent" + a word that keeps changing */}
           <View accessible accessibilityLabel="Rent a date or a mate" style={{ paddingTop: 24, paddingHorizontal: 20 }}>

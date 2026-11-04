@@ -57,6 +57,7 @@ const forCompanion = (b: BookingRow & CustomerInfo) => ({
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.note, status: b.status, pay: b.pay_status,
   payout: b.subtotal, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
   feedback: !!(b as { my_feedback?: number }).my_feedback,
+  cancelledBy: b.cancelled_by ?? undefined, cancelNote: b.status === 'cancelled' ? b.cancel_note ?? undefined : undefined,
 });
 
 async function load(env: Env, id: string) {
@@ -556,23 +557,40 @@ bookings.post('/:id/review', async (c) => {
 
 export const companionBookings = new Hono<AppEnv>();
 
+/**
+ * Everything a companion needs: open requests and upcoming bookings (all of them), their history (the latest 100
+ * meet-ups and 60 cancellations, newest first; counted apart so cancellations never push meet-ups out) and earnings.
+ * Totals are summed in SQL, so they cover every booking.
+ */
 companionBookings.get('/', async (c) => {
-  const r = await c.env.DB.prepare(
+  const uid = c.get('user').id;
+  const rows = (where: string, order: string, limit: number) => c.env.DB.prepare(
     `SELECT b.*, u.name AS customer_name, u.avatar_id, u.bio AS customer_bio, u.id_status AS customer_id_status, u.created_at AS customer_since,
        EXISTS (SELECT 1 FROM meet_feedback f WHERE f.booking_id = b.id AND f.from_id = ?1) AS my_feedback
      FROM bookings b JOIN users u ON u.id = b.customer_id
-     WHERE b.companion_id = ?1 AND b.paid = 1 ORDER BY b.starts_at LIMIT 200`,
-  ).bind(c.get('user').id).all<BookingRow & CustomerInfo>();
-  const all = r.results.map(forCompanion);
-  const held = r.results.filter((b) => b.status === 'confirmed' && b.pay_status === 'held').reduce((a, b) => a + b.subtotal, 0);
-  const released = r.results.filter((b) => b.pay_status === 'released').reduce((a, b) => a + b.subtotal, 0);
-  const balance = await balanceOf(c.env, c.get('user').id);
+     WHERE b.companion_id = ?1 AND b.paid = 1 AND ${where} ORDER BY ${order} LIMIT ${limit}`,
+  ).bind(uid).all<BookingRow & CustomerInfo>();
+  const [open, met, cancelled, sums, balance] = await Promise.all([
+    rows("b.status IN ('pending', 'confirmed')", 'b.starts_at', 500),
+    rows("b.status = 'completed'", 'b.starts_at DESC', 100),
+    rows("b.status = 'cancelled'", 'b.starts_at DESC', 60),
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(CASE WHEN status = 'confirmed' AND pay_status = 'held' THEN subtotal END), 0) AS held,
+         COALESCE(SUM(CASE WHEN pay_status = 'released' THEN subtotal END), 0) AS released, COUNT(CASE WHEN pay_status = 'released' THEN 1 END) AS releasedCount
+       FROM bookings WHERE companion_id = ? AND paid = 1`,
+    ).bind(uid).first<{ held: number; released: number; releasedCount: number }>(),
+    balanceOf(c.env, uid),
+  ]);
+  const active = open.results.map(forCompanion);
+  const done = met.results.map(forCompanion);
+  const history = [...done, ...cancelled.results.map(forCompanion)].sort((a, b) => b.startsAt - a.startsAt);
   return c.json({
-    requests: all.filter((b) => b.status === 'pending'),
-    upcoming: all.filter((b) => b.status === 'confirmed'),
-    done: all.filter((b) => b.status === 'completed'),
+    requests: active.filter((b) => b.status === 'pending'),
+    upcoming: active.filter((b) => b.status === 'confirmed'),
+    done,
+    history,
     earnings: {
-      held, released, releasedCount: r.results.filter((b) => b.pay_status === 'released').length,
+      held: sums?.held ?? 0, released: sums?.released ?? 0, releasedCount: sums?.releasedCount ?? 0,
       available: balance.available, pending: balance.pending, requested: balance.requested, paidOut: balance.paid,
     },
   });

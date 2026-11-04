@@ -113,7 +113,7 @@ export default function BookingFlow() {
           </Txt>
         </Enter>
         <Enter kind="rise" delay={540} style={{ width: '100%' }}>
-        <Box shadow={4} style={{ width: '100%', marginTop: 12, padding: 16, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Box shadow={4} fit style={{ width: '100%', marginTop: 12, padding: 16, borderRadius: 18, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={{ width: 48, height: 48, borderRadius: 14, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Txt size={15} weight={700}>{actLabel} · {durLabel}</Txt>
@@ -194,7 +194,8 @@ export default function BookingFlow() {
               <>
                 <Txt size={14} weight={600} style={{ marginTop: 24, marginBottom: 10 }}>Available times</Txt>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {TIMES.map((t) => {
+                  {/* The usual grid (taken times crossed out), or on a date with the companion's own hours, those times. */}
+                  {(day.custom ? day.times : TIMES).map((t) => {
                     const open = day.times.includes(t);
                     const on = b.time === t;
                     return (
@@ -203,6 +204,8 @@ export default function BookingFlow() {
                       </Pressable>
                     );
                   })}
+                  {/* Own hours can leave a short last row: keep its tiles the same width as the rest. */}
+                  {day.custom ? Array.from({ length: (4 - (day.times.length % 4)) % 4 }, (_, k) => <View key={`pad${k}`} style={{ width: '22.5%', flexGrow: 1 }} />) : null}
                 </View>
               </>
             ) : (

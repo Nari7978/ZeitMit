@@ -130,7 +130,7 @@ export default function Reschedule() {
               <>
                 <Txt size={14} weight={600} style={{ marginTop: 24, marginBottom: 10 }}>Available times</Txt>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {TIMES.map((t) => {
+                  {(day.custom ? day.times : TIMES).map((t) => {
                     const now = isCurrent(day.date, t);
                     const open = fits(day, t);
                     const on = pick.time === t;
@@ -141,6 +141,8 @@ export default function Reschedule() {
                       </Pressable>
                     );
                   })}
+                  {/* Own hours can leave a short last row: keep its tiles the same width as the rest. */}
+                  {day.custom ? Array.from({ length: (4 - (day.times.length % 4)) % 4 }, (_, k) => <View key={`pad${k}`} style={{ width: '22.5%', flexGrow: 1 }} />) : null}
                 </View>
               </>
             ) : (

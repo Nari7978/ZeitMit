@@ -9,7 +9,8 @@ import { useStore } from '../store';
 import { useLive } from './live';
 
 /** One day: open start times and, for each, the longest booking (hours) that fits before the next one. */
-export type DaySlots = { date: string; times: string[]; fit?: number[] };
+/** `custom`: the companion set their own hours for this date, so its times aren't the usual grid. */
+export type DaySlots = { date: string; times: string[]; fit?: number[]; custom?: boolean };
 
 /** Longest booking (hours) that can start at `time` on this day; 0 when the time isn't open. */
 export function fitAt(day: DaySlots | undefined, time: string | null) {
