@@ -73,6 +73,11 @@ function outcome(b: CompBooking): string {
   const first = b.who.split(' ')[0];
   const pay = eur(b.payout / 100);
   if (b.status === 'completed') return b.pay === 'released' ? `Met · ${pay} earned` : 'Met';
+  // A video date someone never joined (settled after its end).
+  if (b.cancelNote?.includes('didn’t join the video date')) {
+    if (b.cancelledBy === 'companion') return 'You didn’t join';
+    return b.pay === 'released' ? `${first} didn’t join · ${pay} earned` : `${first} didn’t join`;
+  }
   if (b.cancelledBy === 'companion') return b.cancelNote?.startsWith('Declined') ? 'You declined' : 'You cancelled';
   if (b.cancelledBy === 'customer') return b.pay === 'released' ? `${first} cancelled late · ${pay} earned` : `${first} cancelled`;
   if (b.cancelledBy === 'support') return 'Cancelled by ZeitMit support';

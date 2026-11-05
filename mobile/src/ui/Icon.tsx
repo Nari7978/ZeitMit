@@ -7,7 +7,7 @@ import {
   Landmark, Languages, Layers, LayoutDashboard, LifeBuoy, ListChecks, Lock, MapPin, MessageCircle, MessageSquareText,
   Minus, PartyPopper, Pencil, Phone, Plus, Receipt, Repeat, RotateCcw, ScanFace, Search, SearchX, Send, Share,
   ShieldAlert, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, TriangleAlert, User, UserRound, Users,
-  UsersRound, Utensils, Video, Wallet, X, Camera, Ticket, ImagePlus, Images, IdCard, Mail, LogOut, Trash2, ExternalLink, Smartphone, Navigation, WifiOff,
+  UsersRound, Utensils, Video, VideoOff, Mic, MicOff, PhoneOff, SwitchCamera, Wallet, X, Camera, Ticket, ImagePlus, Images, IdCard, Mail, LogOut, Trash2, ExternalLink, Smartphone, Navigation, WifiOff,
   type LucideProps,
 } from 'lucide-react-native';
 import { colors } from '../theme';
@@ -30,7 +30,7 @@ const ICONS: Record<string, ComponentType<LucideProps>> = {
   'search-x': SearchX, send: Send, share: Share, 'shield-alert': ShieldAlert, 'wifi-off': WifiOff, 'shield-check': ShieldCheck,
   'shopping-bag': ShoppingBag, 'sliders-horizontal': SlidersHorizontal, sparkles: Sparkles,
   'triangle-alert': TriangleAlert, user: User, 'user-round': UserRound, users: Users, 'users-round': UsersRound,
-  utensils: Utensils, video: Video, wallet: Wallet, x: X, camera: Camera, ticket: Ticket, 'image-plus': ImagePlus, images: Images, 'id-card': IdCard,
+  utensils: Utensils, video: Video, 'video-off': VideoOff, mic: Mic, 'mic-off': MicOff, 'phone-off': PhoneOff, 'switch-camera': SwitchCamera, wallet: Wallet, x: X, camera: Camera, ticket: Ticket, 'image-plus': ImagePlus, images: Images, 'id-card': IdCard,
   mail: Mail, 'log-out': LogOut, 'trash-2': Trash2, 'external-link': ExternalLink, smartphone: Smartphone, navigation: Navigation,
 };
 

@@ -22,6 +22,8 @@ jobs:
       # Optional: add these under Settings → Secrets and variables → Actions to switch features on.
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      TURN_KEY_ID: ${{ secrets.TURN_KEY_ID }}
+      TURN_KEY_API_TOKEN: ${{ secrets.TURN_KEY_API_TOKEN }}
       EMAIL_FROM_ADDRESS: ${{ vars.EMAIL_FROM_ADDRESS }}
       ADMIN_EMAILS: ${{ vars.ADMIN_EMAILS }}
       INVOICE_DETAILS: ${{ vars.INVOICE_DETAILS }}
@@ -69,9 +71,9 @@ jobs:
           done
           echo "::warning::Couldn't register a workers.dev subdomain automatically. Open Workers & Pages in the Cloudflare dashboard once to pick one."
 
-      - name: Store optional keys (Stripe, Brevo) as Worker secrets
+      - name: Store optional keys (Stripe, Brevo, TURN relay) as Worker secrets
         run: |
-          for NAME in STRIPE_SECRET_KEY BREVO_API_KEY; do
+          for NAME in STRIPE_SECRET_KEY BREVO_API_KEY TURN_KEY_ID TURN_KEY_API_TOKEN; do
             VAL="${!NAME}"
             if [ -n "$VAL" ]; then printf '%s' "$VAL" | npx wrangler secret put "$NAME" >/dev/null 2>&1 && echo "✓ $NAME set" || echo "::warning::Couldn't set $NAME (it will be set after the first deploy)"; fi
           done
@@ -92,6 +94,7 @@ jobs:
             echo "Email login: test mode (codes shown in the app)"
           fi
           [ -n "$STRIPE_SECRET_KEY" ] && echo "Payments: Stripe" || echo "Payments: simulated"
+          [ -n "$TURN_KEY_ID" ] && [ -n "$TURN_KEY_API_TOKEN" ] && echo "Video dates: direct, with Cloudflare TURN relay" || echo "Video dates: direct connections only (add TURN_KEY_ID and TURN_KEY_API_TOKEN secrets for the relay)"
           if ! npx wrangler deploy "${ARGS[@]}" 2>&1 | tee deploy.log; then
             grep -iE "error|✘|\[ERROR\]|code:" deploy.log | head -15 | while IFS= read -r line; do echo "::error::$line"; done
             exit 1

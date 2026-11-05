@@ -149,6 +149,11 @@ export const MIN_HOURS = 1;
 export const MAX_HOURS = 8;
 /** A booking's meeting place, or the reminder shown when it was left for the chat. */
 export const placeOr = (place: string) => place || 'Agree on a place in the chat';
+/** Video dates happen in the app: no meeting place, check-in or meet code. */
+export const isVideo = (act: ActId) => act === 'call';
+/** The video call opens this long before the start (as on the server). */
+export const CALL_OPENS_EARLY_S = 10 * 60;
+export const placeFor = (act: ActId, place: string) => (isVideo(act) ? 'Video call in the app' : placeOr(place));
 export const ageStr = (c: { age: number | null }) => (c.age ? ', ' + c.age : '');
 export const ratingStr = (c: Companion) => (c.rating ? c.rating.toFixed(1) : 'New');
 export const reviewsStr = (c: Companion) => (c.rating ? '(' + c.reviews + ')' : '');

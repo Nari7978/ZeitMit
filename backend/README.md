@@ -28,6 +28,7 @@ node scripts/reschedule.mjs    # moving bookings and the customer profile compan
 node scripts/feedback.mjs      # private safety feedback after meet-ups and the admin list; edits the local DB
 node scripts/custom-dates.mjs  # companions' own hours for specific dates and days off; edits the local DB
 node scripts/meet-code.mjs     # meet codes can't be sent in chat (also checks the app's copy of the check); edits the local DB
+node scripts/video.mjs         # video dates: joining, the call room, payment release, no-shows (API with --var CALL_RELEASE_SECONDS:3)
 ```
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
@@ -53,6 +54,13 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 - Each paid booking has its own chat thread, open while the booking is pending or confirmed. It ends for both sides when the meet code is entered or the booking is cancelled.
 - Meet codes never go through chat: entering one is what proves the two met and releases the payment, so it's shown in person only. A message containing the code of one of the pair's open bookings is refused (`400`, `code: 'meet_code'`), however it's written: spaced out, with symbols or emoji between the digits, as number words (English or German), or split over the sender's last 3 messages in 15 minutes. Times and dates ("18:30", "28.11.") are left alone, and new codes never look like one (`src/lib/meetCode.ts`; the app runs the same check before sending, `mobile/src/lib/meetCode.ts`).
 - Customers cancel for free until `FREE_CANCEL_HOURS` (24) before the start; later the booking is cancelled without a refund and the companion keeps their pay. Companions can cancel any time before the meeting; the customer always gets everything back. Support can refund any booking from the admin panel.
+
+## Video dates
+- A video date (activity `call`) happens in the app. The video goes straight between the two phones (WebRTC); nothing is recorded and no video passes through the server. One `CallRoom` Durable Object per booking passes the call setup between them (offer, answer, network candidates), sees who is there and counts the seconds both have video connected.
+- `POST /calls/:bookingId` returns who the call is with, when it ends and the ICE servers; `GET /calls/:bookingId/ws?token=` is the room's socket. Only the two people booked, on a confirmed paid video date, from 10 minutes before the start until the booked end, when the room ends the call.
+- Video dates have no meet code, meeting place or check-in. Once both have been on the call together for `CALL_RELEASE_SECONDS` (600), the payment is released and the booking completed; the call carries on until the booked end, and either side can rejoin. When someone joins alone, the other gets a notification that opens the call (`go: "call:<booking id>"`).
+- After the end the cron settles unconfirmed video dates once (`call_closed`): the companion never joined → full refund; only the companion joined → they keep their pay (like a late cancellation); both joined but not long enough → the payment stays held and admins get an alert.
+- Connecting: free public STUN servers by default, which is enough for most networks. For networks that block direct connections, add a free Cloudflare TURN relay (1,000 GB a month free): create a TURN key in the Cloudflare dashboard (Realtime → TURN) and add the repository secrets `TURN_KEY_ID` and `TURN_KEY_API_TOKEN`. The deploy stores them as Worker secrets and the server hands out short-lived relay credentials.
 
 ## Emails
 - After every payment (a booking or a gift card) the customer gets an invoice: numbered `ZM-<year>-<seq>` in one unbroken sequence, with the line items, the 10% fee and how it was paid (gift credit, card). Each number is stored once in `invoices` and kept when accounts are deleted, so an invoice is never sent twice.
@@ -81,6 +89,7 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 | Browse | `GET /companions`, `GET /companions/:id`, `GET /companions/:id/slots` |
 | Customer bookings | `GET/POST /bookings`, `POST /bookings/:id/confirm-payment·release·cancel·review` |
 | After a meet-up (either side) | `POST /bookings/:id/feedback` (private, for the safety team) |
+| Video dates (either side) | `POST /calls/:id`, `GET /calls/:id/ws` |
 | Moving a booking (either side) | `GET/POST/DELETE /bookings/:id/reschedule`, `POST /bookings/:id/reschedule/accept` |
 | Companion | `GET/PATCH /companion`, `POST /companion/apply`, `PUT /companion/gallery`, `PUT /companion/availability`, `PUT/DELETE /companion/dates/:date`, `GET /companion/customers/:id`, `GET /companion/bookings` (requests, upcoming, the latest 100 meet-ups as `done`, and `history`: those plus the latest 60 cancellations, newest first), `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
 | Payouts | `GET/POST /companion/payouts`, `PUT /companion/payouts/account` |

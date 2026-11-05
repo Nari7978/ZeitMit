@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
-import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, type ActId } from '../types';
+import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, VIDEO_ACT, type ActId } from '../types';
 import { berlinToUnix, hoursText, MAX_HOURS, MIN_HOURS, slotsFor, validLength } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { alertAdmins, notify } from '../lib/notify';
@@ -19,6 +19,7 @@ type BookingRow = {
   meet_code: string; code_attempts: number; reviewed: number; created_at: number; credit_used: number; payment_ref: string | null; paid: number; checkout_url: string | null;
   cancelled_by: 'customer' | 'companion' | 'support' | 'system' | null; cancel_reason: string | null;
   resched_at: number | null; resched_by: 'customer' | 'companion' | null; resched_asked: number | null; resched_count: number;
+  call_customer_at: number | null; call_companion_at: number | null; call_together_s: number; call_closed: number | null;
 };
 
 /** Customers cancel for free until this many hours before the start; later the companion keeps their pay. */
@@ -44,7 +45,8 @@ const reschedOf = (b: BookingRow) => (b.resched_at ? { at: b.resched_at, by: b.r
 const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; photo_id?: string | null }) => ({
   id: b.id, cid: b.companion_id, companionName: b.companion_name, hue: b.hue, photoUrl: b.photo_id ? `/photos/${b.photo_id}` : null, act: b.activity, startsAt: b.starts_at,
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.cancel_note ?? undefined, status: b.status,
-  pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' ? b.meet_code : undefined, reviewed: !!b.reviewed,
+  // Video dates have no meet code: the call itself confirms them.
+  pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' && b.activity !== VIDEO_ACT ? b.meet_code : undefined, reviewed: !!b.reviewed,
   cancelledBy: b.cancelled_by ?? undefined, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
   feedback: !!(b as { my_feedback?: number }).my_feedback,
 });
@@ -206,8 +208,8 @@ bookings.post('/', async (c) => {
   if (blocked) fail(403, 'You can’t book this companion.');
   if (!ACTIVITIES.includes(b.act) || !parseJson<string[]>(comp!.activities, []).includes(b.act)) fail(400, `${comp!.display_name} doesn’t offer that activity.`);
   if (!validLength(b.dur)) fail(400, `Choose ${MIN_HOURS} to ${MAX_HOURS} hours, in half-hour steps.`);
-  // Optional: the two can agree on a place in the chat after the request is accepted.
-  const place = (b.place ?? '').trim();
+  // Optional: the two can agree on a place in the chat after the request is accepted. Video dates happen in the app.
+  const place = b.act === VIDEO_ACT ? '' : (b.place ?? '').trim();
   if (ROMANTIC.includes(b.act) && !b.boundariesAgreed) fail(400, `Please agree to respect ${comp!.display_name}’s boundaries.`);
 
   // A checkout this customer left unpaid with the same companion mustn't block their new try.
@@ -647,6 +649,7 @@ companionBookings.post('/:id/verify-code', async (c) => {
   const b = await own(c, c.req.param('id'));
   const { code } = await c.req.json<{ code?: string }>();
   if (b.status !== 'confirmed' || b.pay_status !== 'held') fail(409, 'This booking isn’t waiting for a code.');
+  if (b.activity === VIDEO_ACT) fail(409, 'Video dates are confirmed by the call itself, not with a code.');
   if (b.starts_at - now() > 2 * 3600) fail(409, 'You can enter the code once you meet (up to 2 hours before the start).');
   if (b.code_attempts >= 5) fail(429, 'Too many wrong codes. Contact support to release this payment.');
   if (!safeEqual(String(code ?? ''), b.meet_code)) {
@@ -671,6 +674,76 @@ companionBookings.post('/:id/verify-code', async (c) => {
 });
 
 /** Cron: checkouts abandoned for 35 min free their slot (and any gift credit), unless they turn out paid. */
+/**
+ * A video date is confirmed once both have been on the call together long enough (the call room counts it): the
+ * payment goes to the companion, as the meet code does for meet-ups. False if it was settled already.
+ */
+export async function completeVideoDate(env: Env, bookingId: string, ctx?: Ctx) {
+  const b = await env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(bookingId).first<BookingRow>();
+  if (!b || b.activity !== VIDEO_ACT || b.status !== 'confirmed' || b.pay_status !== 'held') return false;
+  if (b.payment_ref?.startsWith('pi_') && stripeOn(env)) {
+    try {
+      await capture(env, b.payment_ref);
+    } catch (e) {
+      console.error('Video date capture failed', b.id, e);
+      await alertAdmins(env, 'Video date payment couldn’t be taken', `Booking ${b.id}: the call reached the time to release the payment, but Stripe refused the capture. Check it in the admin panel.`);
+      return false;
+    }
+  }
+  const res = await env.DB.prepare(
+    `UPDATE bookings SET status = 'completed', pay_status = 'released', released_at = unixepoch(), ${NO_RESCHED}, updated_at = unixepoch()
+     WHERE id = ? AND status = 'confirmed' AND pay_status = 'held'`,
+  ).bind(b.id).run();
+  if (!res.meta.changes) return false;
+  await endThread(env, b.id, ctx); // the booking's chat ends once you've met, as with a meet code
+  const name = (await env.DB.prepare('SELECT display_name FROM companions WHERE user_id = ?').bind(b.companion_id).first<{ display_name: string }>())?.display_name ?? 'your companion';
+  await notify(env, b.customer_id, { icon: 'video', tone: 'success', title: 'Video date confirmed', body: `${euros(b.total)} sent to ${name} from ZeitMit.`, go: 'tab:completed' }, ctx);
+  await notify(env, b.companion_id, { icon: 'wallet', tone: 'success', title: 'Video date confirmed', body: `You earned ${euros(b.subtotal)}.`, go: 'comp:calendar' }, ctx);
+  return true;
+}
+
+/**
+ * Settles video dates that ended without being confirmed, once each: if the companion never joined, the customer
+ * gets everything back; if only the companion joined, they keep their pay (as with a late cancellation); if both
+ * joined but weren't on the call together long enough, the safety team decides.
+ */
+export async function endVideoDates(env: Env) {
+  const due = await env.DB.prepare(
+    `SELECT * FROM bookings WHERE activity = ? AND status = 'confirmed' AND pay_status = 'held' AND paid = 1 AND call_closed IS NULL
+       AND starts_at + duration_h * 3600 <= ? LIMIT 50`,
+  ).bind(VIDEO_ACT, now()).all<BookingRow>();
+  for (const b of due.results) {
+    const { companion, customer } = await namesOf(env, b);
+    const when = `${ACT_LABEL[b.activity]} on ${berlinWhen(b.starts_at).day}`;
+    if (!b.call_companion_at) {
+      if (await refundBooking(env, b, (amt) => `${companion} didn’t join the video date · ${amt} refunded in full`, false, 'companion')) {
+        await notify(env, b.customer_id, { icon: 'calendar-x', tone: 'error', title: `${companion} didn’t join your video date`, body: `${when}. ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' });
+        await notify(env, b.companion_id, { icon: 'calendar-x', tone: 'error', title: 'You missed a video date', body: `${when} with ${customer}. They got a full refund.`, go: 'comp:calendar' });
+      }
+    } else if (!b.call_customer_at) {
+      let taken = true;
+      if (b.payment_ref?.startsWith('pi_') && stripeOn(env)) {
+        try { await capture(env, b.payment_ref); } catch (e) { console.error('No-show capture failed', b.id, e); taken = false; }
+      }
+      const res = taken
+        ? await env.DB.prepare(
+          `UPDATE bookings SET status = 'cancelled', pay_status = 'released', released_at = unixepoch(), cancel_note = ?, cancelled_by = 'customer', ${NO_RESCHED}, updated_at = unixepoch()
+           WHERE id = ? AND status = 'confirmed' AND pay_status = 'held'`,
+        ).bind('You didn’t join the video date · no refund', b.id).run()
+        : null;
+      if (res?.meta.changes) {
+        await endThread(env, b.id);
+        await notify(env, b.customer_id, { icon: 'calendar-x', tone: 'warning', title: 'You missed your video date', body: `${when}. ${companion} was waiting in the call, so it isn’t refunded.`, go: 'tab:cancelled' });
+        await notify(env, b.companion_id, { icon: 'calendar-x', tone: 'warning', title: `${customer} didn’t join the video date`, body: `${when}. You still get ${euros(b.subtotal)}.`, go: 'comp:calendar' });
+      }
+    } else {
+      await alertAdmins(env, `Video date to check: ${b.id}`,
+        `${customer} and ${companion} both joined their video date (${when}) but were on the call together for only ${Math.round(b.call_together_s / 60)} minutes. The payment is still held: refund it or ask them what happened.`);
+    }
+    await env.DB.prepare('UPDATE bookings SET call_closed = unixepoch() WHERE id = ?').bind(b.id).run();
+  }
+}
+
 export async function expireUnpaid(env: Env) {
   const r = await env.DB.prepare('SELECT * FROM bookings WHERE paid = 0 AND created_at < ? LIMIT 100').bind(now() - 35 * 60).all<BookingRow>();
   for (const b of r.results) {

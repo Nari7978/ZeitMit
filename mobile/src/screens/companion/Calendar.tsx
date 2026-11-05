@@ -1,7 +1,7 @@
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../../theme';
-import { AM, hours, placeOr, WEEK, WIN, whenShort } from '../../data';
+import { AM, CALL_OPENS_EARLY_S, hours, isVideo, placeFor, WEEK, WIN, whenShort } from '../../data';
 import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
 import { addDays, berlinToday, dateLabel, rangesText, weekdayOf, weeklyRanges } from '../../lib/dates';
 import { Icon } from '../../ui/Icon';
@@ -9,7 +9,7 @@ import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
 import { PastRow } from './History';
 import { t } from '../../i18n';
-import { openBookingChat, openCustomer, openReschedule } from '../../nav';
+import { joinVideoDate, openBookingChat, openCustomer, openReschedule } from '../../nav';
 import { SecondaryButton, TextButton } from '../../ui/common';
 import { ReschedBox } from '../../ui/ReschedBox';
 
@@ -90,7 +90,7 @@ export default function Calendar() {
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
               <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
-              <Txt size={12} color={colors.gray600} numberOfLines={1}>{placeOr(u.place)}</Txt>
+              <Txt size={12} color={colors.gray600} numberOfLines={1}>{placeFor(u.act, u.place)}</Txt>
             </View>
             <Icon name="chevron-right" size={16} color={colors.gray400} />
           </Pressable>
@@ -98,7 +98,8 @@ export default function Calendar() {
           <Row style={{ gap: 8 }}>
             {([
               ['message-circle', 'Message', () => void openBookingChat(u.id)],
-              ['shield-check', 'Check-in', () => openSheet('safety', { safety: { ...useStore.getState().safety, bid: u.id, name: u.who } })],
+              // Check-ins are for meet-ups in person.
+              ...(isVideo(u.act) ? [] : [['shield-check', 'Check-in', () => openSheet('safety', { safety: { ...useStore.getState().safety, bid: u.id, name: u.who } })] as const]),
               ['calendar-x', 'Cancel…', () => openSheet('cancel', { cancel: { bid: u.id, side: 'companion', reason: null, busy: false } })],
             ] as const).map(([, label, fn]) => (
               <Pressable key={label} accessibilityRole="button" accessibilityLabel={t(label)} onPress={fn} style={{ flex: 1, minWidth: 0, height: 40, paddingHorizontal: 4, borderRadius: 12, borderWidth: 1, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
@@ -106,7 +107,21 @@ export default function Calendar() {
               </Pressable>
             ))}
           </Row>
-          {Date.now() / 1000 >= u.startsAt - CODE_OPENS_HOURS * 3600 ? (
+          {isVideo(u.act) ? (
+            Date.now() / 1000 >= u.startsAt - CALL_OPENS_EARLY_S ? (
+              <PressBox shadow={3} shadowColor={colors.mint} fx="scale" onPress={() => joinVideoDate(u.id, u.startsAt)} accessibilityLabel="Join video date"
+                style={{ height: 44, borderRadius: 12, backgroundColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                <Icon name="video" size={15} color={colors.white} />
+                <Txt size={14} weight={700} color={colors.white}>Join video date</Txt>
+              </PressBox>
+            ) : (
+              // The call opens 10 minutes before the start.
+              <Row style={{ height: 44, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.gray400, justifyContent: 'center', gap: 7 }}>
+                <Icon name="video" size={15} color={colors.gray600} />
+                <Txt size={13} weight={600} color={colors.gray600}>Video call opens {whenShort(u.startsAt - CALL_OPENS_EARLY_S)}</Txt>
+              </Row>
+            )
+          ) : Date.now() / 1000 >= u.startsAt - CODE_OPENS_HOURS * 3600 ? (
             <PressBox
               shadow={3}
               shadowColor={colors.mint}

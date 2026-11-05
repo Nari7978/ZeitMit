@@ -1,6 +1,6 @@
 // Navigation helpers mirroring the prototype's overlay transitions.
 import { router } from 'expo-router';
-import type { BTab } from './data';
+import { CALL_OPENS_EARLY_S, whenShort, type BTab } from './data';
 import { useStore, type Filters } from './store';
 
 /** Back to the previous screen, or to the start when there's none (a screen opened straight from a link). */
@@ -92,6 +92,17 @@ export async function openBookingChat(bookingId: string) {
   if (id) openChat(id);
 }
 
+/** Opens a video date's call, or says when it opens (10 minutes before the start). */
+export function joinVideoDate(bookingId: string, startsAt: number) {
+  const opens = startsAt - CALL_OPENS_EARLY_S;
+  if (Date.now() / 1000 < opens) {
+    useStore.getState().showToast(`Your video date opens ${whenShort(opens)}, 10 minutes before the start.`);
+    return;
+  }
+  useStore.setState({ sheet: null });
+  router.push(`/call/${bookingId}`);
+}
+
 /**
  * Opens the screen a notification points to: "chat:<id>", "tab:<bookings tab>", "comp:<tab>",
  * "checkin", "verify", "home", "become", "payouts". Loads what it needs first if the app just started.
@@ -121,6 +132,10 @@ export async function followGo(go: string) {
     const known = () => { const st = useStore.getState(); return st.bookings.some((b) => b.id === id) || st.comp.done.some((b) => b.id === id); };
     if (!known()) await s.refresh();
     useStore.getState().openFeedback(id);
+  } else if (go.startsWith('call:')) {
+    // Someone is waiting in a video date: straight into the call (it checks the time itself).
+    useStore.setState({ sheet: null });
+    router.push(`/call/${go.slice(5)}`);
   } else if (go === 'verify') {
     openVerify();
   } else if (go === 'home') {

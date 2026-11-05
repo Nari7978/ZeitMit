@@ -1,7 +1,8 @@
 import { router } from 'expo-router';
 import { View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, eur, hours } from '../../data';
+import { AM, eur, hours, isVideo } from '../../data';
+import { joinVideoDate } from '../../nav';
 import { CODE_OPENS_HOURS, GALLERY_MIN, hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, H, PressBox, Row, Txt } from '../../ui/primitives';
@@ -25,7 +26,12 @@ export default function Overview() {
   const live = status === 'approved';
   // Meet-ups happening now (the code can be entered from 2 hours before): enter the customer's code right here.
   const nowS = Date.now() / 1000;
-  const meeting = upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600);
+  const { done } = comp;
+  // A video date stays here while its booked time runs, even once the call confirmed it, so you can get back in.
+  const meeting = [
+    ...upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600),
+    ...done.filter((b) => isVideo(b.act) && b.startsAt <= nowS && nowS < b.startsAt + b.dur * 3600),
+  ];
   // The latest meet-up that ended in the past week without the private “How did it go?” answered; it also pops up
   // once by itself.
   const ask = feedbackDue(comp.done);
@@ -42,21 +48,34 @@ export default function Overview() {
           </View>
         </Row>
       ) : null}
-      {meeting.map((b) => (
-        <Box key={b.id} shadow={4} shadowColor={colors.greenDeep} style={[card, { backgroundColor: colors.mintSoft }]}>
-          <Row style={{ gap: 12 }}>
-            <Initial who={b.who} hue={hueOf(b.customerId)} url={b.avatarUrl} />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Txt size={16} weight={700}>{b.startsAt <= nowS ? `Meeting ${b.who.split(' ')[0]} now` : `Meeting ${b.who.split(' ')[0]} at ${b.time}`}</Txt>
-              <Txt size={13} lh={1.45} color={colors.gray800}>Ask for their 4-digit meet code and enter it to get paid.</Txt>
-            </View>
-          </Row>
-          <PrimaryButton
-            label="Enter meet code" icon="key-round" height={46} radius={12} size={14} shadowColor="transparent"
-            onPress={() => openSheet('otpin', { otpIn: { uid: b.id, val: '', err: false, done: false, busy: false } })}
-          />
-        </Box>
-      ))}
+      {meeting.map((b) => {
+        const first = b.who.split(' ')[0];
+        // A video date is joined in the app; the call itself confirms it (no meet code).
+        const video = isVideo(b.act);
+        return (
+          <Box key={b.id} shadow={4} shadowColor={colors.greenDeep} style={[card, { backgroundColor: colors.mintSoft }]}>
+            <Row style={{ gap: 12 }}>
+              <Initial who={b.who} hue={hueOf(b.customerId)} url={b.avatarUrl} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Txt size={16} weight={700}>
+                  {video ? (b.startsAt <= nowS ? `Video date with ${first} now` : `Video date with ${first} at ${b.time}`) : b.startsAt <= nowS ? `Meeting ${first} now` : `Meeting ${first} at ${b.time}`}
+                </Txt>
+                <Txt size={13} lh={1.45} color={colors.gray800}>
+                  {video ? 'Join from 10 minutes before the start. After 10 minutes on the call together, you get paid.' : 'Ask for their 4-digit meet code and enter it to get paid.'}
+                </Txt>
+              </View>
+            </Row>
+            {video ? (
+              <PrimaryButton label="Join video date" icon="video" height={46} radius={12} size={14} shadowColor="transparent" onPress={() => joinVideoDate(b.id, b.startsAt)} />
+            ) : (
+              <PrimaryButton
+                label="Enter meet code" icon="key-round" height={46} radius={12} size={14} shadowColor="transparent"
+                onPress={() => openSheet('otpin', { otpIn: { uid: b.id, val: '', err: false, done: false, busy: false } })}
+              />
+            )}
+          </Box>
+        );
+      })}
       {ask ? (
         <PressBox shadow={4} fx="push" onPress={() => openFeedback(ask.id)} accessibilityLabel={t(`How did it go with ${ask.who.split(' ')[0]}?`)} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.lilac }]}>
           <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>

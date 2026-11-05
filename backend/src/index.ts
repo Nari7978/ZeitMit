@@ -6,18 +6,20 @@ import { requireAdmin, requireAuth } from './lib/auth';
 import { auth } from './routes/auth';
 import { me } from './routes/me';
 import { companions } from './routes/companions';
-import { askFeedback, bookings, companionBookings, expirePending, expireReschedules, expireUnpaid } from './routes/bookings';
+import { askFeedback, bookings, companionBookings, endVideoDates, expirePending, expireReschedules, expireUnpaid } from './routes/bookings';
 import { companionProfile } from './routes/companionProfile';
 import { endOldCheckins, escalateMissedCheckins, gifts, liveCheckin, safety } from './routes/safety';
 import { livePage, notFoundPage, pickLang } from './livePage';
 import { admin } from './routes/admin';
 import { chat } from './chat';
+import { calls } from './calls';
 import { photos } from './routes/photos';
 import { payouts } from './routes/payouts';
 import { live } from './routes/live';
 import { stripeOn } from './lib/stripe';
 
 export { ChatRoom } from './chat';
+export { CallRoom } from './calls';
 
 const app = new Hono<AppEnv>();
 
@@ -70,6 +72,9 @@ app.use('/conversations/*', requireAuth);
 app.use('/conversations', requireAuth);
 app.route('/conversations', chat);
 
+app.use('/calls/*', requireAuth);
+app.route('/calls', calls);
+
 app.use('/safety/*', requireAuth);
 app.route('/safety', safety);
 
@@ -96,6 +101,6 @@ app.notFound((c) => c.json({ error: 'Not found.' }, 404));
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), expireReschedules(env), askFeedback(env), escalateMissedCheckins(env), endOldCheckins(env)]));
+    ctx.waitUntil(Promise.all([expirePending(env), expireUnpaid(env), expireReschedules(env), askFeedback(env), escalateMissedCheckins(env), endOldCheckins(env), endVideoDates(env)]));
   },
 } satisfies ExportedHandler<Env>;

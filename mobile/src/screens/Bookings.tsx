@@ -1,9 +1,9 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { AM, BTAB, eur, hours, placeOr, ST, whenShort, type BTab } from '../data';
+import { AM, BTAB, eur, hours, isVideo, placeFor, ST, whenShort, type BTab } from '../data';
 import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
-import { bookAgain, openBookingChat, openProfile, openReschedule } from '../nav';
+import { bookAgain, joinVideoDate, openBookingChat, openProfile, openReschedule } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Enter, H, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { EmptyState, Pill, PrimaryButton, StatusCover, TextButton, usePullRefresh, useTopPad } from '../ui/common';
@@ -98,20 +98,27 @@ function BookingCard({ b }: { b: Booking }) {
     ? useStore.getState().showToast(`You can change the time up to ${FREE_CANCEL_HOURS} hours before. Send ${c.name} a message instead.`)
     : openReschedule(b.id));
 
+  const video = isVideo(b.act);
   type Act = { label: string; fn: () => void; primary?: boolean };
   const again: Act = { label: 'Book again', fn: () => bookAgain(c.id) };
   const actions: Act[] = {
-    confirmed: [
-      { label: 'Message', fn: msg },
-      { label: 'Check-in', fn: () => openSheet('safety', { safety: { ...safety, bid: b.id, name: b.companionName } }) },
-      { label: 'Meet code', fn: () => openSheet('otp', { otpFor: b.id }), primary: true },
-    ],
+    // A video date happens in the app: no check-in or meet code, the call itself confirms it.
+    confirmed: video
+      ? [{ label: 'Message', fn: msg }, { label: 'Join video date', fn: () => joinVideoDate(b.id, b.startsAt), primary: true }]
+      : [
+        { label: 'Message', fn: msg },
+        { label: 'Check-in', fn: () => openSheet('safety', { safety: { ...safety, bid: b.id, name: b.companionName } }) },
+        { label: 'Meet code', fn: () => openSheet('otp', { otpFor: b.id }), primary: true },
+      ],
     pending: [
       { label: 'Message', fn: msg },
       { label: 'Cancel request', fn: cancel },
     ],
-    // First the private “How did it go?” for the safety team, then the public review.
-    completed: !b.feedback
+    // First the private “How did it go?” for the safety team, then the public review. A video date confirmed by the
+    // call keeps its call open until the booked end, so you can get back in.
+    completed: video && Date.now() / 1000 < b.startsAt + b.dur * 3600
+      ? [{ label: 'Message', fn: msg }, { label: 'Rejoin video date', fn: () => joinVideoDate(b.id, b.startsAt), primary: true }]
+      : !b.feedback
       ? [again, { label: 'How did it go?', fn: () => useStore.getState().openFeedback(b.id), primary: true }]
       : b.reviewed
         ? [{ ...again, primary: true }]
@@ -120,10 +127,13 @@ function BookingCard({ b }: { b: Booking }) {
   }[b.status];
 
   const pay = {
-    held: { icon: 'lock', text: price + ' held by ZeitMit', sub: b.status === 'pending' ? 'Refunded in full if ' + c.name + ' declines' : 'Released when ' + c.name + ' enters your meet code', bg: colors.lilac },
+    held: {
+      icon: 'lock', text: price + ' held by ZeitMit', bg: colors.lilac,
+      sub: b.status === 'pending' ? 'Refunded in full if ' + c.name + ' declines' : video ? 'Released after 10 minutes on the call together' : 'Released when ' + c.name + ' enters your meet code',
+    },
     released: b.status === 'cancelled'
-      ? { icon: 'circle-check', text: price + ' paid to ' + c.name, sub: `Cancelled less than ${FREE_CANCEL_HOURS} hours before`, bg: colors.butter }
-      : { icon: 'circle-check', text: price + ' released to ' + c.name, sub: 'Confirmed with meet code', bg: colors.mintSoft },
+      ? { icon: 'circle-check', text: price + ' paid to ' + c.name, sub: video && b.cancelledBy === 'customer' && b.note?.startsWith('You didn’t join') ? 'Not refunded' : `Cancelled less than ${FREE_CANCEL_HOURS} hours before`, bg: colors.butter }
+      : { icon: 'circle-check', text: price + ' released to ' + c.name, sub: video ? 'Confirmed by your video call' : 'Confirmed with meet code', bg: colors.mintSoft },
     refunded: { icon: 'rotate-ccw', text: price + ' refunded to you', sub: 'Back on your card in 3–5 days', bg: colors.butter },
   }[b.pay];
 
@@ -150,8 +160,8 @@ function BookingCard({ b }: { b: Booking }) {
             <Txt size={13} numberOfLines={1}>{b.day} · {b.time} · {hours(b.dur)}</Txt>
           </Row>
           <Row style={{ gap: 7 }}>
-            <Icon name="map-pin" size={15} color={colors.gray600} />
-            <Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={b.place ? colors.ink : colors.gray600}>{placeOr(b.place)}</Txt>
+            <Icon name={video ? 'video' : 'map-pin'} size={15} color={colors.gray600} />
+            <Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={b.place || video ? colors.ink : colors.gray600}>{placeFor(b.act, b.place)}</Txt>
           </Row>
           <Row style={{ gap: 7 }}>
             <Icon name="receipt" size={15} color={colors.gray600} />

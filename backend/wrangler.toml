@@ -27,9 +27,17 @@ migrations_dir = "migrations"
 name = "CHAT"
 class_name = "ChatRoom"
 
+[[durable_objects.bindings]]
+name = "CALLS"
+class_name = "CallRoom"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChatRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CallRoom"]
 
 [triggers]
 # Every 10 minutes: expire unanswered requests, alert on missed safety check-ins.

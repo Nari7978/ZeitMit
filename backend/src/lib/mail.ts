@@ -1,7 +1,7 @@
 // Emails about money and bookings: an invoice after every payment, and a confirmation with a calendar file when a
 // booking is confirmed (or a confirmed one moves). Tables with inline styles: the layout email apps show reliably.
 import type { Env } from '../types';
-import { ACT_LABEL, FREE_CANCEL_HOURS, type ActId } from '../types';
+import { ACT_LABEL, FREE_CANCEL_HOURS, VIDEO_ACT, type ActId } from '../types';
 import { sendEmail } from './notify';
 import { stripeOn } from './stripe';
 import { now } from './util';
@@ -120,7 +120,13 @@ const BOOKING_SQL = `SELECT b.*, c.display_name AS companion_name, cu.name AS cu
   WHERE b.id = ?`;
 
 const whenText = (b: BookingMail, l: Lang) => `${longDate(b.starts_at, l)} · ${clock(b.starts_at, l)}–${clock(b.starts_at + b.duration_h * 3600, l)}`;
-const placeText = (b: BookingMail, l: Lang) => b.place || (l === 'de' ? 'Treffpunkt im Chat absprechen' : 'Agree on a place in the chat');
+const isVideo = (b: Pick<BookingMail, 'activity'>) => b.activity === VIDEO_ACT;
+const placeText = (b: BookingMail, l: Lang) =>
+  isVideo(b) ? (l === 'de' ? 'Videoanruf in der ZeitMit-App' : 'Video call in the ZeitMit app') : b.place || (l === 'de' ? 'Treffpunkt im Chat absprechen' : 'Agree on a place in the chat');
+/** How a video date works, for the confirmation emails (it has no meet code or meeting place). */
+const videoNote = (l: Lang, then: string) => (l === 'de'
+  ? [`Tritt über die Buchung in der App bei, ab 10 Minuten vor Beginn. ${then}`, 'Nichts wird aufgezeichnet. Du kannst den Anruf jederzeit beenden oder melden.']
+  : [`Join from the booking in the app, from 10 minutes before the start. ${then}`, 'Nothing is recorded. You can end the call or report at any time.']);
 
 /** After the payment, when the request reaches the companion: the customer's invoice. */
 export async function sendBookingInvoice(env: Env, bookingId: string) {
@@ -203,7 +209,7 @@ function calendarFile(b: BookingMail, title: string, description: string) {
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ZeitMit//Bookings//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `UID:${b.id}@zeitmit.app`, `SEQUENCE:${b.resched_count}`, `DTSTAMP:${icsTime(now())}`,
     `DTSTART:${icsTime(b.starts_at)}`, `DTEND:${icsTime(b.starts_at + b.duration_h * 3600)}`,
-    `SUMMARY:${icsText(title)}`, ...(b.place ? [`LOCATION:${icsText(b.place)}`] : []), `DESCRIPTION:${icsText(description)}`,
+    `SUMMARY:${icsText(title)}`, ...(isVideo(b) ? ['LOCATION:ZeitMit app (video call)'] : b.place ? [`LOCATION:${icsText(b.place)}`] : []), `DESCRIPTION:${icsText(description)}`,
     'STATUS:CONFIRMED', 'TRANSP:OPAQUE', 'END:VEVENT', 'END:VCALENDAR',
   ].map(fold).join('\r\n') + '\r\n';
 }
@@ -236,18 +242,25 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
           [de ? 'Wann' : 'When', whenText(b, l)],
           [de ? 'Dauer' : 'Length', hoursLabel(b.duration_h, l)],
           [de ? 'Treffpunkt' : 'Meeting place', placeText(b, l)],
-          [de ? 'Bezahlt' : 'Paid', de ? `${money(b.total, l)} · ZeitMit hält es, bis ihr euch trefft` : `${money(b.total, l)} · held by ZeitMit until you meet`],
+          [de ? 'Bezahlt' : 'Paid', isVideo(b)
+            ? (de ? `${money(b.total, l)} · ZeitMit hält es bis zu eurem Video-Date` : `${money(b.total, l)} · held by ZeitMit until your video date`)
+            : de ? `${money(b.total, l)} · ZeitMit hält es, bis ihr euch trefft` : `${money(b.total, l)} · held by ZeitMit until you meet`],
           [de ? 'Buchungsnummer' : 'Booking reference', b.id],
         ]),
         note([
-          de ? `Zeig ${who} beim Treffen deinen 4-stelligen Treffcode aus der App, nicht vorher. Damit geht die Zahlung an ${who}.` : `Show ${who} your 4-digit meet code from the app when you meet, not before. That releases the payment.`,
+          ...(isVideo(b)
+            ? videoNote(l, de ? `Wenn ihr 10 Minuten zusammen im Anruf wart, geht die Zahlung an ${who}.` : `Once you’ve been on the call together for 10 minutes, the payment goes to ${who}.`).slice(0, 1)
+            : [de ? `Zeig ${who} beim Treffen deinen 4-stelligen Treffcode aus der App, nicht vorher. Damit geht die Zahlung an ${who}.` : `Show ${who} your 4-digit meet code from the app when you meet, not before. That releases the payment.`]),
           ...(freeUntil > now() ? [de ? `Kostenlos stornieren kannst du bis ${shortDate(freeUntil, l)} um ${clock(freeUntil, l)}.` : `You can cancel for free until ${shortDate(freeUntil, l)} at ${clock(freeUntil, l)}.`] : []),
-          de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',
+          isVideo(b) ? videoNote(l, '')[1]
+            : de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',
         ]),
       ],
       footer: [env.APP_NAME, de ? `Gesendet an ${b.customer_email} für deine Buchung bei ZeitMit.` : `Sent to ${b.customer_email} for your booking on ZeitMit.`],
     });
-    const ics = calendarFile(b, `${act} ${de ? 'mit' : 'with'} ${who} (ZeitMit)`, de ? 'Gebucht über ZeitMit. Zeig deinen Treffcode erst beim Treffen.' : 'Booked on ZeitMit. Show your meet code when you meet, not before.');
+    const ics = calendarFile(b, `${act} ${de ? 'mit' : 'with'} ${who} (ZeitMit)`, isVideo(b)
+      ? (de ? 'Gebucht über ZeitMit. Tritt dem Videoanruf über deine Buchung in der App bei.' : 'Booked on ZeitMit. Join the video call from your booking in the app.')
+      : de ? 'Gebucht über ZeitMit. Zeig deinen Treffcode erst beim Treffen.' : 'Booked on ZeitMit. Show your meet code when you meet, not before.');
     return sendEmail(env, b.customer_email, m.subject, m.text, { html: m.html, attachments: [{ name: 'zeitmit-booking.ics', content: base64(ics) }] });
   };
 
@@ -274,14 +287,18 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
           [de ? 'Du verdienst' : 'You earn', money(b.subtotal, l)],
           [de ? 'Buchungsnummer' : 'Booking reference', b.id],
         ]),
-        note([
-          de ? `Frag ${guest} beim Treffen nach dem 4-stelligen Treffcode und gib ihn in der App ein. Dann verdienst du ${money(b.subtotal, l)}.` : `At the meet-up, ask ${guest} for their 4-digit meet code and enter it in the app. That’s when you earn ${money(b.subtotal, l)}.`,
-          de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',
-        ]),
+        note(isVideo(b)
+          ? videoNote(l, de ? `Nach 10 Minuten gemeinsam im Anruf verdienst du ${money(b.subtotal, l)}.` : `After 10 minutes on the call together, you earn ${money(b.subtotal, l)}.`)
+          : [
+            de ? `Frag ${guest} beim Treffen nach dem 4-stelligen Treffcode und gib ihn in der App ein. Dann verdienst du ${money(b.subtotal, l)}.` : `At the meet-up, ask ${guest} for their 4-digit meet code and enter it in the app. That’s when you earn ${money(b.subtotal, l)}.`,
+            de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',
+          ]),
       ],
       footer: [env.APP_NAME, de ? `Gesendet an ${b.companion_email} für deine Buchung bei ZeitMit.` : `Sent to ${b.companion_email} for your booking on ZeitMit.`],
     });
-    const ics = calendarFile(b, `${act} ${de ? 'mit' : 'with'} ${guest} (ZeitMit)`, de ? 'Gebucht über ZeitMit. Gib den Treffcode beim Treffen in der App ein.' : 'Booked on ZeitMit. Enter the meet code in the app at the meet-up.');
+    const ics = calendarFile(b, `${act} ${de ? 'mit' : 'with'} ${guest} (ZeitMit)`, isVideo(b)
+      ? (de ? 'Gebucht über ZeitMit. Tritt dem Videoanruf über die Buchung in der App bei.' : 'Booked on ZeitMit. Join the video call from the booking in the app.')
+      : de ? 'Gebucht über ZeitMit. Gib den Treffcode beim Treffen in der App ein.' : 'Booked on ZeitMit. Enter the meet code in the app at the meet-up.');
     return sendEmail(env, b.companion_email, m.subject, m.text, { html: m.html, attachments: [{ name: 'zeitmit-booking.ics', content: base64(ics) }] });
   };
 

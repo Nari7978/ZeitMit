@@ -3,7 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInp
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { AM, BSTEPS, eur, hours, MAX_HOURS, MIN_HOURS, NO, placeOr, ROM, slotDay, type ActId } from '../data';
+import { AM, BSTEPS, eur, hours, isVideo, MAX_HOURS, MIN_HOURS, NO, placeFor, placeOr, ROM, slotDay, type ActId } from '../data';
 import { fitAt, useSlots } from '../lib/slots';
 
 const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
@@ -68,10 +68,14 @@ export default function BookingFlow() {
   const total = b.dur ? eur(sub + fee - creditUse) : '—';
   const isDateAct = !!b.act && ROM.includes(b.act);
   const valid = [!!b.act, fit > 0, !!b.dur && b.dur <= fit, true, true, !isDateAct || b.agree][step - 1];
+  // A video date happens in the app, so it skips the meeting place.
+  const video = !!b.act && isVideo(b.act);
+  const order = video ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6];
+  const at = order.indexOf(step);
 
   const next = () => {
     if (!valid) return;
-    if (step < 6) return setStep(step + 1);
+    if (step < 6) return setStep(order[at + 1] ?? step + 1);
     if (busy) return;
     setBusy(true);
     void useStore.getState()
@@ -85,7 +89,7 @@ export default function BookingFlow() {
         setBusy(false);
       });
   };
-  const back = () => (step > 1 ? setStep(step - 1) : goBack());
+  const back = () => (step > 1 ? setStep(order[at - 1] ?? step - 1) : goBack());
   const close = () => goBack();
   const days = slots.map((s, i) => slotDay(s.date, i));
   const dayLabel = di >= 0 ? days[di].full : '—';
@@ -109,7 +113,9 @@ export default function BookingFlow() {
         <Enter kind="rise" delay={320}><H size={28} ls={-0.03} align="center">Paid & request sent</H></Enter>
         <Enter kind="rise" delay={420}>
           <Txt size={15} lh={1.55} color={colors.gray800} align="center">
-            You paid {total}. ZeitMit holds it safely until you meet. If {c.name} declines, you get a full refund. When you meet, share your meet code and the money is released.
+            {video
+              ? `You paid ${total}. ZeitMit holds it safely until your video date. If ${c.name} declines, you get a full refund. After 10 minutes on the call together, the money is released.`
+              : `You paid ${total}. ZeitMit holds it safely until you meet. If ${c.name} declines, you get a full refund. When you meet, share your meet code and the money is released.`}
           </Txt>
         </Enter>
         <Enter kind="rise" delay={540} style={{ width: '100%' }}>
@@ -141,13 +147,13 @@ export default function BookingFlow() {
           <View style={{ width: 36, height: 36, borderRadius: 12, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ minWidth: 0, flex: 1 }}>
             <Txt size={16} weight={700}>Book {c.name}</Txt>
-            <Txt size={12} color={colors.gray600} numberOfLines={1}>Step {step} of 6 · {BSTEPS[step - 1]}</Txt>
+            <Txt size={12} color={colors.gray600} numberOfLines={1}>Step {at + 1} of {order.length} · {BSTEPS[step - 1]}</Txt>
           </View>
         </Row>
         <CircleButton icon="x" label="Close" iconSize={19} onPress={close} />
       </Row>
       <Row style={{ gap: 4, paddingTop: 16, paddingHorizontal: 20 }}>
-        {BSTEPS.map((_, i) => <View key={i} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i < step ? colors.ink : colors.track }} />)}
+        {order.map((n, i) => <View key={n} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i <= at ? colors.ink : colors.track }} />)}
       </Row>
 
       <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
@@ -297,7 +303,9 @@ export default function BookingFlow() {
               <ReviewRow icon="sparkles" label="Activity" value={actLabel} onEdit={() => setStep(1)} />
               <ReviewRow icon="calendar" label="When" value={`${dayLabel} · ${b.time}`} onEdit={() => setStep(2)} />
               <ReviewRow icon="clock" label="Duration" value={durLabel} onEdit={() => setStep(3)} />
-              <ReviewRow icon="map-pin" label="Meeting place" value={placeOr(b.place.trim())} onEdit={() => setStep(4)} />
+              {video
+                ? <ReviewRow icon="video" label="Where" value={placeFor(b.act!, '')} />
+                : <ReviewRow icon="map-pin" label="Meeting place" value={placeOr(b.place.trim())} onEdit={() => setStep(4)} />}
               <ReviewRow icon="message-square-text" label="Note" value={b.note || 'No note added'} onEdit={() => setStep(5)} last />
             </Box>
             <Box shadow={4} style={{ marginTop: 14, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 20, padding: 16, gap: 10 }}>
@@ -370,7 +378,8 @@ export function StepTitle({ title, sub }: { title: string; sub?: string }) {
   );
 }
 
-function ReviewRow({ icon, label, value, onEdit, last }: { icon: string; label: string; value: string; onEdit: () => void; last?: boolean }) {
+/** `onEdit` left out: the value can't be changed (a video date's "Video call in the app"). */
+function ReviewRow({ icon, label, value, onEdit, last }: { icon: string; label: string; value: string; onEdit?: () => void; last?: boolean }) {
   return (
     <Row style={{ gap: 12, paddingVertical: 12, borderBottomWidth: last ? 0 : 1, borderBottomColor: colors.hairline }}>
       <Icon name={icon} size={17} color={colors.gray600} />
@@ -378,7 +387,7 @@ function ReviewRow({ icon, label, value, onEdit, last }: { icon: string; label: 
         <Txt size={14} color={colors.gray600}>{label}</Txt>
         <Txt size={14}>{value}</Txt>
       </View>
-      <TextButton label="Edit" size={13} onPress={onEdit} />
+      {onEdit ? <TextButton label="Edit" size={13} onPress={onEdit} /> : null}
     </Row>
   );
 }

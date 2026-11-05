@@ -1,6 +1,8 @@
 export type Env = {
   DB: D1Database;
   CHAT: DurableObjectNamespace;
+  /** One room per video date: connects the two phones and counts the time they're on the call together. */
+  CALLS: DurableObjectNamespace;
   APP_NAME: string;
   ADMIN_EMAILS: string;
   EMAIL_FROM: string;
@@ -24,7 +26,18 @@ export type Env = {
   BREVO_API_BASE?: string;
   /** Seller details printed on every invoice (legal name, address, tax number or VAT ID), one per line or split by "|". */
   INVOICE_DETAILS?: string;
+  /**
+   * Optional Cloudflare TURN key (dashboard → Realtime → TURN): relays video dates on networks that block direct
+   * connections. Free up to 1,000 GB a month. Without it, calls connect directly (most networks).
+   */
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
+  /** Seconds two people must be on a video date together before the payment is released (600; tests shorten it). */
+  CALL_RELEASE_SECONDS?: string;
 };
+
+/** The activity that happens over video in the app (no meeting place, check-in or meet code). */
+export const VIDEO_ACT = 'call';
 
 export type AuthUser = { id: string; email: string; role: 'customer' | 'admin' };
 

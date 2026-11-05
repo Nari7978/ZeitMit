@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
+import { VIDEO_ACT } from '../types';
 import { alertAdmins, notify } from '../lib/notify';
 import { berlinWhen, digits, fail, newId, now } from '../lib/util';
 import { createCheckout, getSession, stripeOn } from '../lib/stripe';
@@ -12,9 +13,9 @@ type Checkin = {
   next_due: number | null; status: string; last_lat: number | null; last_lng: number | null; share_token: string | null;
   last_ok_at: number | null; last_loc_at: number | null; sos_at: number | null; share_base: string | null; created_at: number;
 };
-type BookingInfo = { id: string; customer_id: string; companion_id: string; starts_at: number; duration_h: number; place: string; customer_name: string; companion_name: string };
+type BookingInfo = { id: string; customer_id: string; companion_id: string; activity: string; starts_at: number; duration_h: number; place: string; customer_name: string; companion_name: string };
 
-const BOOKING_INFO = `SELECT b.id, b.customer_id, b.companion_id, b.starts_at, b.duration_h, b.place, u.name AS customer_name, cp.display_name AS companion_name
+const BOOKING_INFO = `SELECT b.id, b.customer_id, b.companion_id, b.activity, b.starts_at, b.duration_h, b.place, u.name AS customer_name, cp.display_name AS companion_name
   FROM bookings b JOIN users u ON u.id = b.customer_id JOIN companions cp ON cp.user_id = b.companion_id WHERE b.id = ?`;
 
 const token = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), (x) => x.toString(36).padStart(2, '0')).join('').slice(0, 24);
@@ -38,6 +39,7 @@ safety.post('/checkins', async (c) => {
   const bk = await c.env.DB.prepare(`${BOOKING_INFO} AND (b.customer_id = ? OR b.companion_id = ?) AND b.status = 'confirmed'`)
     .bind(b.bookingId, u.id, u.id).first<BookingInfo>();
   if (!bk) fail(404, 'Check-in works for confirmed bookings only.');
+  if (bk!.activity === VIDEO_ACT) fail(409, 'Check-ins are for meet-ups in person. Video dates happen in the app.');
   if (!b.contactName?.trim() || !/^\+?[\d ()-]{6,20}$/.test(b.contactPhone ?? '')) fail(400, 'Add a trusted contact with a phone number.');
   const every = [0, 30, 60].includes(b.every ?? 30) ? (b.every ?? 30) : 30;
   const start = Math.max(now(), bk!.starts_at);

@@ -118,6 +118,7 @@ export default function RootLayout() {
           <Stack.Screen name="companion" />
           <Stack.Screen name="profile/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
           <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.cream } }} />
+          <Stack.Screen name="call/[id]" options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: '#101012' } }} />
           <Stack.Screen name="notifications" options={{ animation: 'slide_from_right', contentStyle: { backgroundColor: colors.white } }} />
           <Stack.Screen name="book/[cid]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="become" options={{ animation: 'slide_from_bottom' }} />
