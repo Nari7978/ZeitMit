@@ -4,20 +4,20 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
 import { AM, BSTEPS, eur, hours, isVideo, MAX_HOURS, MIN_HOURS, NO, placeFor, placeOr, ROM, slotDay, type ActId } from '../data';
-import { fitAt, useSlots } from '../lib/slots';
-
-const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
+import { fitAt, nextFree, useSlots } from '../lib/slots';
+import { whenFree } from '../lib/dates';
 import { useStore } from '../store';
 import { goBack, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Confetti, Enter, H, Ring, Row, Stripes, Txt, Photo } from '../ui/primitives';
+import { TimeGrid } from '../ui/TimeGrid';
 import { CircleButton, PrimaryButton, TextButton, Unavailable, useKeyboardShown, useTopPad } from '../ui/common';
 import { t } from '../i18n';
 
 type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; agree: boolean };
 
 export default function BookingFlow() {
-  const params = useLocalSearchParams<{ cid: string; date?: string }>();
+  const params = useLocalSearchParams<{ cid: string; date?: string; quick?: string }>();
   const c = useStore((s) => s.byId[params.cid]);
   const listLoaded = useStore((s) => !s.loading);
   // Open times update live while you book: someone else's booking or cancellation shows up at once.
@@ -28,6 +28,9 @@ export default function BookingFlow() {
   const insets = useSafeAreaInsets();
   const keyboard = useKeyboardShown();
   const [step, setStep] = useState(1);
+  // Quick booking: the companion's next free time, booked on one page (activity, length, pay). "Pick another time"
+  // switches to the step-by-step flow.
+  const [quick, setQuick] = useState(params.quick === '1');
   const [done, setDone] = useState(false);
   const [b, setB] = useState<Draft>({ act: null, date: params.date ?? null, time: null, dur: null, place: '', note: '', agree: false });
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
@@ -45,7 +48,7 @@ export default function BookingFlow() {
   const quiet = useRef(0);
   const lost = !!liveSlots && !!b.time && !busy && !done && (!fit || (!!b.dur && b.dur > fit));
   useEffect(() => {
-    if (!lost || !c || Date.now() < quiet.current) return;
+    if (quick || !lost || !c || Date.now() < quiet.current) return;
     const { showToast } = useStore.getState();
     if (!fit) {
       showToast(`${b.time} isn’t available any more. Pick another time.`);
@@ -58,6 +61,27 @@ export default function BookingFlow() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lost]);
+
+  // Quick booking always holds the next free time. When someone else books it (or the companion changes their
+  // hours), it moves to the next one at once, and says so.
+  const free = nextFree(liveSlots);
+  const shown = useRef<{ date: string; time: string } | null | undefined>(undefined);
+  useEffect(() => {
+    if (!quick || !liveSlots || !c || busy || done) return;
+    const was = shown.current;
+    if (was !== undefined && was?.date === free?.date && was?.time === free?.time) return;
+    shown.current = free ? { date: free.date, time: free.time } : null;
+    setB((x) => ({ ...x, date: free?.date ?? null, time: free?.time ?? null, dur: free ? Math.min(x.dur ?? 1, free.fit) : x.dur }));
+    if (was && Date.now() >= quiet.current) {
+      useStore.getState().showToast(free ? `${was.time} isn’t free any more. Next free: ${whenFree(free.date, free.time)}.` : `${was.time} isn’t free any more, and ${c.name} has nothing else free this week.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quick, liveSlots, free?.date, free?.time, free?.fit, busy, done, c?.id]);
+  // One activity on offer: it's the one.
+  useEffect(() => {
+    if (c?.acts.length === 1 && !b.act) upd({ act: c.acts[0] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [c?.id]);
   if (!c && listLoaded) return <Unavailable title="This companion isn’t available" body="They may have paused or removed their profile." />;
   if (!c) return <View style={{ flex: 1, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.ink} /></View>;
 
@@ -67,7 +91,9 @@ export default function BookingFlow() {
   const creditUse = b.dur ? Math.min(credit, sub + fee) : 0;
   const total = b.dur ? eur(sub + fee - creditUse) : '—';
   const isDateAct = !!b.act && ROM.includes(b.act);
-  const valid = [!!b.act, fit > 0, !!b.dur && b.dur <= fit, true, true, !isDateAct || b.agree][step - 1];
+  const valid = quick
+    ? !!b.act && fit > 0 && !!b.dur && b.dur <= fit && (!isDateAct || b.agree)
+    : [!!b.act, fit > 0, !!b.dur && b.dur <= fit, true, true, !isDateAct || b.agree][step - 1];
   // A video date happens in the app, so it skips the meeting place.
   const video = !!b.act && isVideo(b.act);
   const order = video ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6];
@@ -75,7 +101,7 @@ export default function BookingFlow() {
 
   const next = () => {
     if (!valid) return;
-    if (step < 6) return setStep(order[at + 1] ?? step + 1);
+    if (!quick && step < 6) return setStep(order[at + 1] ?? step + 1);
     if (busy) return;
     setBusy(true);
     void useStore.getState()
@@ -89,7 +115,7 @@ export default function BookingFlow() {
         setBusy(false);
       });
   };
-  const back = () => (step > 1 ? setStep(order[at - 1] ?? step - 1) : goBack());
+  const back = () => (!quick && step > 1 ? setStep(order[at - 1] ?? step - 1) : goBack());
   const close = () => goBack();
   const days = slots.map((s, i) => slotDay(s.date, i));
   const dayLabel = di >= 0 ? days[di].full : '—';
@@ -147,17 +173,61 @@ export default function BookingFlow() {
           <View style={{ width: 36, height: 36, borderRadius: 12, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ minWidth: 0, flex: 1 }}>
             <Txt size={16} weight={700}>Book {c.name}</Txt>
-            <Txt size={12} color={colors.gray600} numberOfLines={1}>Step {at + 1} of {order.length} · {BSTEPS[step - 1]}</Txt>
+            <Txt size={12} color={colors.gray600} numberOfLines={1}>{quick ? 'Next free time' : `Step ${at + 1} of ${order.length} · ${BSTEPS[step - 1]}`}</Txt>
           </View>
         </Row>
         <CircleButton icon="x" label="Close" iconSize={19} onPress={close} />
       </Row>
-      <Row style={{ gap: 4, paddingTop: 16, paddingHorizontal: 20 }}>
-        {order.map((n, i) => <View key={n} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i <= at ? colors.ink : colors.track }} />)}
-      </Row>
+      {!quick ? (
+        <Row style={{ gap: 4, paddingTop: 16, paddingHorizontal: 20 }}>
+          {order.map((n, i) => <View key={n} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i <= at ? colors.ink : colors.track }} />)}
+        </Row>
+      ) : null}
 
       <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, paddingTop: 24 }}>
-        {step === 1 && (
+        {quick && (
+          <>
+            <Box shadow={4} shadowColor={colors.greenDeep} style={{ padding: 18, borderRadius: 20, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mintSoft, gap: 4 }}>
+              <Row style={{ gap: 7 }}>
+                <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: b.time ? colors.green : colors.gray400 }} />
+                <Txt size={13} weight={600} color={colors.gray800}>{b.time ? 'Next free' : !liveSlots ? 'Checking…' : 'Nothing free this week'}</Txt>
+              </Row>
+              {b.time && b.date ? <H size={26} ls={-0.02}>{whenFree(b.date, b.time)}</H> : null}
+              <Txt size={13} lh={1.45} color={colors.gray800}>
+                {b.time ? `${c.name} is free for up to ${hours(fit)} from then. Once you book it, others see the next free time.` : !liveSlots ? ' ' : 'Try again later: times free up when bookings are cancelled.'}
+              </Txt>
+            </Box>
+            <Txt size={16} weight={700} style={{ marginTop: 24, marginBottom: 10 }}>What would you like to do?</Txt>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {c.acts.map((a) => {
+                const on = b.act === a;
+                return (
+                  <Pressable key={a} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => upd({ act: a })}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 7, height: 42, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1.5, borderColor: colors.ink, backgroundColor: on ? colors.ink : colors.white }}>
+                    <Icon name={AM[a].icon} size={16} color={on ? colors.white : colors.ink} />
+                    <Txt size={14} weight={600} color={on ? colors.white : colors.ink}>{AM[a].label}</Txt>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Txt size={16} weight={700} style={{ marginTop: 24 }}>How long?</Txt>
+            {fit > 0 ? <LengthStepper dur={b.dur} max={Math.min(MAX_HOURS, fit)} rate={c.rate} onChange={(d) => upd({ dur: d })} /> : null}
+            {video ? (
+              <Row style={{ marginTop: 16, gap: 8 }}>
+                <Icon name="video" size={15} color={colors.gray600} />
+                <Txt size={13} color={colors.gray600}>Video call in the app</Txt>
+              </Row>
+            ) : (
+              <Row style={{ marginTop: 16, gap: 8 }}>
+                <Icon name="map-pin" size={15} color={colors.gray600} />
+                <Txt size={13} color={colors.gray600} style={{ flex: 1 }}>Agree on a public place in the chat.</Txt>
+              </Row>
+            )}
+            {isDateAct ? <Boundaries c={c} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
+            <TextButton label="Pick another time" icon="calendar" size={14} weight={700} onPress={() => { setQuick(false); setStep(b.act ? 2 : 1); }} style={{ alignSelf: 'center', marginTop: 18 }} />
+          </>
+        )}
+        {!quick && step === 1 && (
           <>
             <StepTitle title="What would you like to do?" sub={`${c.name} offers these activities.`} />
             <View style={{ gap: 10 }}>
@@ -178,7 +248,7 @@ export default function BookingFlow() {
           </>
         )}
 
-        {step === 2 && (
+        {!quick && step === 2 && (
           <>
             <StepTitle title="Pick a day and time" sub="Times are in Berlin time." />
             <Row style={{ gap: 6 }}>
@@ -199,20 +269,7 @@ export default function BookingFlow() {
             ) : day ? (
               <>
                 <Txt size={14} weight={600} style={{ marginTop: 24, marginBottom: 10 }}>Available times</Txt>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {/* The usual grid (taken times crossed out), or on a date with the companion's own hours, those times. */}
-                  {(day.custom ? day.times : TIMES).map((t) => {
-                    const open = day.times.includes(t);
-                    const on = b.time === t;
-                    return (
-                      <Pressable key={t} accessibilityRole="button" accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && upd({ time: t, dur: b.dur && b.dur > fitAt(day, t) ? null : b.dur })} style={{ width: '22.5%', flexGrow: 1, height: 46, borderRadius: 12, borderWidth: 1, borderColor: on || open ? colors.ink : colors.butter, backgroundColor: on ? colors.ink : open ? colors.white : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
-                        <Txt size={14} weight={600} color={on ? colors.white : open ? colors.ink : colors.gray350} style={!open ? { textDecorationLine: 'line-through' } : null}>{t}</Txt>
-                      </Pressable>
-                    );
-                  })}
-                  {/* Own hours can leave a short last row: keep its tiles the same width as the rest. */}
-                  {day.custom ? Array.from({ length: (4 - (day.times.length % 4)) % 4 }, (_, k) => <View key={`pad${k}`} style={{ width: '22.5%', flexGrow: 1 }} />) : null}
-                </View>
+                <TimeGrid times={day.times} selected={b.time} onPick={(t) => upd({ time: t, dur: b.dur && b.dur > fitAt(day, t) ? null : b.dur })} />
               </>
             ) : (
               <View style={{ marginTop: 24, padding: 18, borderRadius: 16, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.ink }}>
@@ -222,7 +279,7 @@ export default function BookingFlow() {
           </>
         )}
 
-        {step === 3 && (
+        {!quick && step === 3 && (
           <>
             <StepTitle title="How long?" sub={`${eur(c.rate)} per hour. Book ${MIN_HOURS} to ${MAX_HOURS} hours, in half-hour steps.`} />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
@@ -249,7 +306,7 @@ export default function BookingFlow() {
           </>
         )}
 
-        {step === 4 && (
+        {!quick && step === 4 && (
           <>
             <StepTitle title="Where will you meet?" sub="Optional. A café, park entrance or public venue. You can also agree on it in the chat." />
             <Row style={{ height: 54, gap: 10, paddingHorizontal: 16, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.ink }}>
@@ -269,7 +326,7 @@ export default function BookingFlow() {
           </>
         )}
 
-        {step === 5 && (
+        {!quick && step === 5 && (
           <>
             <StepTitle title="Add a note" sub="Optional. Share what you have in mind." />
             <Box shadow={3} style={{ borderRadius: 16 }}>
@@ -296,7 +353,7 @@ export default function BookingFlow() {
           </>
         )}
 
-        {step === 6 && (
+        {!quick && step === 6 && (
           <>
             <H size={25} ls={-0.03} style={{ marginBottom: 18 }}>Review your request</H>
             <Box shadow={4} style={{ backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 16 }}>
@@ -319,24 +376,7 @@ export default function BookingFlow() {
                 <Txt size={16} weight={700}>{total}</Txt>
               </Row>
             </Box>
-            {isDateAct ? (
-              <View style={{ marginTop: 14, padding: 16, borderRadius: 18, backgroundColor: colors.blush, gap: 10 }}>
-                <Row style={{ gap: 6 }}>
-                  <Icon name="heart" size={15} />
-                  <Txt size={14} weight={700}>{c.name}’s boundaries</Txt>
-                </Row>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                  {c.ok.map((o) => <BoundaryChip key={o} label={o} icon="check" color={colors.greenDeep} />)}
-                  {NO.map((o) => <BoundaryChip key={o} label={o} icon="x" color={colors.redDeep} />)}
-                </View>
-                <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: b.agree }} onPress={() => upd({ agree: !b.agree })} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 4 }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 7, borderWidth: 1.5, borderColor: b.agree ? colors.roseDeep : colors.ink, backgroundColor: b.agree ? colors.roseDeep : colors.white, alignItems: 'center', justifyContent: 'center' }}>
-                    {b.agree ? <Icon name="check" size={14} color={colors.white} /> : null}
-                  </View>
-                  <Txt size={13} weight={600}>I’ll respect these boundaries</Txt>
-                </Pressable>
-              </View>
-            ) : null}
+            {isDateAct ? <Boundaries c={c} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
             <View style={{ marginTop: 14, gap: 8, padding: 16, borderRadius: 16, backgroundColor: colors.lilac }}>
               <Txt size={14} weight={700}>How payment works</Txt>
               <Row style={{ gap: 4, alignItems: 'flex-start' }}>
@@ -360,7 +400,7 @@ export default function BookingFlow() {
           <Txt size={12} color={colors.gray600}>{b.dur ? 'Total incl. fees' : 'Select a duration'}</Txt>
           <H size={21} ls={-0.02}>{total}</H>
         </View>
-        <PrimaryButton label={step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
+        <PrimaryButton label={quick || step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
       </Row>
     </KeyboardAvoidingView>
   );
@@ -368,6 +408,28 @@ export default function BookingFlow() {
 
 const inputReset = { paddingVertical: 0, color: colors.ink, outlineStyle: 'none' } as object;
 const pill = { height: 34, paddingHorizontal: 12, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white, justifyContent: 'center' as const };
+
+/** The companion's boundaries for a date, and "I'll respect these boundaries" (needed to book one). */
+function Boundaries({ c, agree, onToggle }: { c: { name: string; ok: string[] }; agree: boolean; onToggle: () => void }) {
+  return (
+    <View style={{ marginTop: 14, padding: 16, borderRadius: 18, backgroundColor: colors.blush, gap: 10 }}>
+      <Row style={{ gap: 6 }}>
+        <Icon name="heart" size={15} />
+        <Txt size={14} weight={700}>{c.name}’s boundaries</Txt>
+      </Row>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        {c.ok.map((o) => <BoundaryChip key={o} label={o} icon="check" color={colors.greenDeep} />)}
+        {NO.map((o) => <BoundaryChip key={o} label={o} icon="x" color={colors.redDeep} />)}
+      </View>
+      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: agree }} onPress={onToggle} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 4 }}>
+        <View style={{ width: 22, height: 22, borderRadius: 7, borderWidth: 1.5, borderColor: agree ? colors.roseDeep : colors.ink, backgroundColor: agree ? colors.roseDeep : colors.white, alignItems: 'center', justifyContent: 'center' }}>
+          {agree ? <Icon name="check" size={14} color={colors.white} /> : null}
+        </View>
+        <Txt size={13} weight={600}>I’ll respect these boundaries</Txt>
+      </Pressable>
+    </View>
+  );
+}
 
 export function StepTitle({ title, sub }: { title: string; sub?: string }) {
   return (

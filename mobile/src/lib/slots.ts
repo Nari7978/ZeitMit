@@ -18,6 +18,13 @@ export function fitAt(day: DaySlots | undefined, time: string | null) {
   return i < 0 ? 0 : day!.fit?.[i] ?? 4;
 }
 
+/** The first open time in the next 7 days: what "Book now" books. Null when nothing is open. */
+export function nextFree(slots: DaySlots[] | null | undefined) {
+  for (const d of slots ?? []) if (d.times.length) return { date: d.date, time: d.times[0], fit: d.fit?.[0] ?? MIN_FIT };
+  return null;
+}
+const MIN_FIT = 1;
+
 export function useSlots(cid: string | undefined) {
   const [slots, setSlots] = useState<DaySlots[] | null>(null);
   const loaded = useRef(false);

@@ -32,6 +32,12 @@ export function openBooking(cid: string, date?: string) {
   router.push({ pathname: '/book/[cid]', params: date ? { cid, date } : { cid } });
 }
 
+/** Books a companion's next free time on one page: what you'd like to do, how long, pay. */
+export function openQuickBook(cid: string) {
+  if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);
+  router.push({ pathname: '/book/[cid]', params: { cid, quick: '1' } });
+}
+
 export function openVerify(next?: string) {
   useStore.getState().closeSheet();
   router.push({ pathname: '/verify', params: next ? { next } : {} });

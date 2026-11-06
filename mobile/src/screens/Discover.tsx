@@ -14,6 +14,7 @@ import { openSettings } from './Settings';
 import { useNavBottom } from '../ui/chrome';
 import { useAppWidth } from '../ui/layout';
 import { oklch } from '../lib/oklch';
+import { berlinAt, freeTag } from '../lib/dates';
 import { feedbackDue, useFeedbackPopup } from '../lib/feedbackPrompt';
 
 /** "Rent …" — the headline's last word keeps changing. */
@@ -333,6 +334,7 @@ export default function Discover() {
                 <View style={{ gap: 2, paddingHorizontal: 2 }}>
                   <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
                   <Txt size={13} color={colors.gray600}>{eur(c.rate)}/h · {c.area}</Txt>
+                  {c.next ? <Txt size={12} weight={600} color={colors.green}>{freeTag(berlinAt(c.next).date, berlinAt(c.next).time)}</Txt> : null}
                 </View>
               </Pressable>
             ))}
@@ -474,7 +476,8 @@ function Faces({ people }: { people: Companion[] }) {
 function FeaturedCard({ c, i, wide }: { c: Companion; i: number; wide?: number }) {
   const w = wide ?? 252;
   // A sticker that says what's special: free today, the rating, or that they're new.
-  const badge = c.today ? { text: 'Free today', bg: colors.mint, fg: colors.ink }
+  const free = c.today && c.next ? berlinAt(c.next).time : null;
+  const badge = free ? { text: `Free from ${free}`, bg: colors.mint, fg: colors.ink }
     : c.rating ? { text: `★ ${ratingStr(c)}`, bg: colors.sun, fg: colors.ink }
       : { text: 'New', bg: colors.pink, fg: colors.white };
   return (

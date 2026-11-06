@@ -58,7 +58,9 @@ const wrong = await call('POST', '/auth/verify', null, { email: 'nobody@example.
 ok(wrong.status === 400, 'rejects unknown/expired code');
 
 const noAge = await call('GET', '/companions/demo_kai');
-const day = noAge.data.slots.find((d) => d.times.length);
+// The first open time with room for the 2-hour bookings below.
+const open2 = noAge.data.slots.flatMap((d) => d.times.filter((t, i) => d.fit[i] >= 2).map((t) => ({ date: d.date, times: [t] })));
+const day = open2[0];
 ok(!!day, `companion profile has open slots (${day?.date} ${day?.times[0]})`);
 
 let r = await call('POST', '/bookings', T, { companionId: 'demo_kai', act: 'date', date: day.date, time: day.times[0], dur: 2, place: 'Museum lobby' });
@@ -310,7 +312,11 @@ ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not pub
   const J = jonas.token;
   const det = (await call('GET', '/companions/demo_jonas')).data;
   const act = det.acts.find((a) => !['date', 'plusone', 'family'].includes(a)) ?? det.acts[0];
-  const pairs = det.slots.flatMap((d) => d.times.map((t) => [d.date, t])).slice(-2); // furthest ahead: more than 24 h away
+  // Furthest ahead (more than 24 h away), an hour or more apart so two 1-hour bookings don't overlap.
+  const at = (d, t) => Date.parse(`${d}T${t}:00Z`) / 60000;
+  const all = det.slots.flatMap((d) => d.times.map((t) => [d.date, t]));
+  const last = all[all.length - 1];
+  const pairs = [all.filter(([d, t]) => at(d, t) <= at(...last) - 60).pop(), last];
   const mk = async ([date, time]) => (await call('POST', '/bookings', T, { companionId: 'demo_jonas', act, date, time, dur: 1, place: 'Café', boundariesAgreed: true })).data;
   const A = await mk(pairs[0]);
   const B = await mk(pairs[1]);

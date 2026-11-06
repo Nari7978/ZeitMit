@@ -20,6 +20,8 @@ export type Companion = {
   rate: number;
   verified: boolean;
   today: boolean;
+  /** When they're next free (unix, first open start in the next 7 days, bookings counted), or null. */
+  next?: number | null;
   lgbtq: boolean;
   hue: number;
   photo: string;
@@ -127,12 +129,9 @@ export function msgTime(unix: number) {
   return notifWhen(unix).time;
 }
 
-/** Days until a companion is next available (for "Available soonest"). */
+/** When a companion is next free, for "Available soonest" (unix; companions with nothing open come last). */
 export function firstOpen(c: Companion) {
-  if (c.today) return 0;
-  const t = berlinWeekday();
-  for (let i = 1; i < 8; i++) if (c.days.includes((t + i) % 7)) return i;
-  return 9;
+  return c.next ?? Number.MAX_SAFE_INTEGER;
 }
 
 export const eur = (n: number) => {

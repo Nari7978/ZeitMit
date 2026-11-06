@@ -8,8 +8,9 @@ import { colors } from '../theme';
 import { AM, ageStr, eur, LEVEL, NO, ratingStr, reviewsStr, slotDay, type Companion } from '../data';
 import { api, ApiError } from '../api';
 import { useStore } from '../store';
-import { canMessage, goBack, messageCompanion, openBooking } from '../nav';
-import { useSlots, type DaySlots } from '../lib/slots';
+import { canMessage, goBack, messageCompanion, openBooking, openQuickBook } from '../nav';
+import { nextFree, useSlots, type DaySlots } from '../lib/slots';
+import { whenFree } from '../lib/dates';
 import { Icon } from '../ui/Icon';
 import { H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, Unavailable, usePullRefresh, useTopPad } from '../ui/common';
@@ -107,6 +108,7 @@ export default function Profile() {
 
   const reviews = detail?.reviewList ?? [];
   const slots = liveSlots ?? detail?.slots ?? [];
+  const free = nextFree(slots);
   const btnBg = scrolled ? colors.white : 'rgba(255,255,255,.88)';
   const btnBd = scrolled ? colors.ink : 'transparent';
 
@@ -204,8 +206,26 @@ export default function Profile() {
 
           <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 26, marginBottom: 12 }}>
             <Txt size={17} weight={700}>Availability</Txt>
-            <Txt size={12} color={colors.gray600}>Tap a day to book</Txt>
+            <Txt size={12} color={colors.gray600}>Or tap a day to pick a time</Txt>
           </Row>
+          {/* When they're next free, live: once someone books it, this moves on to the next free time. */}
+          {free ? (
+            <PressBox shadow={4} shadowColor={colors.greenDeep} fx="push" onPress={() => openQuickBook(c.id)} accessibilityLabel={`Next free: ${whenFree(free.date, free.time)}. Book it`}
+              style={{ marginBottom: 12, padding: 14, borderRadius: 18, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mintSoft, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.green }} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Txt size={12} weight={600} color={colors.gray800}>Next free</Txt>
+                <Txt size={17} weight={700} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{whenFree(free.date, free.time)}</Txt>
+              </View>
+              <View style={{ height: 40, paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.ink, justifyContent: 'center' }}>
+                <Txt size={14} weight={700} color={colors.white}>Book it</Txt>
+              </View>
+            </PressBox>
+          ) : slots.length ? (
+            <View style={{ marginBottom: 12, padding: 14, borderRadius: 18, backgroundColor: colors.cream }}>
+              <Txt size={14} color={colors.gray600}>{`${c.name} isn’t free in the next 7 days.`}</Txt>
+            </View>
+          ) : null}
           <Row style={{ gap: 6 }}>
             {(slots.length ? slots : Array.from({ length: 7 }, () => null)).map((slot, i) => {
               const d = slot ? slotDay(slot.date, i) : null;
@@ -214,14 +234,14 @@ export default function Profile() {
                 <Pressable
                   key={slot?.date ?? i}
                   accessibilityRole="button"
-                  accessibilityLabel={d ? `${d.full}, ${n} slots` : 'Loading'}
+                  accessibilityLabel={d ? (n ? `${d.full}, free from ${slot!.times[0]}` : `${d.full}, not free`) : 'Loading'}
                   accessibilityState={{ disabled: !n }}
                   onPress={() => n && openBooking(c.id, slot!.date)}
                   style={{ flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRadius: 14, borderWidth: 1, borderColor: n ? colors.ink : colors.cream, backgroundColor: n ? colors.white : colors.cream }}
                 >
                   <Txt size={11} weight={500} color={n ? colors.ink : colors.gray400}>{d?.d ?? ' '}</Txt>
                   <Txt size={17} weight={700} color={n ? colors.ink : colors.gray400}>{d?.n ?? ' '}</Txt>
-                  <Txt size={9.5} color={colors.gray600} numberOfLines={1}>{!d ? ' ' : n ? n + (n === 1 ? ' slot' : ' slots') : '—'}</Txt>
+                  <Txt size={9.5} color={colors.gray600} numberOfLines={1}>{!d ? ' ' : n ? slot!.times[0] : '—'}</Txt>
                 </Pressable>
               );
             })}
@@ -282,7 +302,7 @@ export default function Profile() {
           <Txt size={12} color={colors.gray600} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>+10% fee</Txt>
         </View>
         <SecondaryButton label={narrow ? '' : 'Message'} accessibilityLabel={t('Message')} icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
-        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
+        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => (free ? openQuickBook(c.id) : openBooking(c.id))} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
           <Txt size={15} weight={600} color={colors.white}>Book now</Txt>
         </PressBox>
       </Row>

@@ -63,12 +63,13 @@ const N = (await login('noah@demo.zeitmit.app')).token;
 const book = (token, date, time, dur = 1, place = 'Café Einstein') => call('POST', '/bookings', token, { companionId: CID, act: 'movies', date, time, dur, place, boundariesAgreed: true });
 const toMidnight = (t) => 24 - (Number(t.slice(0, 2)) + Number(t.slice(3)) / 60);
 
-// Two times 90 minutes apart on the same day, the later one free for at least 2 hours.
+// Two times 90 minutes apart on the same day, both free for at least 2 hours.
 let list = await slots();
+const mins = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
 ok(list.length === 7 && list.every((d) => Array.isArray(d.fit) && d.fit.length === d.times.length && d.fit.every((h) => h >= 1 && h <= 8 && Number.isInteger(h * 2))), 'every open time says how long it can be booked for (1–8 h, in half hours)');
 ok(list.every((d) => d.times.every((t, i) => d.fit[i] <= toMidnight(t))), 'no booking runs past midnight');
-const pick = list.flatMap((d) => d.times.slice(1).map((t, i) => ({ date: d.date, early: d.times[i], time: t, fit: d.fit[i + 1], earlyFit: d.fit[i] })))
-  .reverse().find((x) => x.fit >= 2 && x.earlyFit >= 2 && Number(x.time.slice(0, 2)) * 60 + Number(x.time.slice(3)) - (Number(x.early.slice(0, 2)) * 60 + Number(x.early.slice(3))) === 90);
+const pick = list.flatMap((d) => d.times.flatMap((t, j) => d.times.map((e, i) => ({ date: d.date, early: e, time: t, fit: d.fit[j], earlyFit: d.fit[i] }))))
+  .reverse().find((x) => x.fit >= 2 && x.earlyFit >= 2 && mins(x.time) - mins(x.early) === 90);
 if (!pick) throw new Error(`No suitable times for ${CID}: seed the demo companions again.`);
 const { date, early, time } = pick;
 console.log(`  using ${date} ${early} + ${time}`);

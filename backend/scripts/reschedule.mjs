@@ -40,7 +40,15 @@ const theirs = async (id) => { const r = (await call('GET', '/companion/bookings
 const openAt = async (date, time) => !!(await call('GET', `/companions/${CID}/slots`)).data.find((d) => d.date === date)?.times.includes(time);
 
 // Free 1-hour times far enough ahead (> 24 h), each with room to spare.
-const pool = (await call('GET', `/companions/${CID}/slots`)).data.slice(2).flatMap((d) => d.times.filter((t, i) => d.fit[i] >= 1).map((t) => [d.date, t]));
+// Two hours apart, so a 1-hour booking at one never touches the next (starts are every half hour).
+const pool = (await call('GET', `/companions/${CID}/slots`)).data.slice(2).flatMap((d) => {
+  const keep = [];
+  d.times.forEach((t, i) => {
+    const m = +t.slice(0, 2) * 60 + +t.slice(3);
+    if (d.fit[i] >= 1 && (!keep.length || m >= keep[keep.length - 1].m + 120)) keep.push({ t, m });
+  });
+  return keep.map((x) => [d.date, x.t]);
+});
 if (pool.length < 8) throw new Error('Not enough open times: seed the demo companions again.');
 const [t1, t2, t3, t4, t5, t6, t7] = pool.reverse();
 

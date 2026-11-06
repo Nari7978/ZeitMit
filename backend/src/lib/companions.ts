@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { berlinParts, now, parseJson, windowOf } from './util';
+import { now, parseJson } from './util';
 
 export type CompanionRow = {
   user_id: string; display_name: string; age: number | null; show_age: number; pronouns: string | null; gender: string;
@@ -42,9 +42,6 @@ export function toCompanion(r: CompanionRow) {
     showAge: !!r.show_age,
   };
 }
-
-/** Bookable start times, as in the app (Berlin local time). */
-export const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
 
 /** Unix time for a Berlin-local date (YYYY-MM-DD) and HH:MM, handling CET/CEST. */
 export function berlinToUnix(date: string, time: string) {
@@ -96,70 +93,128 @@ export function cleanRanges(ranges: unknown): Range[] {
   return out;
 }
 
-/**
- * Open slots for the next 7 days: weekly windows (or, on dates with their own hours, those hours) minus existing
- * bookings, at least 1h from now.
- * `fit[i]` is the longest booking (1–8 hours, in half hours) that can start at `times[i]` without running into
- * another one or past midnight.
- * Requests (including a checkout in progress), confirmed bookings, meet-ups already under way and suggested new times
- * block their time; cancelled ones don't, so a cancelled time is bookable again straight away.
- * `except` leaves one booking out (its own time and suggestion), for picking a new time for it.
- * On a date with its own hours, start times are every half hour within them and a booking ends by the range's end.
- */
-export async function slotsFor(env: Env, companionId: string, except = ''): Promise<DaySlots[]> {
-  const [win, dates, busy] = await Promise.all([
-    env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(companionId).all<{ day: number; win: string }>(),
-    env.DB.prepare('SELECT date, ranges FROM availability_dates WHERE companion_id = ? AND date >= ?').bind(companionId, berlinDate(now()))
-      .all<{ date: string; ranges: string }>(),
-    env.DB.prepare(
-      `SELECT starts_at, duration_h FROM bookings WHERE companion_id = ?1 AND id <> ?3 AND status IN ('pending', 'confirmed', 'completed') AND starts_at > ?2
-       UNION ALL
-       SELECT resched_at, duration_h FROM bookings WHERE companion_id = ?1 AND id <> ?3 AND status IN ('pending', 'confirmed') AND resched_at > ?2`,
-    ).bind(companionId, now() - MAX_HOURS * 3600, except)
-      .all<{ starts_at: number; duration_h: number }>(),
-  ]);
-  const open = new Set(win.results.map((w) => `${w.day}-${w.win}`));
-  const custom = new Map(dates.results.map((d) => [d.date, parseJson<Range[]>(d.ranges, [])]));
-  const free = (from: number, to: number) => !busy.results.some((b) => from < b.starts_at + b.duration_h * 3600 && to > b.starts_at);
-  const days: DaySlots[] = [];
+/** Weekly windows as Berlin times of day, in minutes: morning, afternoon, evening (as in the app). */
+export const WINDOWS = { am: [9 * 60, 12 * 60], pm: [12 * 60, 17 * 60], eve: [17 * 60, 24 * 60] } as const;
+
+/** One of the next 7 Berlin dates, with its noon and the following midnight as unix times. */
+export type CalDay = { date: string; weekday: number; noon: number; midnight: number };
+
+/** The next 7 days. Timezone maths is slow, so it's done once per request, not per start time. */
+export function calendar(t = now()): CalDay[] {
   // Step from noon so a daylight-saving change never skips or repeats a date.
-  const noon = berlinToUnix(berlinDate(now()), '12:00');
-  for (let i = 0; i < 7; i++) {
-    const date = berlinDate(noon + i * 86400);
+  const first = berlinToUnix(berlinDate(t), '12:00');
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = berlinDate(first + i * 86400);
+    const noon = berlinToUnix(date, '12:00');
+    return { date, weekday: (new Date(date + 'T12:00:00Z').getUTCDay() + 6) % 7, noon, midnight: berlinToUnix(berlinDate(noon + 86400), '00:00') };
+  });
+}
+
+/** Unix time of a start on that day. Starts are from 06:00, after any clock change, so noon's offset holds. */
+export const startAt = (d: CalDay, time: string) => d.noon + (minutes(time) - 12 * 60) * 60;
+
+type Busy = { starts_at: number; duration_h: number };
+
+/**
+ * Open start times for the next 7 days, every half hour: within the companion's own hours on dates that have them
+ * (a booking ends by the range's end), otherwise within the weekly windows, joined where they touch (a booking ends
+ * by midnight). So the next free time starts right where the last booking ends. Each start is at least an hour from
+ * now with at least an hour free; `fit` is the longest booking (in half hours, up to 8) that fits from there.
+ * `firstOnly` stops at each day's first open time (for lists: when someone is next free).
+ */
+export function openTimes(cal: CalDay[], windows: Set<string>, custom: Map<string, Range[]>, busy: Busy[], t: number, firstOnly = false): DaySlots[] {
+  const free = (from: number, to: number) => !busy.some((b) => from < b.starts_at + b.duration_h * 3600 && to > b.starts_at);
+  const most = firstOnly ? MIN_HOURS : MAX_HOURS;
+  return cal.map((d) => {
+    const own = custom.get(d.date);
+    const spans: { from: number; to: number; end: number }[] = [];
+    if (own) {
+      for (const [a, b] of own) spans.push({ from: minutes(a), to: minutes(b), end: b === '24:00' ? d.midnight : startAt(d, b) });
+    } else {
+      for (const w of ['am', 'pm', 'eve'] as const) {
+        if (!windows.has(`${d.weekday}-${w}`)) continue;
+        const [a, b] = WINDOWS[w];
+        const last = spans[spans.length - 1];
+        if (last && last.to === a) last.to = b;
+        else spans.push({ from: a, to: b, end: d.midnight });
+      }
+    }
     const times: string[] = [];
     const fit: number[] = [];
-    const own = custom.get(date);
-    if (own) {
-      const midnight = berlinToUnix(berlinDate(berlinToUnix(date, '12:00') + 86400), '00:00');
-      for (const [from, to] of own) {
-        const end = to === '24:00' ? midnight : berlinToUnix(date, to);
-        for (let m = minutes(from); m + MIN_HOURS * 60 <= minutes(to); m += 30) {
-          const t = clock(m);
-          const start = berlinToUnix(date, t);
-          if (start < now() + 3600) continue;
-          let h = 0;
-          while (h < MAX_HOURS && start + (h + 0.5) * 3600 <= end && free(start, start + (h + 0.5) * 3600)) h += 0.5;
-          if (h < MIN_HOURS) continue;
-          times.push(t);
-          fit.push(h);
-        }
+    for (const s of spans) {
+      for (let m = s.from; m + MIN_HOURS * 60 <= s.to && !(firstOnly && times.length); m += 30) {
+        const time = clock(m);
+        const start = startAt(d, time);
+        if (start < t + 3600) continue;
+        let h = 0;
+        while (h < most && start + (h + 0.5) * 3600 <= s.end && free(start, start + (h + 0.5) * 3600)) h += 0.5;
+        if (h < MIN_HOURS) continue;
+        times.push(time);
+        fit.push(h);
       }
-      days.push({ date, times, fit, custom: true });
-      continue;
     }
-    for (const t of TIMES) {
-      const start = berlinToUnix(date, t);
-      if (start < now() + 3600) continue;
-      const { day, hour } = berlinParts(start);
-      if (!open.has(`${day}-${windowOf(hour)}`)) continue;
-      const midnight = berlinToUnix(berlinDate(start + 86400), '00:00');
-      let h = 0;
-      while (h < MAX_HOURS && start + (h + 0.5) * 3600 <= midnight && free(start, start + (h + 0.5) * 3600)) h += 0.5;
-      if (h < MIN_HOURS) continue;
-      times.push(t);
-      fit.push(h);
-    }
-    days.push({ date, times, fit });
-  }
-  return days;
+    return own ? { date: d.date, times, fit, custom: true } : { date: d.date, times, fit };
+  });
+}
+
+/** Blocking times: requests (a checkout in progress too), confirmed bookings, meet-ups under way and suggested new times. */
+const BUSY_SQL = `SELECT companion_id, starts_at, duration_h FROM bookings WHERE status IN ('pending', 'confirmed', 'completed') AND starts_at > ?1 AND starts_at < ?2 AND id <> ?3
+  UNION ALL
+  SELECT companion_id, resched_at, duration_h FROM bookings WHERE status IN ('pending', 'confirmed') AND resched_at > ?1 AND resched_at < ?2 AND id <> ?3`;
+
+/**
+ * Open slots for the next 7 days (see openTimes): weekly windows (or, on dates with their own hours, those hours) minus
+ * existing bookings. Cancelled bookings don't block, so a cancelled time is bookable again straight away.
+ * `except` leaves one booking out (its own time and suggestion), for picking a new time for it.
+ */
+export async function slotsFor(env: Env, companionId: string, except = ''): Promise<DaySlots[]> {
+  const t = now();
+  const cal = calendar(t);
+  const [win, dates, busy] = await Promise.all([
+    env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(companionId).all<{ day: number; win: string }>(),
+    env.DB.prepare('SELECT date, ranges FROM availability_dates WHERE companion_id = ? AND date >= ?').bind(companionId, cal[0].date)
+      .all<{ date: string; ranges: string }>(),
+    env.DB.prepare(BUSY_SQL.replace(/AND id <> \?3/g, 'AND id <> ?3 AND companion_id = ?4')).bind(t - MAX_HOURS * 3600, t + 8 * 86400, except, companionId)
+      .all<Busy>(),
+  ]);
+  const windows = new Set(win.results.map((w) => `${w.day}-${w.win}`));
+  const custom = new Map(dates.results.map((d) => [d.date, parseJson<Range[]>(d.ranges, [])]));
+  return openTimes(cal, windows, custom, busy.results, t);
+}
+
+/**
+ * When each companion is next free, for lists and filters, from the same rules as their open times (bookings
+ * included): `next` is the first open start (unix) in the next 7 days, `days` the weekdays (0=Mon) with an open time.
+ */
+export async function nextFreeAll(env: Env) {
+  const t = now();
+  const cal = calendar(t);
+  const [win, own, busy] = await Promise.all([
+    env.DB.prepare('SELECT companion_id, day, win FROM availability').all<{ companion_id: string; day: number; win: string }>(),
+    env.DB.prepare('SELECT companion_id, date, ranges FROM availability_dates WHERE date >= ? AND date <= ?').bind(cal[0].date, cal[6].date)
+      .all<{ companion_id: string; date: string; ranges: string }>(),
+    env.DB.prepare(BUSY_SQL).bind(t - MAX_HOURS * 3600, t + 8 * 86400, '').all<Busy & { companion_id: string }>(),
+  ]);
+  const group = <T,>(rows: (T & { companion_id: string })[]) => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) m.set(r.companion_id, [...(m.get(r.companion_id) ?? []), r]);
+    return m;
+  };
+  const windows = group(win.results), dates = group(own.results), blocks = group(busy.results);
+  return (companionId: string) => {
+    const days = openTimes(
+      cal,
+      new Set((windows.get(companionId) ?? []).map((w) => `${w.day}-${w.win}`)),
+      new Map((dates.get(companionId) ?? []).map((d) => [d.date, parseJson<Range[]>(d.ranges, [])])),
+      blocks.get(companionId) ?? [],
+      t,
+      true,
+    );
+    const first = days.findIndex((d) => d.times.length);
+    return {
+      next: first < 0 ? null : startAt(cal[first], days[first].times[0]),
+      today: days[0].times.length > 0,
+      days: days.flatMap((d, i) => (d.times.length ? [cal[i].weekday] : [])).sort((a, b) => a - b),
+    };
+  };
 }

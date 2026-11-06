@@ -14,10 +14,10 @@ import { fitAt, type DaySlots } from '../lib/slots';
 import { useLive } from '../lib/live';
 import { Icon } from '../ui/Icon';
 import { Box, Row, Txt } from '../ui/primitives';
+import { TimeGrid } from '../ui/TimeGrid';
 import { CircleButton, PrimaryButton, Unavailable, useTopPad } from '../ui/common';
 import { StepTitle } from './BookingFlow';
 
-const TIMES = ['09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30', '20:00'];
 const FREE_CHANGE_HOURS = 24;
 
 type Data = {
@@ -129,21 +129,7 @@ export default function Reschedule() {
             {day ? (
               <>
                 <Txt size={14} weight={600} style={{ marginTop: 24, marginBottom: 10 }}>Available times</Txt>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {(day.custom ? day.times : TIMES).map((t) => {
-                    const now = isCurrent(day.date, t);
-                    const open = fits(day, t);
-                    const on = pick.time === t;
-                    return (
-                      <Pressable key={t} accessibilityRole="button" accessibilityLabel={now ? `${t}, current time` : t} accessibilityState={{ selected: on, disabled: !open }} onPress={() => open && setPick((p) => ({ ...p, time: t }))} style={{ width: '22.5%', flexGrow: 1, height: 46, borderRadius: 12, borderWidth: now ? 2 : 1, borderStyle: now ? 'dashed' : 'solid', borderColor: on || open || now ? colors.ink : colors.butter, backgroundColor: on ? colors.ink : open ? colors.white : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
-                        <Txt size={14} weight={600} color={on ? colors.white : open || now ? colors.ink : colors.gray350} style={!open && !now ? { textDecorationLine: 'line-through' } : null}>{t}</Txt>
-                        {now ? <Txt size={9.5} weight={600} color={colors.gray600}>Now</Txt> : null}
-                      </Pressable>
-                    );
-                  })}
-                  {/* Own hours can leave a short last row: keep its tiles the same width as the rest. */}
-                  {day.custom ? Array.from({ length: (4 - (day.times.length % 4)) % 4 }, (_, k) => <View key={`pad${k}`} style={{ width: '22.5%', flexGrow: 1 }} />) : null}
-                </View>
+                <TimeGrid times={day.times} selected={pick.time} onPick={(t) => setPick((p) => ({ ...p, time: t }))} isOpen={(t) => fits(day, t)} isNow={(t) => isCurrent(day.date, t)} />
               </>
             ) : (
               <View style={{ marginTop: 24, padding: 18, borderRadius: 16, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.ink }}>

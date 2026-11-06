@@ -11,6 +11,7 @@ import { Chip, Enter, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primit
 import { EmptyState, SaveButton, SecondaryButton, StatusCover, TextButton, useTopPad, usePullRefresh } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 import { t } from '../i18n';
+import { berlinAt, freeTag } from '../lib/dates';
 
 export function activeChips(f: Filters): [string, Partial<Filters>][] {
   const chips: [string, Partial<Filters>][] = [];
@@ -158,11 +159,12 @@ export default function Search() {
                           </View>
                         ))}
                       </View>
-                      <Row style={{ marginTop: 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                      {/* When they're next free (bookings counted), on its own line so the price never gets cut. */}
+                      {c.next ? <Txt size={12} weight={600} color={colors.green} numberOfLines={1} style={{ marginTop: 'auto', paddingTop: 6 }}>{freeTag(berlinAt(c.next).date, berlinAt(c.next).time)}</Txt> : null}
+                      <Row style={{ marginTop: c.next ? 2 : 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                         <Txt size={13} color={colors.gray600} numberOfLines={1}>
                           <Txt size={17} weight={700}>{eur(c.rate)}</Txt> / hour
                         </Txt>
-                        {c.today ? <Txt size={12} weight={600} color={colors.green}>Free today</Txt> : null}
                       </Row>
                     </View>
                   </PressBox>

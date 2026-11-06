@@ -33,7 +33,17 @@ sql(`UPDATE users SET id_status = 'approved' WHERE id = '${me.user.id}'`);
 const lena = await login('lena@demo.zeitmit.app');
 const L = lena.token;
 
-const slots = (await call('GET', '/companions/demo_lena')).data.slots.flatMap((d) => d.times.map((t) => [d.date, t])).slice(-3);
+// The last `n` open times with room for `hours`, that far apart so the bookings never overlap (starts are every half hour).
+const spaced = (days, n, hours = 1) => {
+  const at = ([d, t]) => Date.parse(`${d}T${t}:00Z`) / 60000;
+  const out = [];
+  for (const x of days.flatMap((d) => d.times.filter((t, i) => d.fit[i] >= hours).map((t) => [d.date, t])).reverse()) {
+    if (!out.length || at(x) <= at(out[out.length - 1]) - 60 * hours) out.push(x);
+    if (out.length === n) break;
+  }
+  return out.reverse();
+};
+const slots = spaced((await call('GET', '/companions/demo_lena')).data.slots, 3);
 const book = async ([date, time]) => (await call('POST', '/bookings', T, { companionId: 'demo_lena', act: 'coffee', date, time, dur: 1, place: 'Café Einstein' })).data;
 
 // 1) Meet code ends the booking's chat for both
@@ -108,7 +118,7 @@ ok(r.status === 409, 'a booking can only be refunded once');
   ok(r.status === 201, 'new companion applies');
   await call('POST', `/admin/companions/${co.user.id}/approve`, A);
 
-  const janaSlots = (await call('GET', `/companions/${co.user.id}`)).data.slots.flatMap((d) => d.times.map((t) => [d.date, t])).slice(-2);
+  const janaSlots = spaced((await call('GET', `/companions/${co.user.id}`)).data.slots, 2, 2);
   const earn = async ([date, time]) => {
     const bk = (await call('POST', '/bookings', T, { companionId: co.user.id, act: 'coffee', date, time, dur: 2, place: 'Café' })).data;
     await call('POST', `/companion/bookings/${bk.id}/accept`, P);

@@ -66,3 +66,28 @@ export function nextRange(ranges: Range[]): Range | null {
   if (start - 60 >= FIRST) return [clock(Math.max(FIRST, start - 120)), clock(start)];
   return null;
 }
+
+const berlinParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+/** A unix time as a Berlin date (YYYY-MM-DD) and time (HH:MM). */
+export function berlinAt(unix: number) {
+  const p = Object.fromEntries(berlinParts.formatToParts(new Date(unix * 1000)).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+}
+const weekdays = new Map<string, Intl.DateTimeFormat>();
+const weekdayShort = (date: string) => {
+  const l = locale();
+  let f = weekdays.get(l);
+  if (!f) weekdays.set(l, (f = new Intl.DateTimeFormat(l, { weekday: 'short', timeZone: 'UTC' })));
+  return f.format(new Date(date + 'T12:00:00Z'));
+};
+/** "Today · 18:30", "Tomorrow · 09:00", "Sat, 8 Nov · 17:00": when someone is next free. */
+export function whenFree(date: string, time: string) {
+  const today = berlinToday();
+  return date === today ? `Today · ${time}` : date === addDays(today, 1) ? `Tomorrow · ${time}` : `${dateLabel(date)} · ${time}`;
+}
+/** "Free today · 18:30", "Free tomorrow · 09:00", "Free Sat · 17:00": the short form for cards. */
+export function freeTag(date: string, time: string) {
+  const today = berlinToday();
+  return date === today ? `Free today · ${time}` : date === addDays(today, 1) ? `Free tomorrow · ${time}` : `Free ${weekdayShort(date)} · ${time}`;
+}
+
