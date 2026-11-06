@@ -3,9 +3,9 @@ import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInp
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { AM, BSTEPS, eur, hours, isVideo, MAX_HOURS, MIN_HOURS, NO, placeFor, placeOr, ROM, slotDay, type ActId } from '../data';
+import { AM, BSTEPS, eur, hours, isVideo, kindOf, kindsOf, MAX_HOURS, MIN_HOURS, NO, placeFor, placeOr, replyByFor, ROM, slotDay, VIDEO_GRACE_MIN, type ActId, type Kind } from '../data';
 import { fitAt, nextFree, useSlots } from '../lib/slots';
-import { whenFree } from '../lib/dates';
+import { berlinUnix, untilLabel, whenFree } from '../lib/dates';
 import { useStore } from '../store';
 import { goBack, toBookings } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -17,12 +17,16 @@ import { t } from '../i18n';
 type Draft = { act: ActId | null; date: string | null; time: string | null; dur: number | null; place: string; note: string; agree: boolean };
 
 export default function BookingFlow() {
-  const params = useLocalSearchParams<{ cid: string; date?: string; quick?: string }>();
+  const params = useLocalSearchParams<{ cid: string; date?: string; quick?: string; kind?: string }>();
   const c = useStore((s) => s.byId[params.cid]);
   const listLoaded = useStore((s) => !s.loading);
   // Open times update live while you book: someone else's booking or cancellation shows up at once.
-  const { slots: liveSlots, reload } = useSlots(c ? params.cid : undefined);
-  const slots = liveSlots ?? [];
+  const { times, reload } = useSlots(c ? params.cid : undefined);
+  // Video dates and in-person dates have their own hours: the link may ask for one kind (a profile's "Next free" or
+  // day strip); otherwise the activity picked decides.
+  const asked: Kind | null = params.kind === 'video' || params.kind === 'meet' ? params.kind : null;
+  const offered = c ? kindsOf(c.acts) : [];
+  const acts = c ? (asked && offered.includes(asked) ? c.acts.filter((a) => kindOf(a) === asked) : c.acts) : [];
   const [busy, setBusy] = useState(false);
   const top = useTopPad();
   const insets = useSafeAreaInsets();
@@ -34,6 +38,12 @@ export default function BookingFlow() {
   const [done, setDone] = useState(false);
   const [b, setB] = useState<Draft>({ act: null, date: params.date ?? null, time: null, dur: null, place: '', note: '', agree: false });
   const upd = (o: Partial<Draft>) => setB((x) => ({ ...x, ...o }));
+  const kind: Kind = b.act ? kindOf(b.act) : (asked && offered.includes(asked) ? asked : offered[0] ?? 'meet');
+  const liveSlots = times ? times[kind] ?? [] : null;
+  const slots = liveSlots ?? [];
+  // Another kind of activity has other open times: the picked time goes (quietly), the day stays.
+  const pickAct = (a: ActId) => upd(kindOf(a) === kind ? { act: a } : { act: a, time: null, dur: null });
+  const [booked, setBooked] = useState<{ replyBy?: number } | null>(null);
   const di = slots.findIndex((s) => s.date === b.date);
   const day = di >= 0 ? slots[di] : undefined;
   const fit = fitAt(day, b.time);
@@ -77,11 +87,11 @@ export default function BookingFlow() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quick, liveSlots, free?.date, free?.time, free?.fit, busy, done, c?.id]);
-  // One activity on offer: it's the one.
+  // One activity on offer (or one of the kind asked for, like video dates): it's the one.
   useEffect(() => {
-    if (c?.acts.length === 1 && !b.act) upd({ act: c.acts[0] });
+    if (acts.length === 1 && !b.act) upd({ act: acts[0] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c?.id]);
+  }, [c?.id, acts.length]);
   if (!c && listLoaded) return <Unavailable title="This companion isn’t available" body="They may have paused or removed their profile." />;
   if (!c) return <View style={{ flex: 1, backgroundColor: colors.sun, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.ink} /></View>;
 
@@ -107,8 +117,10 @@ export default function BookingFlow() {
     void useStore.getState()
       .addBooking({ cid: c.id, act: b.act!, date: b.date!, time: b.time!, dur: b.dur!, place: b.place, note: b.note, boundariesAgreed: b.agree })
       .then((bk) => {
-        if (bk) setDone(true);
-        else {
+        if (bk) {
+          setBooked({ replyBy: bk.replyBy });
+          setDone(true);
+        } else {
           quiet.current = Date.now() + 4000;
           void reload();
         }
@@ -136,12 +148,13 @@ export default function BookingFlow() {
             </Enter>
           </Enter>
         </View>
-        <Enter kind="rise" delay={320}><H size={28} ls={-0.03} align="center">Paid & request sent</H></Enter>
+        {/* A video date is booked at once; an in-person request waits for the companion's answer. */}
+        <Enter kind="rise" delay={320}><H size={28} ls={-0.03} align="center">{video ? 'Video date booked' : 'Paid & request sent'}</H></Enter>
         <Enter kind="rise" delay={420}>
           <Txt size={15} lh={1.55} color={colors.gray800} align="center">
             {video
-              ? `You paid ${total}. ZeitMit holds it safely until your video date. If ${c.name} declines, you get a full refund. After 10 minutes on the call together, the money is released.`
-              : `You paid ${total}. ZeitMit holds it safely until you meet. If ${c.name} declines, you get a full refund. When you meet, share your meet code and the money is released.`}
+              ? `You paid ${total}. It’s confirmed: join from Bookings, from 10 minutes before the start. ZeitMit holds the money until you’ve been on the call together for 10 minutes.`
+              : `You paid ${total}. ZeitMit holds it safely until you meet. ${c.name} has until ${untilLabel(booked?.replyBy ?? replyByFor(berlinUnix(b.date!, b.time!)))} to accept. If they decline or don’t reply in time, you get a full refund.`}
           </Txt>
         </Enter>
         <Enter kind="rise" delay={540} style={{ width: '100%' }}>
@@ -154,9 +167,9 @@ export default function BookingFlow() {
           <Txt size={15} weight={700}>{total}</Txt>
         </Box>
         </Enter>
-        <Enter kind="fade" delay={700}><Txt size={12} color={colors.gray600}>Free cancellation up to 24 hours before.</Txt></Enter>
+        <Enter kind="fade" delay={700}><Txt size={12} color={colors.gray600} align="center">{video ? `Free cancellation for ${VIDEO_GRACE_MIN} minutes, or up to 24 hours before.` : 'Free cancellation up to 24 hours before.'}</Txt></Enter>
         <View style={{ width: '100%', gap: 6, marginTop: 16 }}>
-          <PrimaryButton label="View in Bookings" onPress={() => toBookings('pending')} />
+          <PrimaryButton label="View in Bookings" onPress={() => toBookings(video ? 'upcoming' : 'pending')} />
           <View style={{ alignItems: 'center' }}>
             <TextButton label="Back to Discover" size={15} onPress={() => router.dismissTo('/')} style={{ paddingVertical: 12 }} />
           </View>
@@ -173,7 +186,7 @@ export default function BookingFlow() {
           <View style={{ width: 36, height: 36, borderRadius: 12, overflow: 'hidden' }}><Photo hue={c.hue} url={c.photoUrl} /></View>
           <View style={{ minWidth: 0, flex: 1 }}>
             <Txt size={16} weight={700}>Book {c.name}</Txt>
-            <Txt size={12} color={colors.gray600} numberOfLines={1}>{quick ? 'Next free time' : `Step ${at + 1} of ${order.length} · ${BSTEPS[step - 1]}`}</Txt>
+            <Txt size={12} color={colors.gray600} numberOfLines={1}>{quick ? (kind === 'video' ? 'Video date' : 'Next free time') : `Step ${at + 1} of ${order.length} · ${BSTEPS[step - 1]}`}</Txt>
           </View>
         </Row>
         <CircleButton icon="x" label="Close" iconSize={19} onPress={close} />
@@ -190,19 +203,27 @@ export default function BookingFlow() {
             <Box shadow={4} shadowColor={colors.greenDeep} style={{ padding: 18, borderRadius: 20, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mintSoft, gap: 4 }}>
               <Row style={{ gap: 7 }}>
                 <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: b.time ? colors.green : colors.gray400 }} />
-                <Txt size={13} weight={600} color={colors.gray800}>{b.time ? 'Next free' : !liveSlots ? 'Checking…' : 'Nothing free this week'}</Txt>
+                <Txt size={13} weight={600} color={colors.gray800}>{b.time ? (kind === 'video' ? 'Next free video date' : 'Next free') : !liveSlots ? 'Checking…' : 'Nothing free this week'}</Txt>
               </Row>
               {b.time && b.date ? <H size={26} ls={-0.02}>{whenFree(b.date, b.time)}</H> : null}
               <Txt size={13} lh={1.45} color={colors.gray800}>
                 {b.time ? `${c.name} is free for up to ${hours(fit)} from then. Once you book it, others see the next free time.` : !liveSlots ? ' ' : 'Try again later: times free up when bookings are cancelled.'}
               </Txt>
+              {b.time && b.date ? (
+                <Row style={{ gap: 6, marginTop: 4, alignItems: 'flex-start' }}>
+                  <Icon name={kind === 'video' ? 'zap' : 'hourglass'} size={14} color={colors.greenDeep} style={{ marginTop: 2 }} />
+                  <Txt size={13} weight={600} lh={1.45} color={colors.greenDeep} style={{ flex: 1 }}>
+                    {kind === 'video' ? 'Confirmed at once, no waiting.' : `${c.name} replies by ${untilLabel(replyByFor(berlinUnix(b.date, b.time)))}, or you get a full refund.`}
+                  </Txt>
+                </Row>
+              ) : null}
             </Box>
             <Txt size={16} weight={700} style={{ marginTop: 24, marginBottom: 10 }}>What would you like to do?</Txt>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {c.acts.map((a) => {
+              {acts.map((a) => {
                 const on = b.act === a;
                 return (
-                  <Pressable key={a} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => upd({ act: a })}
+                  <Pressable key={a} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => pickAct(a)}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 7, height: 42, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1.5, borderColor: colors.ink, backgroundColor: on ? colors.ink : colors.white }}>
                     <Icon name={AM[a].icon} size={16} color={on ? colors.white : colors.ink} />
                     <Txt size={14} weight={600} color={on ? colors.white : colors.ink}>{AM[a].label}</Txt>
@@ -231,10 +252,10 @@ export default function BookingFlow() {
           <>
             <StepTitle title="What would you like to do?" sub={`${c.name} offers these activities.`} />
             <View style={{ gap: 10 }}>
-              {c.acts.map((a) => {
+              {acts.map((a) => {
                 const on = b.act === a;
                 return (
-                  <Pressable key={a} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => upd({ act: a })} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 18, borderWidth: 1.5, borderColor: colors.ink, backgroundColor: on ? colors.butter : colors.white }}>
+                  <Pressable key={a} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => pickAct(a)} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 18, borderWidth: 1.5, borderColor: colors.ink, backgroundColor: on ? colors.butter : colors.white }}>
                     <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center' }}><Icon name={AM[a].icon} size={20} /></View>
                     <View style={{ flex: 1 }}>
                       <Txt size={16} weight={600}>{AM[a].label}</Txt>
@@ -355,7 +376,7 @@ export default function BookingFlow() {
 
         {!quick && step === 6 && (
           <>
-            <H size={25} ls={-0.03} style={{ marginBottom: 18 }}>Review your request</H>
+            <H size={25} ls={-0.03} style={{ marginBottom: 18 }}>{video ? 'Review your booking' : 'Review your request'}</H>
             <Box shadow={4} style={{ backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 16 }}>
               <ReviewRow icon="sparkles" label="Activity" value={actLabel} onEdit={() => setStep(1)} />
               <ReviewRow icon="calendar" label="When" value={`${dayLabel} · ${b.time}`} onEdit={() => setStep(2)} />
@@ -384,11 +405,17 @@ export default function BookingFlow() {
                 <Icon name="arrow-right" size={16} style={{ marginTop: 14 }} />
                 <FlowStep icon="lock" bg={colors.sun} label={'ZeitMit\nholds it'} />
                 <Icon name="arrow-right" size={16} style={{ marginTop: 14 }} />
-                <FlowStep icon="key-round" bg={colors.mint} label={`${c.name} gets it\nwith your code`} />
+                {video
+                  ? <FlowStep icon="video" bg={colors.mint} label={`${c.name} gets it\nafter 10 min on the call`} />
+                  : <FlowStep icon="key-round" bg={colors.mint} label={`${c.name} gets it\nwith your code`} />}
               </Row>
               <Row style={{ gap: 8, alignItems: 'flex-start' }}>
                 <Icon name="rotate-ccw" size={16} style={{ marginTop: 2 }} />
-                <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>Full refund if {c.name} declines, or if you cancel 24+ hours before.</Txt>
+                <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>
+                  {video
+                    ? `Confirmed at once. Full refund if you cancel within ${VIDEO_GRACE_MIN} minutes or 24+ hours before, or if ${c.name} doesn’t join.`
+                    : `Full refund if ${c.name} declines or doesn’t reply in time, or if you cancel 24+ hours before.`}
+                </Txt>
               </Row>
             </View>
           </>
@@ -400,7 +427,7 @@ export default function BookingFlow() {
           <Txt size={12} color={colors.gray600}>{b.dur ? 'Total incl. fees' : 'Select a duration'}</Txt>
           <H size={21} ls={-0.02}>{total}</H>
         </View>
-        <PrimaryButton label={quick || step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
+        <PrimaryButton label={quick || step === 6 ? (video ? (busy ? 'Booking…' : 'Pay & book') : busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={next} style={{ paddingHorizontal: 24 }} />
       </Row>
     </KeyboardAvoidingView>
   );

@@ -4,6 +4,7 @@ import type { Env } from '../types';
 import { ACT_LABEL, FREE_CANCEL_HOURS, VIDEO_ACT, type ActId } from '../types';
 import { sendEmail } from './notify';
 import { stripeOn } from './stripe';
+import { berlinDate, freeUntil, replyBy } from './companions';
 import { now } from './util';
 
 type Lang = 'en' | 'de';
@@ -110,7 +111,7 @@ const markSent = (env: Env, number: string) => env.DB.prepare('UPDATE invoices S
 
 type BookingMail = {
   id: string; customer_id: string; companion_id: string; activity: ActId; starts_at: number; duration_h: number; place: string; status: string;
-  rate: number; subtotal: number; fee: number; total: number; credit_used: number; resched_count: number;
+  rate: number; subtotal: number; fee: number; total: number; credit_used: number; resched_count: number; created_at: number;
   companion_name: string; customer_name: string | null; customer_email: string; customer_language: string | null; customer_ui_lang: string | null;
   companion_email: string; companion_language: string | null; companion_ui_lang: string | null;
 };
@@ -128,7 +129,10 @@ const videoNote = (l: Lang, then: string) => (l === 'de'
   ? [`Tritt über die Buchung in der App bei, ab 10 Minuten vor Beginn. ${then}`, 'Nichts wird aufgezeichnet. Du kannst den Anruf jederzeit beenden oder melden.']
   : [`Join from the booking in the app, from 10 minutes before the start. ${then}`, 'Nothing is recorded. You can end the call or report at any time.']);
 
-/** After the payment, when the request reaches the companion: the customer's invoice. */
+/** "16:30" today, otherwise "Sat 8 Nov at 01:00". */
+const untilText = (u: number, l: Lang) => (berlinDate(u) === berlinDate(now()) ? clock(u, l) : `${shortDate(u, l)} ${l === 'de' ? 'um' : 'at'} ${clock(u, l)}`);
+
+/** After the payment, when the request reaches the companion (or a video date is booked): the customer's invoice. */
 export async function sendBookingInvoice(env: Env, bookingId: string) {
   const b = await env.DB.prepare(BOOKING_SQL).bind(bookingId).first<BookingMail>();
   if (!b) return;
@@ -140,14 +144,19 @@ export async function sendBookingInvoice(env: Env, bookingId: string) {
   const act = actName(b.activity, l);
   const card = b.total - b.credit_used;
   const name = (b.customer_name || '').trim();
+  const thanks = de ? `Danke${firstName(name) ? `, ${firstName(name)}` : ''}.` : `Thanks${firstName(name) ? `, ${firstName(name)}` : ''}.`;
+  const until = untilText(replyBy(b), l);
+  // A video date is booked at once; an in-person request waits for the companion's answer.
   const m = layout(env, {
     lang: l,
     subject: de ? `Rechnung ${inv.number} · ${money(b.total, l)} · ${act} mit ${who}` : `Invoice ${inv.number} · ${money(b.total, l)} · ${act} with ${who}`,
-    preheader: de ? `Deine Anfrage ist bei ${who}. ZeitMit hält das Geld, bis ihr euch trefft.` : `Your request is with ${who}. ZeitMit holds the money until you meet.`,
+    preheader: isVideo(b)
+      ? (de ? `Dein Video-Date mit ${who} ist gebucht. ZeitMit hält das Geld bis zu eurem Video-Date.` : `Your video date with ${who} is booked. ZeitMit holds the money until your video date.`)
+      : de ? `Deine Anfrage ist bei ${who}. ZeitMit hält das Geld, bis ihr euch trefft.` : `Your request is with ${who}. ZeitMit holds the money until you meet.`,
     title: de ? 'Deine Rechnung' : 'Your invoice',
-    intro: de
-      ? `Danke${firstName(name) ? `, ${firstName(name)}` : ''}. Deine Anfrage ist bei ${who}. ${who} hat 24 Stunden Zeit, sie anzunehmen.`
-      : `Thanks${firstName(name) ? `, ${firstName(name)}` : ''}. Your request is with ${who}, who has 24 hours to accept it.`,
+    intro: isVideo(b)
+      ? (de ? `${thanks} Dein Video-Date mit ${who} ist gebucht.` : `${thanks} Your video date with ${who} is booked.`)
+      : de ? `${thanks} Deine Anfrage ist bei ${who}. ${who} hat bis ${until} Zeit, sie anzunehmen.` : `${thanks} Your request is with ${who}, who has until ${until} to accept it.`,
     blocks: [
       rows([
         [de ? 'Rechnungsnummer' : 'Invoice number', inv.number],
@@ -176,11 +185,17 @@ export async function sendBookingInvoice(env: Env, bookingId: string) {
       ),
       note(!stripeOn(env) && card > 0
         ? [de ? 'Testmodus: Es wurde keine Karte belastet.' : 'Test mode: no card was charged.']
-        : de
-          ? [`ZeitMit hält das Geld sicher, bis ihr euch trefft: Es geht erst an ${who}, wenn du beim Treffen deinen 4-stelligen Treffcode teilst.`,
-            `Lehnt ${who} ab, antwortet nicht rechtzeitig oder stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher, bekommst du alles zurück.`]
-          : [`ZeitMit holds the money until you meet: it only goes to ${who} when you share your 4-digit meet code at the meet-up.`,
-            `If ${who} declines or doesn’t answer in time, or you cancel at least ${FREE_CANCEL_HOURS} hours before, you get everything back.`]),
+        : isVideo(b)
+          ? de
+            ? [`ZeitMit hält das Geld sicher bis zu eurem Video-Date: Es geht an ${who}, wenn ihr 10 Minuten zusammen im Anruf wart.`,
+              `Tritt ${who} nicht bei, oder stornierst du in den ersten 10 Minuten nach der Buchung oder mindestens ${FREE_CANCEL_HOURS} Stunden vorher, bekommst du alles zurück.`]
+            : [`ZeitMit holds the money until your video date: it goes to ${who} once you’ve been on the call together for 10 minutes.`,
+              `If ${who} doesn’t join, or you cancel within 10 minutes of booking or at least ${FREE_CANCEL_HOURS} hours before, you get everything back.`]
+          : de
+            ? [`ZeitMit hält das Geld sicher, bis ihr euch trefft: Es geht erst an ${who}, wenn du beim Treffen deinen 4-stelligen Treffcode teilst.`,
+              `Lehnt ${who} ab, antwortet nicht rechtzeitig oder stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher, bekommst du alles zurück.`]
+            : [`ZeitMit holds the money until you meet: it only goes to ${who} when you share your 4-digit meet code at the meet-up.`,
+              `If ${who} declines or doesn’t answer in time, or you cancel at least ${FREE_CANCEL_HOURS} hours before, you get everything back.`]),
     ],
     footer: [...seller(env), de ? `Gesendet an ${b.customer_email} für deine Buchung bei ZeitMit.` : `Sent to ${b.customer_email} for your booking on ZeitMit.`],
   });
@@ -219,7 +234,7 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
   const b = await env.DB.prepare(BOOKING_SQL).bind(bookingId).first<BookingMail>();
   if (!b || b.status !== 'confirmed') return;
   const guest = firstName(b.customer_name) || 'Customer';
-  const freeUntil = b.starts_at - FREE_CANCEL_HOURS * 3600;
+  const free = freeUntil(b);
 
   const forCustomer = () => {
     const l = mailLang({ language: b.customer_language, ui_lang: b.customer_ui_lang });
@@ -233,8 +248,10 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
       preheader: de ? `${act} mit ${who}, ${whenText(b, l)}.` : `${act} with ${who}, ${whenText(b, l)}.`,
       title: de ? (moved ? 'Deine Buchung hat eine neue Zeit' : 'Deine Buchung ist bestätigt') : moved ? 'Your booking has a new time' : 'Your booking is confirmed',
       intro: de
-        ? (moved ? `Sie ist jetzt am ${longDate(b.starts_at, l)} um ${clock(b.starts_at, l)}. Die Kalenderdatei im Anhang aktualisiert deinen Kalender.` : `${who} hat deine Anfrage angenommen. Mit der Datei im Anhang trägst du sie in deinen Kalender ein.`)
-        : moved ? `It’s now on ${longDate(b.starts_at, l)} at ${clock(b.starts_at, l)}. The calendar file attached updates your calendar.` : `${who} accepted your request. Add it to your calendar with the file attached.`,
+        ? (moved ? `Sie ist jetzt am ${longDate(b.starts_at, l)} um ${clock(b.starts_at, l)}. Die Kalenderdatei im Anhang aktualisiert deinen Kalender.`
+          : isVideo(b) ? `Dein Video-Date mit ${who} ist gebucht. Mit der Datei im Anhang trägst du es in deinen Kalender ein.` : `${who} hat deine Anfrage angenommen. Mit der Datei im Anhang trägst du sie in deinen Kalender ein.`)
+        : moved ? `It’s now on ${longDate(b.starts_at, l)} at ${clock(b.starts_at, l)}. The calendar file attached updates your calendar.`
+          : isVideo(b) ? `Your video date with ${who} is booked. Add it to your calendar with the file attached.` : `${who} accepted your request. Add it to your calendar with the file attached.`,
       blocks: [
         rows([
           [de ? 'Mit' : 'With', who],
@@ -251,7 +268,7 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
           ...(isVideo(b)
             ? videoNote(l, de ? `Wenn ihr 10 Minuten zusammen im Anruf wart, geht die Zahlung an ${who}.` : `Once you’ve been on the call together for 10 minutes, the payment goes to ${who}.`).slice(0, 1)
             : [de ? `Zeig ${who} beim Treffen deinen 4-stelligen Treffcode aus der App, nicht vorher. Damit geht die Zahlung an ${who}.` : `Show ${who} your 4-digit meet code from the app when you meet, not before. That releases the payment.`]),
-          ...(freeUntil > now() ? [de ? `Kostenlos stornieren kannst du bis ${shortDate(freeUntil, l)} um ${clock(freeUntil, l)}.` : `You can cancel for free until ${shortDate(freeUntil, l)} at ${clock(freeUntil, l)}.`] : []),
+          ...(free > now() ? [de ? `Kostenlos stornieren kannst du bis ${shortDate(free, l)} um ${clock(free, l)}.` : `You can cancel for free until ${shortDate(free, l)} at ${clock(free, l)}.`] : []),
           isVideo(b) ? videoNote(l, '')[1]
             : de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',
         ]),
@@ -275,8 +292,10 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
       preheader: de ? `${act} mit ${guest}, ${whenText(b, l)}.` : `${act} with ${guest}, ${whenText(b, l)}.`,
       title: de ? (moved ? 'Diese Buchung hat eine neue Zeit' : 'Buchung bestätigt') : moved ? 'This booking has a new time' : 'Booking confirmed',
       intro: de
-        ? (moved ? `Sie ist jetzt am ${longDate(b.starts_at, l)} um ${clock(b.starts_at, l)}. Die Kalenderdatei im Anhang aktualisiert deinen Kalender.` : `Du hast die Anfrage von ${guest} angenommen. Mit der Datei im Anhang trägst du sie in deinen Kalender ein.`)
-        : moved ? `It’s now on ${longDate(b.starts_at, l)} at ${clock(b.starts_at, l)}. The calendar file attached updates your calendar.` : `You accepted ${guest}’s request. Add it to your calendar with the file attached.`,
+        ? (moved ? `Sie ist jetzt am ${longDate(b.starts_at, l)} um ${clock(b.starts_at, l)}. Die Kalenderdatei im Anhang aktualisiert deinen Kalender.`
+          : isVideo(b) ? `${guest} hat ein Video-Date mit dir gebucht. Mit der Datei im Anhang trägst du es in deinen Kalender ein.` : `Du hast die Anfrage von ${guest} angenommen. Mit der Datei im Anhang trägst du sie in deinen Kalender ein.`)
+        : moved ? `It’s now on ${longDate(b.starts_at, l)} at ${clock(b.starts_at, l)}. The calendar file attached updates your calendar.`
+          : isVideo(b) ? `${guest} booked a video date with you. Add it to your calendar with the file attached.` : `You accepted ${guest}’s request. Add it to your calendar with the file attached.`,
       blocks: [
         rows([
           [de ? 'Mit' : 'With', guest],

@@ -3,7 +3,7 @@ import { Pressable, ScrollView, TextInput, View, type TextInputInstance } from '
 import { router, useLocalSearchParams } from 'expo-router';
 import { useShallow } from 'zustand/react/shallow';
 import { colors, font } from '../theme';
-import { A, ageStr, eur, isDateCompanion, PREF, ratingStr, reviewsStr, SORT, WHEN } from '../data';
+import { A, ageStr, eur, freeOf, isDateCompanion, PREF, ratingStr, reviewsStr, SORT, WHEN } from '../data';
 import { filterCount, filtered, toggleIn, useStore, type Filters } from '../store';
 import { openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -160,8 +160,13 @@ export default function Search() {
                         ))}
                       </View>
                       {/* When they're next free (bookings counted), on its own line so the price never gets cut. */}
-                      {c.next ? <Txt size={12} weight={600} color={colors.green} numberOfLines={1} style={{ marginTop: 'auto', paddingTop: 6 }}>{freeTag(berlinAt(c.next).date, berlinAt(c.next).time)}</Txt> : null}
-                      <Row style={{ marginTop: c.next ? 2 : 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                      {/* Follows the kind of date picked in the filters: video dates only, in person only, or either. */}
+                      {(() => {
+                        const fr = freeOf(c, f.acts);
+                        const at = fr.next ? berlinAt(fr.next) : null;
+                        return at ? <Txt size={12} weight={600} color={colors.green} numberOfLines={1} style={{ marginTop: 'auto', paddingTop: 6 }}>{freeTag(at.date, at.time, fr.video)}</Txt> : null;
+                      })()}
+                      <Row style={{ marginTop: freeOf(c, f.acts).next ? 2 : 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                         <Txt size={13} color={colors.gray600} numberOfLines={1}>
                           <Txt size={17} weight={700}>{eur(c.rate)}</Txt> / hour
                         </Txt>

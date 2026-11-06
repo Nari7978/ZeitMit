@@ -7,7 +7,7 @@ import { welcomeStore } from './lib/welcome';
 import { askLocation, currentLocation } from './lib/location';
 import { runCheckout } from './lib/checkout';
 import { resolveLang, setLang } from './i18n';
-import { berlinWeekday, eur, firstOpen, type ActId, type BookingStatus, type BTab, type Companion, type Gender, type SORT, type Tone } from './data';
+import { berlinWeekday, eur, firstOpen, freeOf, type ActId, type BookingStatus, type BTab, type Companion, type Gender, type Kind, type SORT, type Tone } from './data';
 
 /** Same rule as the API: customers cancel for free until this many hours before the start. */
 export const FREE_CANCEL_HOURS = 24;
@@ -36,6 +36,8 @@ export type Booking = {
   feedback?: boolean;
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system';
   resched?: Resched | null; reschedLeft?: number;
+  /** A request: when it expires if the companion doesn't answer. A confirmed booking: until when cancelling is free. */
+  replyBy?: number; freeUntil?: number;
 };
 export type Convo = {
   id: string; cid: string; customerId: string; name: string; hue: number; photoUrl?: string | null; bookingId: string | null; act: ActId | null; startsAt: number | null;
@@ -49,6 +51,8 @@ export type CompBooking = {
   dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number; feedback?: boolean;
   customer?: { bio: string; verified: boolean; since: number | null };
   resched?: Resched | null; reschedLeft?: number;
+  /** A request: answer it by then, or it's cancelled and refunded. */
+  replyBy?: number;
   /** Cancelled bookings: who cancelled, and the note shown for it. */
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system'; cancelNote?: string;
 };
@@ -116,7 +120,8 @@ type State = {
   toast: string | null;
   /** `gallery`: how many photos the listing has besides the profile photo (null until loaded). */
   /** `history`: past meet-ups and cancellations, newest first; `dates`: own hours for specific dates. */
-  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; dates: CustomDate[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; gallery: number | null };
+  /** In-person hours (`avail` weekly, `dates` specific dates) and video hours (`availVideo`, `datesVideo`) are kept apart. */
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; dates: CustomDate[]; datesVideo: CustomDate[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; availVideo: string[]; gallery: number | null };
   edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
   feedback: Feedback;
@@ -130,7 +135,7 @@ type State = {
   /** Draft for the cancel sheet: which booking, from whose side, and the reason picked. */
   cancel: { bid: string | null; side: 'customer' | 'companion'; reason: string | null; busy: boolean };
   /** The "hours for a date" sheet: the picked date, a day off or these ranges. */
-  customDate: { date: string | null; off: boolean; ranges: [string, string][]; busy: boolean };
+  customDate: { date: string | null; off: boolean; ranges: [string, string][]; busy: boolean; kind: Kind };
   otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
   gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
   checkin: Checkin | null;
@@ -162,10 +167,10 @@ type Actions = {
   /** Opens the private “How did it go?” sheet for a meet-up of yours (either side). */
   openFeedback: (bookingId: string) => void;
   submitFeedback: () => Promise<void>;
-  /** Saves a companion's hours for one date (`ranges` empty = a day off); false if it didn't work. */
-  saveDate: (date: string, ranges: [string, string][]) => Promise<boolean>;
-  /** Back to the weekly windows on this date. */
-  removeDate: (date: string) => Promise<boolean>;
+  /** Saves a companion's hours of one kind for one date (`ranges` empty = a day off); false if it didn't work. */
+  saveDate: (date: string, ranges: [string, string][], kind?: Kind) => Promise<boolean>;
+  /** Back to that kind's weekly windows on this date. */
+  removeDate: (date: string, kind?: Kind) => Promise<boolean>;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
@@ -185,7 +190,7 @@ type Actions = {
   verifyOtp: () => Promise<void>;
   submitCompanion: (a: CompanionApplication) => Promise<boolean>;
   submitVerification: (idPhotoId: string, selfiePhotoId: string) => Promise<boolean>;
-  setAvail: (day: string, win: string, on: boolean) => void;
+  setAvail: (day: string, win: string, on: boolean, kind?: Kind) => void;
   setListing: (patch: { rate?: number; acts?: ActId[] }) => void;
   startCheckin: () => Promise<void>;
   checkinOk: () => Promise<void>;
@@ -207,7 +212,7 @@ type Actions = {
 
 export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
 
-const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], dates: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [], gallery: null };
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], dates: [], datesVideo: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [], availVideo: [], gallery: null };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;
@@ -302,7 +307,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
     cancel: { bid: null, side: 'customer', reason: null, busy: false },
-    customDate: { date: null, off: false, ranges: [['18:00', '22:00']], busy: false },
+    customDate: { date: null, off: false, ranges: [['18:00', '22:00']], busy: false, kind: 'meet' },
     otpFor: null, otpIn: { uid: null, val: '', err: false, done: false, busy: false },
     gift: { amt: 100, to: '', msg: '', done: false },
     checkin: null,
@@ -418,14 +423,17 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
         api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'history' | 'earnings'>>('GET', '/companion/bookings'),
-        api<Companion & { avail: string[]; dates?: CustomDate[] }>('GET', '/companion'),
+        api<Companion & { avail: string[]; dates?: CustomDate[]; availVideo?: string[]; datesVideo?: CustomDate[] }>('GET', '/companion'),
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
         comp: keepEach(s.comp, {
           ...s.comp,
           ...(bk.status === 'fulfilled' ? bk.value : {}),
-          ...(profile.status === 'fulfilled' && profile.value.rate ? { rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, dates: profile.value.dates ?? [], gallery: profile.value.gallery?.length ?? 0 } : {}),
+          ...(profile.status === 'fulfilled' && profile.value.rate ? {
+            rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, dates: profile.value.dates ?? [],
+            availVideo: profile.value.availVideo ?? [], datesVideo: profile.value.datesVideo ?? [], gallery: profile.value.gallery?.length ?? 0,
+          } : {}),
         }),
         compConvos: convos.status === 'fulfilled' ? keep(s.compConvos, convos.value) : s.compConvos,
       }));
@@ -649,34 +657,40 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       set((s) => ({ user: s.user ? { ...s.user, idStatus: 'pending', idNote: null } : s.user }));
       return true;
     },
-    setAvail: (day, win, on) => {
+    setAvail: (day, win, on, kind = 'meet') => {
       const key = day + '-' + win;
-      set((s) => ({ comp: { ...s.comp, avail: on ? [...s.comp.avail, key] : s.comp.avail.filter((x) => x !== key) } }));
-      api('PUT', '/companion/availability', { day, win, on }).catch((e) => {
-        set((s) => ({ comp: { ...s.comp, avail: on ? s.comp.avail.filter((x) => x !== key) : [...s.comp.avail, key] } }));
+      const field = kind === 'video' ? 'availVideo' : 'avail';
+      set((s) => ({ comp: { ...s.comp, [field]: on ? [...s.comp[field], key] : s.comp[field].filter((x) => x !== key) } }));
+      api('PUT', '/companion/availability', { day, win, on, kind }).catch((e) => {
+        set((s) => ({ comp: { ...s.comp, [field]: on ? s.comp[field].filter((x) => x !== key) : [...s.comp[field], key] } }));
         get().showToast(msg(e));
       });
     },
-    saveDate: async (date, ranges) => {
-      const r = await attempt(() => api<{ date: string; ranges: [string, string][]; kept: number }>('PUT', `/companion/dates/${date}`, { ranges }));
+    saveDate: async (date, ranges, kind = 'meet') => {
+      const r = await attempt(() => api<{ date: string; ranges: [string, string][]; kept: number }>('PUT', `/companion/dates/${date}`, { ranges, kind }));
       if (!r) return false;
-      set((s) => ({ comp: { ...s.comp, dates: [...s.comp.dates.filter((d) => d.date !== date), { date, ranges: r.ranges }].sort((a, b) => a.date.localeCompare(b.date)) } }));
+      const field = kind === 'video' ? 'datesVideo' : 'dates';
+      set((s) => ({ comp: { ...s.comp, [field]: [...s.comp[field].filter((d) => d.date !== date), { date, ranges: r.ranges }].sort((a, b) => a.date.localeCompare(b.date)) } }));
       // Bookings already made that day aren't touched.
       get().showToast(r.kept ? (r.kept === 1 ? 'Saved. Your booking that day stays.' : `Saved. Your ${r.kept} bookings that day stay.`) : 'Saved');
       return true;
     },
-    removeDate: async (date) => {
-      const ok = await attempt(() => api('DELETE', `/companion/dates/${date}`));
+    removeDate: async (date, kind = 'meet') => {
+      const ok = await attempt(() => api('DELETE', `/companion/dates/${date}${kind === 'video' ? '?kind=video' : ''}`));
       if (!ok) return false;
-      set((s) => ({ comp: { ...s.comp, dates: s.comp.dates.filter((d) => d.date !== date) } }));
+      const field = kind === 'video' ? 'datesVideo' : 'dates';
+      set((s) => ({ comp: { ...s.comp, [field]: s.comp[field].filter((d) => d.date !== date) } }));
       return true;
     },
     setListing: (patch) => {
       set((s) => ({ comp: { ...s.comp, ...patch } }));
       clearTimeout(listingTimer);
       listingTimer = setTimeout(() => {
-        const { rate, acts } = get().comp;
-        api('PATCH', '/companion', { rate, acts }).catch((e) => get().showToast(msg(e)));
+        const { rate, acts, availVideo } = get().comp;
+        api('PATCH', '/companion', { rate, acts })
+          // Starting video dates: the server gives them a copy of the weekly hours to begin with.
+          .then(() => { if (acts.includes('call') && !availVideo.length) void get().loadCompanionSide(); })
+          .catch((e) => get().showToast(msg(e)));
       }, 600);
     },
 
@@ -821,9 +835,11 @@ export function filtered(list: Companion[], query: string, f: Filters, sort: Sor
     }
     if (f.type === 'date' && !c.acts.some((a) => ['date', 'plusone', 'family', 'call'].includes(a))) return false;
     if (f.acts.length && !f.acts.some((a) => c.acts.includes(a))) return false;
-    if (f.when === 'today' && !c.today) return false;
-    if (f.when === 'tomorrow' && !c.days.includes((today + 1) % 7)) return false;
-    if (f.when === 'weekend' && !(c.days.includes(5) || c.days.includes(6) || c.today)) return false;
+    // "When" follows the kind of date picked: video dates only, in person only, or either.
+    const free = f.when !== 'any' ? freeOf(c, f.acts) : null;
+    if (f.when === 'today' && !free!.today) return false;
+    if (f.when === 'tomorrow' && !free!.days.includes((today + 1) % 7)) return false;
+    if (f.when === 'weekend' && !(free!.days.includes(5) || free!.days.includes(6) || free!.today)) return false;
     if (c.rate > f.max) return false;
     if (f.langs.length && !f.langs.every((l) => c.langs.some((x) => x[0] === l))) return false;
     if (f.rating && !(c.rating && c.rating >= f.rating)) return false;
@@ -833,7 +849,7 @@ export function filtered(list: Companion[], query: string, f: Filters, sort: Sor
   });
   if (sort === 'price') r.sort((a, b) => a.rate - b.rate);
   if (sort === 'rating') r.sort((a, b) => (b.rating || 0) - (a.rating || 0));
-  if (sort === 'soonest') r.sort((a, b) => firstOpen(a) - firstOpen(b));
+  if (sort === 'soonest') r.sort((a, b) => firstOpen(a, f.acts) - firstOpen(b, f.acts));
   return r;
 }
 

@@ -1,6 +1,7 @@
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur, memberSince, placeOr } from '../../data';
+import { untilLabel } from '../../lib/dates';
 import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
 import { Box, Enter, Row, Txt } from '../../ui/primitives';
@@ -37,6 +38,13 @@ export default function Requests() {
               </Pressable>
               <Pill label="New" bg={colors.blush} fg={colors.ink} height={24} />
             </Row>
+            {/* Unanswered by then, the request is cancelled and the customer refunded. */}
+            {r.replyBy ? (
+              <Row style={{ gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FDF3E2' }}>
+                <Icon name="hourglass" size={14} color="#8A5A0F" />
+                <Txt size={13} weight={600} color="#8A5A0F" style={{ flex: 1 }}>{`Reply by ${untilLabel(r.replyBy)}`}</Txt>
+              </Row>
+            ) : null}
             {r.customer ? (
               <View style={{ gap: 4 }}>
                 <Txt size={12} color={colors.gray600}>

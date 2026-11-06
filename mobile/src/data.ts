@@ -19,9 +19,12 @@ export type Companion = {
   reviews: number;
   rate: number;
   verified: boolean;
+  /** Free today, for either kind of date. */
   today: boolean;
-  /** When they're next free (unix, first open start in the next 7 days, bookings counted), or null. */
+  /** When they're next free (unix, first open start in the next 7 days, bookings counted), or null: either kind. */
   next?: number | null;
+  /** The same per kind they offer (null for a kind they don't offer): in person and video dates have their own hours. */
+  free?: Record<Kind, Free | null>;
   lgbtq: boolean;
   hue: number;
   photo: string;
@@ -31,12 +34,17 @@ export type Companion = {
   acts: ActId[];
   ok: string[];
   bio: string;
-  /** Weekdays with availability, 0 = Mon. */
+  /** Weekdays with availability, 0 = Mon (either kind). */
   days: number[];
   photoUrl?: string | null;
   /** More photos besides the profile photo, shown as slides on the profile. */
   gallery?: string[];
 };
+
+/** Video dates and in-person dates have their own hours and rules (one clock: a booking blocks both). */
+export type Kind = 'meet' | 'video';
+/** When someone is next free (unix or null), whether that's today, and the weekdays (0 = Mon) with open times. */
+export type Free = { next: number | null; today: boolean; days: number[] };
 
 export type Activity = { id: ActId; label: string; icon: string; desc: string };
 
@@ -129,9 +137,32 @@ export function msgTime(unix: number) {
   return notifWhen(unix).time;
 }
 
+const berlinDay = (unix: number) => fmt({ year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-CA').format(new Date(unix * 1000));
+
+/**
+ * When a companion is free for what you're looking for: video dates only if the activities picked are just video
+ * dates, in person only if they're all in person, otherwise either. `video` says which kind `next` is: in person
+ * when it's free that same day, otherwise the sooner one.
+ */
+export function freeOf(c: Companion, acts: ActId[] = []): Free & { video: boolean } {
+  if (!c.free) return { next: c.next ?? null, today: c.today, days: c.days, video: false };
+  const want = acts.length ? kindsOf(acts) : (['meet', 'video'] as Kind[]);
+  const meet = want.includes('meet') ? c.free.meet : null;
+  const video = want.includes('video') ? c.free.video : null;
+  const m = meet?.next ?? null, v = video?.next ?? null;
+  const useVideo = v !== null && (m === null || berlinDay(v) < berlinDay(m));
+  return {
+    next: useVideo ? v : m,
+    today: !!(meet?.today || video?.today),
+    days: [...new Set([...(meet?.days ?? []), ...(video?.days ?? [])])],
+    video: useVideo,
+  };
+}
+
 /** When a companion is next free, for "Available soonest" (unix; companions with nothing open come last). */
-export function firstOpen(c: Companion) {
-  return c.next ?? Number.MAX_SAFE_INTEGER;
+export function firstOpen(c: Companion, acts: ActId[] = []) {
+  const f = c.free ? Math.min(...(['meet', 'video'] as Kind[]).filter((k) => !acts.length || kindsOf(acts).includes(k)).map((k) => c.free![k]?.next ?? Number.MAX_SAFE_INTEGER)) : c.next;
+  return f ?? Number.MAX_SAFE_INTEGER;
 }
 
 export const eur = (n: number) => {
@@ -150,6 +181,16 @@ export const MAX_HOURS = 8;
 export const placeOr = (place: string) => place || 'Agree on a place in the chat';
 /** Video dates happen in the app: no meeting place, check-in or meet code. */
 export const isVideo = (act: ActId) => act === 'call';
+export const kindOf = (act: ActId): Kind => (isVideo(act) ? 'video' : 'meet');
+/** The kinds a list of activities covers (in person first). */
+export const kindsOf = (acts: ActId[]): Kind[] => (['meet', 'video'] as Kind[]).filter((k) => acts.some((a) => kindOf(a) === k));
+/** How soon a booking can start (as on the server): video dates from 15 minutes ahead, in person from 2 hours. */
+export const LEAD_MIN: Record<Kind, number> = { video: 15, meet: 120 };
+/** An in-person request waits this long for the companion's answer, at the latest until an hour before the start. */
+export const REPLY_HOURS = 2;
+export const replyByFor = (startsAt: number, sentAt = Date.now() / 1000) => Math.min(sentAt + REPLY_HOURS * 3600, startsAt - 3600);
+/** A video date is confirmed at once, so it can be cancelled for free this many minutes after booking. */
+export const VIDEO_GRACE_MIN = 10;
 /** The video call opens this long before the start (as on the server). */
 export const CALL_OPENS_EARLY_S = 10 * 60;
 export const placeFor = (act: ActId, place: string) => (isVideo(act) ? 'Video call in the app' : placeOr(place));

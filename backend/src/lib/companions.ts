@@ -1,4 +1,4 @@
-import type { Env } from '../types';
+import { FREE_CANCEL_HOURS, REPLY_HOURS, VIDEO_ACT, VIDEO_GRACE_MIN, type Env } from '../types';
 import { now, parseJson } from './util';
 
 export type CompanionRow = {
@@ -96,6 +96,34 @@ export function cleanRanges(ranges: unknown): Range[] {
 /** Weekly windows as Berlin times of day, in minutes: morning, afternoon, evening (as in the app). */
 export const WINDOWS = { am: [9 * 60, 12 * 60], pm: [12 * 60, 17 * 60], eve: [17 * 60, 24 * 60] } as const;
 
+/**
+ * Video dates and in-person dates each have their own hours (weekly windows and specific dates) and their own notice,
+ * but one clock: a booking of either kind blocks the companion for both, since nobody can be in two dates at once.
+ */
+export type Kind = 'meet' | 'video';
+export const KINDS: Kind[] = ['meet', 'video'];
+export const kindOf = (act: string): Kind => (act === VIDEO_ACT ? 'video' : 'meet');
+/** The kinds a companion offers: in person with any activity but video dates, video with video dates. */
+export const kindsOf = (acts: string[]): Kind[] => KINDS.filter((k) => acts.some((a) => kindOf(a) === k));
+/** How soon a booking can start: a video date needs no travel; in person, there's time to reply and get there. */
+export const LEAD_S: Record<Kind, number> = { video: 15 * 60, meet: 2 * 3600 };
+/** Where each kind's hours are kept. */
+export const HOURS_TABLES: Record<Kind, { weekly: string; dates: string }> = {
+  meet: { weekly: 'availability', dates: 'availability_dates' },
+  video: { weekly: 'availability_video', dates: 'availability_dates_video' },
+};
+export const kindParam = (k: unknown): Kind => (k === 'video' ? 'video' : 'meet');
+
+/** When an in-person request expires unanswered: REPLY_HOURS after it was sent, at the latest an hour before the start. */
+export const replyBy = (b: { created_at: number; starts_at: number }) => Math.min(b.created_at + REPLY_HOURS * 3600, b.starts_at - 3600);
+
+/**
+ * Until when a customer can cancel a confirmed booking for free: FREE_CANCEL_HOURS before the start, and a video date
+ * (confirmed the moment it's booked) also in its first VIDEO_GRACE_MIN minutes. Later, the companion keeps their pay.
+ */
+export const freeUntil = (b: { activity: string; created_at: number; starts_at: number }) =>
+  Math.max(b.starts_at - FREE_CANCEL_HOURS * 3600, b.activity === VIDEO_ACT ? Math.min(b.created_at + VIDEO_GRACE_MIN * 60, b.starts_at) : 0);
+
 /** One of the next 7 Berlin dates, with its noon and the following midnight as unix times. */
 export type CalDay = { date: string; weekday: number; noon: number; midnight: number };
 
@@ -118,11 +146,11 @@ type Busy = { starts_at: number; duration_h: number };
 /**
  * Open start times for the next 7 days, every half hour: within the companion's own hours on dates that have them
  * (a booking ends by the range's end), otherwise within the weekly windows, joined where they touch (a booking ends
- * by midnight). So the next free time starts right where the last booking ends. Each start is at least an hour from
- * now with at least an hour free; `fit` is the longest booking (in half hours, up to 8) that fits from there.
- * `firstOnly` stops at each day's first open time (for lists: when someone is next free).
+ * by midnight). So the next free time starts right where the last booking ends. Each start is at least `lead`
+ * seconds from now with at least an hour free; `fit` is the longest booking (in half hours, up to 8) that fits from
+ * there. `firstOnly` stops at each day's first open time (for lists: when someone is next free).
  */
-export function openTimes(cal: CalDay[], windows: Set<string>, custom: Map<string, Range[]>, busy: Busy[], t: number, firstOnly = false): DaySlots[] {
+export function openTimes(cal: CalDay[], windows: Set<string>, custom: Map<string, Range[]>, busy: Busy[], t: number, lead: number, firstOnly = false): DaySlots[] {
   const free = (from: number, to: number) => !busy.some((b) => from < b.starts_at + b.duration_h * 3600 && to > b.starts_at);
   const most = firstOnly ? MIN_HOURS : MAX_HOURS;
   return cal.map((d) => {
@@ -145,7 +173,7 @@ export function openTimes(cal: CalDay[], windows: Set<string>, custom: Map<strin
       for (let m = s.from; m + MIN_HOURS * 60 <= s.to && !(firstOnly && times.length); m += 30) {
         const time = clock(m);
         const start = startAt(d, time);
-        if (start < t + 3600) continue;
+        if (start < t + lead) continue;
         let h = 0;
         while (h < most && start + (h + 0.5) * 3600 <= s.end && free(start, start + (h + 0.5) * 3600)) h += 0.5;
         if (h < MIN_HOURS) continue;
@@ -157,42 +185,71 @@ export function openTimes(cal: CalDay[], windows: Set<string>, custom: Map<strin
   });
 }
 
-/** Blocking times: requests (a checkout in progress too), confirmed bookings, meet-ups under way and suggested new times. */
+/** Blocking times, whatever the kind: requests (a checkout in progress too), confirmed bookings, meet-ups under way and suggested new times. */
 const BUSY_SQL = `SELECT companion_id, starts_at, duration_h FROM bookings WHERE status IN ('pending', 'confirmed', 'completed') AND starts_at > ?1 AND starts_at < ?2 AND id <> ?3
   UNION ALL
   SELECT companion_id, resched_at, duration_h FROM bookings WHERE status IN ('pending', 'confirmed') AND resched_at > ?1 AND resched_at < ?2 AND id <> ?3`;
 
-/**
- * Open slots for the next 7 days (see openTimes): weekly windows (or, on dates with their own hours, those hours) minus
- * existing bookings. Cancelled bookings don't block, so a cancelled time is bookable again straight away.
- * `except` leaves one booking out (its own time and suggestion), for picking a new time for it.
- */
-export async function slotsFor(env: Env, companionId: string, except = ''): Promise<DaySlots[]> {
-  const t = now();
-  const cal = calendar(t);
-  const [win, dates, busy] = await Promise.all([
-    env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(companionId).all<{ day: number; win: string }>(),
-    env.DB.prepare('SELECT date, ranges FROM availability_dates WHERE companion_id = ? AND date >= ?').bind(companionId, cal[0].date)
-      .all<{ date: string; ranges: string }>(),
-    env.DB.prepare(BUSY_SQL.replace(/AND id <> \?3/g, 'AND id <> ?3 AND companion_id = ?4')).bind(t - MAX_HOURS * 3600, t + 8 * 86400, except, companionId)
-      .all<Busy>(),
+const busyOf = (env: Env, companionId: string, t: number, except: string) =>
+  env.DB.prepare(BUSY_SQL.replace(/AND id <> \?3/g, 'AND id <> ?3 AND companion_id = ?4')).bind(t - MAX_HOURS * 3600, t + 8 * 86400, except, companionId)
+    .all<Busy>().then((r) => r.results);
+
+/** One kind's weekly windows ("0-eve") and specific dates for a companion. */
+async function hoursOf(env: Env, companionId: string, kind: Kind, from: string) {
+  const { weekly, dates } = HOURS_TABLES[kind];
+  const [win, own] = await Promise.all([
+    env.DB.prepare(`SELECT day, win FROM ${weekly} WHERE companion_id = ?`).bind(companionId).all<{ day: number; win: string }>(),
+    env.DB.prepare(`SELECT date, ranges FROM ${dates} WHERE companion_id = ? AND date >= ?`).bind(companionId, from).all<{ date: string; ranges: string }>(),
   ]);
-  const windows = new Set(win.results.map((w) => `${w.day}-${w.win}`));
-  const custom = new Map(dates.results.map((d) => [d.date, parseJson<Range[]>(d.ranges, [])]));
-  return openTimes(cal, windows, custom, busy.results, t);
+  return {
+    windows: new Set(win.results.map((w) => `${w.day}-${w.win}`)),
+    custom: new Map(own.results.map((d) => [d.date, parseJson<Range[]>(d.ranges, [])])),
+  };
 }
 
 /**
+ * Open slots of one kind for the next 7 days (see openTimes): that kind's weekly windows (or, on dates with their own
+ * hours, those hours) minus every booking. Cancelled bookings don't block, so a cancelled time is bookable again
+ * straight away. `except` leaves one booking out (its own time and suggestion), for picking a new time for it.
+ */
+export async function slotsFor(env: Env, companionId: string, except = '', kind: Kind = 'meet'): Promise<DaySlots[]> {
+  const t = now();
+  const cal = calendar(t);
+  const [h, busy] = await Promise.all([hoursOf(env, companionId, kind, cal[0].date), busyOf(env, companionId, t, except)]);
+  return openTimes(cal, h.windows, h.custom, busy, t, LEAD_S[kind]);
+}
+
+export type Times = Record<Kind, DaySlots[] | null>;
+
+/** Open slots of each kind the companion offers (null for a kind they don't offer), from one look at their bookings. */
+export async function timesFor(env: Env, companionId: string, acts?: string[]): Promise<Times> {
+  const t = now();
+  const cal = calendar(t);
+  const offered = kindsOf(acts ?? parseJson<string[]>(
+    (await env.DB.prepare('SELECT activities FROM companions WHERE user_id = ?').bind(companionId).first<{ activities: string }>())?.activities, [],
+  ));
+  const [busy, ...hours] = await Promise.all([busyOf(env, companionId, t, ''), ...offered.map((k) => hoursOf(env, companionId, k, cal[0].date))]);
+  const out: Times = { meet: null, video: null };
+  offered.forEach((k, i) => { out[k] = openTimes(cal, hours[i].windows, hours[i].custom, busy, t, LEAD_S[k]); });
+  return out;
+}
+
+/** When someone is next free (unix, or null within 7 days), whether that's today, and the weekdays (0=Mon) with an open time. */
+export type Free = { next: number | null; today: boolean; days: number[] };
+
+/**
  * When each companion is next free, for lists and filters, from the same rules as their open times (bookings
- * included): `next` is the first open start (unix) in the next 7 days, `days` the weekdays (0=Mon) with an open time.
+ * included): per kind they offer (`free.meet`, `free.video`; null when not offered), and for either kind at the top
+ * level (`next` is the sooner one, `today` and `days` count both).
  */
 export async function nextFreeAll(env: Env) {
   const t = now();
   const cal = calendar(t);
-  const [win, own, busy] = await Promise.all([
-    env.DB.prepare('SELECT companion_id, day, win FROM availability').all<{ companion_id: string; day: number; win: string }>(),
-    env.DB.prepare('SELECT companion_id, date, ranges FROM availability_dates WHERE date >= ? AND date <= ?').bind(cal[0].date, cal[6].date)
-      .all<{ companion_id: string; date: string; ranges: string }>(),
+  const weekly = (k: Kind) => env.DB.prepare(`SELECT companion_id, day, win FROM ${HOURS_TABLES[k].weekly}`).all<{ companion_id: string; day: number; win: string }>();
+  const dates = (k: Kind) => env.DB.prepare(`SELECT companion_id, date, ranges FROM ${HOURS_TABLES[k].dates} WHERE date >= ? AND date <= ?`).bind(cal[0].date, cal[6].date)
+    .all<{ companion_id: string; date: string; ranges: string }>();
+  const [wm, wv, dm, dv, busy] = await Promise.all([
+    weekly('meet'), weekly('video'), dates('meet'), dates('video'),
     env.DB.prepare(BUSY_SQL).bind(t - MAX_HOURS * 3600, t + 8 * 86400, '').all<Busy & { companion_id: string }>(),
   ]);
   const group = <T,>(rows: (T & { companion_id: string })[]) => {
@@ -200,21 +257,36 @@ export async function nextFreeAll(env: Env) {
     for (const r of rows) m.set(r.companion_id, [...(m.get(r.companion_id) ?? []), r]);
     return m;
   };
-  const windows = group(win.results), dates = group(own.results), blocks = group(busy.results);
-  return (companionId: string) => {
+  const hours = { meet: { windows: group(wm.results), dates: group(dm.results) }, video: { windows: group(wv.results), dates: group(dv.results) } };
+  const blocks = group(busy.results);
+  const freeOf = (id: string, k: Kind): Free => {
     const days = openTimes(
       cal,
-      new Set((windows.get(companionId) ?? []).map((w) => `${w.day}-${w.win}`)),
-      new Map((dates.get(companionId) ?? []).map((d) => [d.date, parseJson<Range[]>(d.ranges, [])])),
-      blocks.get(companionId) ?? [],
+      new Set((hours[k].windows.get(id) ?? []).map((w) => `${w.day}-${w.win}`)),
+      new Map((hours[k].dates.get(id) ?? []).map((d) => [d.date, parseJson<Range[]>(d.ranges, [])])),
+      blocks.get(id) ?? [],
       t,
+      LEAD_S[k],
       true,
     );
     const first = days.findIndex((d) => d.times.length);
     return {
       next: first < 0 ? null : startAt(cal[first], days[first].times[0]),
       today: days[0].times.length > 0,
-      days: days.flatMap((d, i) => (d.times.length ? [cal[i].weekday] : [])).sort((a, b) => a - b),
+      days: days.flatMap((d, i) => (d.times.length ? [cal[i].weekday] : [])),
+    };
+  };
+  return (row: Pick<CompanionRow, 'user_id' | 'activities'>) => {
+    const offered = kindsOf(parseJson<string[]>(row.activities, []));
+    const free: Record<Kind, Free | null> = { meet: null, video: null };
+    for (const k of offered) free[k] = freeOf(row.user_id, k);
+    const all = offered.map((k) => free[k]!);
+    const nexts = all.map((f) => f.next).filter((n): n is number => n !== null);
+    return {
+      next: nexts.length ? Math.min(...nexts) : null,
+      today: all.some((f) => f.today),
+      days: [...new Set(all.flatMap((f) => f.days))].sort((a, b) => a - b),
+      free,
     };
   };
 }

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
-import { berlinDate, berlinToUnix, cleanRanges, CUSTOM_DAYS_AHEAD, GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
+import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_ACT, WINDOWS } from '../types';
+import { berlinDate, berlinToUnix, cleanRanges, CUSTOM_DAYS_AHEAD, GALLERY_MAX, GALLERY_MIN, HOURS_TABLES, kindParam, toCompanion, type CompanionRow } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { berlinWhen, CONTACT_MSG, fail, hasContactDetails, now, parseJson } from '../lib/util';
 
@@ -38,14 +38,16 @@ companionProfile.get('/', async (c) => {
   const id = c.get('user').id;
   const row = await c.env.DB.prepare('SELECT * FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
   if (!row) return c.json({ status: 'none' });
-  const [avail, dates] = await Promise.all([
-    c.env.DB.prepare('SELECT day, win FROM availability WHERE companion_id = ?').bind(id).all<{ day: number; win: string }>(),
-    c.env.DB.prepare('SELECT date, ranges FROM availability_dates WHERE companion_id = ? AND date >= ? ORDER BY date').bind(id, berlinDate(now())).all<{ date: string; ranges: string }>(),
+  const today = berlinDate(now());
+  const weekly = (table: string) => c.env.DB.prepare(`SELECT day, win FROM ${table} WHERE companion_id = ?`).bind(id).all<{ day: number; win: string }>()
+    .then((r) => r.results.map((a) => `${WEEK[a.day]}-${a.win}`));
+  const dated = (table: string) => c.env.DB.prepare(`SELECT date, ranges FROM ${table} WHERE companion_id = ? AND date >= ? ORDER BY date`).bind(id, today).all<{ date: string; ranges: string }>()
+    .then((r) => r.results.map((d) => ({ date: d.date, ranges: parseJson<[string, string][]>(d.ranges, []) })));
+  // In-person hours (`avail`, `dates`) and video hours (`availVideo`, `datesVideo`) are kept apart.
+  const [avail, dates, availVideo, datesVideo] = await Promise.all([
+    weekly(HOURS_TABLES.meet.weekly), dated(HOURS_TABLES.meet.dates), weekly(HOURS_TABLES.video.weekly), dated(HOURS_TABLES.video.dates),
   ]);
-  return c.json({
-    ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []), avail: avail.results.map((a) => `${WEEK[a.day]}-${a.win}`),
-    dates: dates.results.map((d) => ({ date: d.date, ranges: parseJson<[string, string][]>(d.ranges, []) })),
-  });
+  return c.json({ ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []), avail, dates, availVideo, datesVideo });
 });
 
 /** "Become a Companion" submission. Goes to the admin review queue. */
@@ -84,9 +86,12 @@ companionProfile.post('/apply', async (c) => {
       b.photoId!, b.idPhotoId!, JSON.stringify(gallery),
     ),
     dropUnusedGallery(c.env, u.id, gallery),
-    c.env.DB.prepare('DELETE FROM availability WHERE companion_id = ?').bind(u.id),
-    ...b.days!.flatMap((d) => b.wins!.filter((w) => (WINDOWS as readonly string[]).includes(w)).map((w) =>
-      c.env.DB.prepare('INSERT OR IGNORE INTO availability (companion_id, day, win) VALUES (?, ?, ?)').bind(u.id, WEEK.indexOf(d), w))),
+    // The days and times picked are the weekly hours, for video dates too if they offer them (changed apart later).
+    ...[HOURS_TABLES.meet.weekly, ...(b.acts!.includes(VIDEO_ACT) ? [HOURS_TABLES.video.weekly] : [])].flatMap((table) => [
+      c.env.DB.prepare(`DELETE FROM ${table} WHERE companion_id = ?`).bind(u.id),
+      ...b.days!.flatMap((d) => b.wins!.filter((w) => (WINDOWS as readonly string[]).includes(w)).map((w) =>
+        c.env.DB.prepare(`INSERT OR IGNORE INTO ${table} (companion_id, day, win) VALUES (?, ?, ?)`).bind(u.id, WEEK.indexOf(d), w))),
+    ]),
   ]);
   void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ status: 'pending' }, 201);
@@ -149,18 +154,29 @@ companionProfile.patch('/', async (c) => {
     b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, u.id,
   ).run();
   if (!res.meta.changes) fail(404, 'You don’t have a companion profile yet.');
+  if (b.acts) {
+    // Starting video dates without video hours: they begin as a copy of the weekly in-person hours.
+    if (b.acts.includes(VIDEO_ACT)) {
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO availability_video (companion_id, day, win) SELECT companion_id, day, win FROM availability
+         WHERE companion_id = ?1 AND NOT EXISTS (SELECT 1 FROM availability_video WHERE companion_id = ?1)`,
+      ).bind(u.id).run();
+    }
+    void slotsChanged(c.env, u.id, c.executionCtx); // which kinds they offer may have changed
+  }
   return c.json({ ok: true });
 });
 
-/** Weekly availability grid toggle. Body: { day: 'Mon', win: 'am', on: boolean } */
+/** Weekly availability grid toggle. Body: { day: 'Mon', win: 'am', on: boolean, kind?: 'meet' | 'video' } (in person by default). */
 companionProfile.put('/availability', async (c) => {
   const u = c.get('user');
-  const { day, win, on } = await c.req.json<{ day: string; win: string; on: boolean }>();
+  const { day, win, on, kind } = await c.req.json<{ day: string; win: string; on: boolean; kind?: string }>();
   const d = WEEK.indexOf(day);
   if (d < 0 || !(WINDOWS as readonly string[]).includes(win)) fail(400, 'Unknown time slot.');
   const has = await c.env.DB.prepare('SELECT 1 FROM companions WHERE user_id = ?').bind(u.id).first();
   if (!has) fail(404, 'You don’t have a companion profile yet.');
-  await c.env.DB.prepare(on ? 'INSERT OR IGNORE INTO availability (companion_id, day, win) VALUES (?, ?, ?)' : 'DELETE FROM availability WHERE companion_id = ? AND day = ? AND win = ?')
+  const table = HOURS_TABLES[kindParam(kind)].weekly;
+  await c.env.DB.prepare(on ? `INSERT OR IGNORE INTO ${table} (companion_id, day, win) VALUES (?, ?, ?)` : `DELETE FROM ${table} WHERE companion_id = ? AND day = ? AND win = ?`)
     .bind(u.id, d, win).run();
   void slotsChanged(c.env, u.id, c.executionCtx); // open profiles show the new times at once
   return c.json({ ok: true });
@@ -178,16 +194,19 @@ function checkDate(date: string) {
 }
 
 /**
- * Hours for one date, replacing the weekly windows that day. Body: { ranges: [['18:00', '23:00'], …] }; an empty list
- * is a day off. Bookings already made that day stay (`kept` says how many), so the app can mention them.
+ * Hours for one date, replacing that kind's weekly windows that day. Body: { ranges: [['18:00', '23:00'], …], kind? }
+ * (in person by default, or 'video'); an empty list is a day off for that kind. Bookings already made that day stay
+ * (`kept` says how many of that kind), so the app can mention them.
  */
 companionProfile.put('/dates/:date', async (c) => {
   const u = c.get('user');
   const date = c.req.param('date');
   checkDate(date);
   let ranges: [string, string][] = [];
+  const body = await c.req.json<{ ranges?: unknown; kind?: string }>().catch(() => ({}) as { ranges?: unknown; kind?: string });
+  const kind = kindParam(body.kind);
   try {
-    ranges = cleanRanges((await c.req.json<{ ranges?: unknown }>()).ranges);
+    ranges = cleanRanges(body.ranges);
   } catch (e) {
     fail(400, (e as Error).message);
   }
@@ -197,20 +216,20 @@ companionProfile.put('/dates/:date', async (c) => {
   const dayEnd = berlinToUnix(berlinDate(berlinToUnix(date, '12:00') + 86400), '00:00'); // 23 or 25 hours on clock-change days
   const [, kept] = await Promise.all([
     c.env.DB.prepare(
-      `INSERT INTO availability_dates (companion_id, date, ranges) VALUES (?, ?, ?)
+      `INSERT INTO ${HOURS_TABLES[kind].dates} (companion_id, date, ranges) VALUES (?, ?, ?)
        ON CONFLICT (companion_id, date) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()`,
     ).bind(u.id, date, JSON.stringify(ranges)).run(),
-    c.env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at >= ? AND starts_at < ?")
-      .bind(u.id, dayStart, dayEnd).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at >= ? AND starts_at < ? AND (activity = ?) = ?`)
+      .bind(u.id, dayStart, dayEnd, VIDEO_ACT, kind === 'video' ? 1 : 0).first<{ n: number }>(),
   ]);
   void slotsChanged(c.env, u.id, c.executionCtx);
-  return c.json({ ok: true, date, ranges, kept: kept?.n ?? 0 });
+  return c.json({ ok: true, date, ranges, kind, kept: kept?.n ?? 0 });
 });
 
-/** Back to the weekly windows on this date. */
+/** Back to that kind's weekly windows on this date (`?kind=video` for video hours). */
 companionProfile.delete('/dates/:date', async (c) => {
   const u = c.get('user');
-  await c.env.DB.prepare('DELETE FROM availability_dates WHERE companion_id = ? AND date = ?').bind(u.id, c.req.param('date')).run();
+  await c.env.DB.prepare(`DELETE FROM ${HOURS_TABLES[kindParam(c.req.query('kind'))].dates} WHERE companion_id = ? AND date = ?`).bind(u.id, c.req.param('date')).run();
   void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });

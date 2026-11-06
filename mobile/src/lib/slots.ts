@@ -6,6 +6,7 @@ import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { api } from '../api';
 import { useStore } from '../store';
+import type { Kind } from '../data';
 import { useLive } from './live';
 
 /** One day: open start times and, for each, the longest booking (hours) that fits before the next one. */
@@ -25,25 +26,29 @@ export function nextFree(slots: DaySlots[] | null | undefined) {
 }
 const MIN_FIT = 1;
 
+/** Open times of each kind the companion offers (null for a kind they don't offer). */
+export type Times = Record<Kind, DaySlots[] | null>;
+
+/** A companion's open times for both kinds, kept current. `times` is null until loaded. */
 export function useSlots(cid: string | undefined) {
-  const [slots, setSlots] = useState<DaySlots[] | null>(null);
+  const [times, setTimes] = useState<Times | null>(null);
   const loaded = useRef(false);
   const reload = useCallback(async () => {
     if (!cid) return;
     try {
-      setSlots(await api<DaySlots[]>('GET', `/companions/${cid}/slots`));
+      setTimes(await api<Times>('GET', `/companions/${cid}/times`));
       loaded.current = true;
     } catch (e) {
       if (!loaded.current) useStore.getState().showToast((e as Error).message);
     }
   }, [cid]);
   const live = useLive(cid ? `/live/slots/${cid}` : null, (e) => {
-    if (e.type === 'slots' && Array.isArray(e.slots)) setSlots(e.slots as DaySlots[]);
+    if (e.type === 'slots' && ('meet' in e || 'video' in e)) setTimes({ meet: (e.meet as DaySlots[] | null) ?? null, video: (e.video as DaySlots[] | null) ?? null });
   }, () => void reload());
   useFocusEffect(useCallback(() => { void reload(); }, [reload]));
   useEffect(() => {
     const t = setInterval(() => { if (!live.current && AppState.currentState === 'active') void reload(); }, 30000);
     return () => clearInterval(t);
   }, [reload, live]);
-  return { slots, reload };
+  return { times, reload };
 }

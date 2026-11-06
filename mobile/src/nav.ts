@@ -1,6 +1,6 @@
 // Navigation helpers mirroring the prototype's overlay transitions.
 import { router } from 'expo-router';
-import { CALL_OPENS_EARLY_S, whenShort, type BTab } from './data';
+import { CALL_OPENS_EARLY_S, whenShort, type BTab, type Kind } from './data';
 import { useStore, type Filters } from './store';
 
 /** Back to the previous screen, or to the start when there's none (a screen opened straight from a link). */
@@ -27,15 +27,16 @@ export function openReschedule(bookingId: string) {
 }
 
 /** Opens the booking flow (optionally on a day, YYYY-MM-DD), or the one-time ID check first if the customer isn't verified yet. */
-export function openBooking(cid: string, date?: string) {
+/** The step-by-step booking; `kind` limits it to video dates or in-person activities (e.g. from that kind's day strip). */
+export function openBooking(cid: string, date?: string, kind?: Kind) {
   if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);
-  router.push({ pathname: '/book/[cid]', params: date ? { cid, date } : { cid } });
+  router.push({ pathname: '/book/[cid]', params: { cid, ...(date ? { date } : {}), ...(kind ? { kind } : {}) } });
 }
 
-/** Books a companion's next free time on one page: what you'd like to do, how long, pay. */
-export function openQuickBook(cid: string) {
+/** Books a companion's next free time of one kind on one page: what you'd like to do, how long, pay. */
+export function openQuickBook(cid: string, kind: Kind = 'meet') {
   if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);
-  router.push({ pathname: '/book/[cid]', params: { cid, quick: '1' } });
+  router.push({ pathname: '/book/[cid]', params: { cid, quick: '1', kind } });
 }
 
 export function openVerify(next?: string) {

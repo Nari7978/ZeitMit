@@ -2,6 +2,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
 import { AM, BTAB, eur, hours, isVideo, placeFor, ST, whenShort, type BTab } from '../data';
+import { untilLabel } from '../lib/dates';
 import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
 import { bookAgain, joinVideoDate, openBookingChat, openProfile, openReschedule } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -15,7 +16,7 @@ const TABS: BTab[] = ['upcoming', 'pending', 'completed', 'cancelled'];
 // Short labels, so all four fit on small phones in English and German ("Abgeschlossen" didn't).
 const TAB_LABEL: Record<BTab, string> = { upcoming: 'Upcoming', pending: 'Pending', completed: 'Past', cancelled: 'Cancelled' };
 const EMPTY: Record<BTab, [string, string]> = {
-  upcoming: ['No upcoming plans', 'Confirmed bookings appear here once a companion accepts.'],
+  upcoming: ['No upcoming plans', 'Video dates show here as soon as they’re booked, in-person dates once the companion accepts.'],
   pending: ['No pending requests', 'Requests wait here until the companion responds.'],
   completed: ['Nothing completed yet', 'Past bookings and reviews will collect here.'],
   cancelled: ['No cancellations', 'Good news: nothing has been cancelled.'],
@@ -87,14 +88,16 @@ function BookingCard({ b }: { b: Booking }) {
     void openBookingChat(b.id);
   };
   const cancel = () => openSheet('cancel', { cancel: { bid: b.id, side: 'customer', reason: null, busy: false } });
-  // Free cancellation until FREE_CANCEL_HOURS before the start (shown on confirmed bookings).
-  const freeUntil = b.startsAt - FREE_CANCEL_HOURS * 3600;
+  // Free cancellation until FREE_CANCEL_HOURS before the start (shown on confirmed bookings); a video date, confirmed
+  // the moment it's booked, also in its first minutes. The server says until when.
+  const freeUntil = b.freeUntil ?? b.startsAt - FREE_CANCEL_HOURS * 3600;
   const freeNow = Date.now() / 1000 < freeUntil;
+  const moveUntil = b.startsAt - FREE_CANCEL_HOURS * 3600;
   // Moving to another time: up to 24 h before a confirmed booking (a request can move any time), never while
   // the companion's own suggestion waits for an answer, and at most a few times per booking.
   const open = b.status === 'pending' || b.status === 'confirmed';
   const canMove = open && (b.reschedLeft ?? 1) > 0 && b.resched?.by !== 'companion';
-  const move = () => (b.status === 'confirmed' && !freeNow
+  const move = () => (b.status === 'confirmed' && Date.now() / 1000 >= moveUntil
     ? useStore.getState().showToast(`You can change the time up to ${FREE_CANCEL_HOURS} hours before. Send ${c.name} a message instead.`)
     : openReschedule(b.id));
 
@@ -129,7 +132,9 @@ function BookingCard({ b }: { b: Booking }) {
   const pay = {
     held: {
       icon: 'lock', text: price + ' held by ZeitMit', bg: colors.lilac,
-      sub: b.status === 'pending' ? 'Refunded in full if ' + c.name + ' declines' : video ? 'Released after 10 minutes on the call together' : 'Released when ' + c.name + ' enters your meet code',
+      sub: b.status === 'pending'
+        ? (b.replyBy ? `${c.name} replies by ${untilLabel(b.replyBy)}, or it’s refunded in full` : 'Refunded in full if ' + c.name + ' declines')
+        : video ? 'Released after 10 minutes on the call together' : 'Released when ' + c.name + ' enters your meet code',
     },
     released: b.status === 'cancelled'
       ? { icon: 'circle-check', text: price + ' paid to ' + c.name, sub: video && b.cancelledBy === 'customer' && b.note?.startsWith('You didn’t join') ? 'Not refunded' : `Cancelled less than ${FREE_CANCEL_HOURS} hours before`, bg: colors.butter }

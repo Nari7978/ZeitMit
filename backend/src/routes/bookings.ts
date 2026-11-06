@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
-import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, VIDEO_ACT, type ActId } from '../types';
-import { berlinToUnix, hoursText, MAX_HOURS, MIN_HOURS, slotsFor, validLength } from '../lib/companions';
+import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, REPLY_HOURS, ROMANTIC, SERVICE_FEE, VIDEO_ACT, type ActId } from '../types';
+import { berlinDate, berlinToUnix, freeUntil, hoursText, kindOf, MAX_HOURS, MIN_HOURS, replyBy, slotsFor, validLength } from '../lib/companions';
 import { slotsChanged } from '../lib/live';
 import { alertAdmins, notify } from '../lib/notify';
 import { inBackground, sendBookingConfirmation, sendBookingInvoice } from '../lib/mail';
@@ -22,7 +22,11 @@ type BookingRow = {
   call_customer_at: number | null; call_companion_at: number | null; call_together_s: number; call_closed: number | null;
 };
 
-/** Customers cancel for free until this many hours before the start; later the companion keeps their pay. */
+/** A suggested new time can be accepted until this close to it (a video date needs no travel). */
+const RESCHED_CUTOFF_S = { video: 15 * 60, meet: 3600 } as const;
+
+/** "16:30" today, otherwise "Sat 8 Nov · 01:00". */
+const untilText = (unix: number) => (berlinDate(unix) === berlinDate(now()) ? berlinWhen(unix).time : berlinWhen(unix).full);
 
 /** Reasons people can pick when cancelling (fixed, so they can be translated and never carry contact details). */
 export const CANCEL_REASONS = {
@@ -48,6 +52,8 @@ const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; ph
   // Video dates have no meet code: the call itself confirms them.
   pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' && b.activity !== VIDEO_ACT ? b.meet_code : undefined, reviewed: !!b.reviewed,
   cancelledBy: b.cancelled_by ?? undefined, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
+  // A request: when it expires unanswered. A confirmed booking: until when cancelling is free.
+  replyBy: b.status === 'pending' ? replyBy(b) : undefined, freeUntil: b.status === 'confirmed' ? freeUntil(b) : undefined,
   feedback: !!(b as { my_feedback?: number }).my_feedback,
 });
 
@@ -58,7 +64,7 @@ const forCompanion = (b: BookingRow & CustomerInfo) => ({
   // What a companion may know about who is booking: never the email or documents.
   customer: { bio: b.customer_bio ?? '', verified: b.customer_id_status === 'approved', since: b.customer_since ?? null },
   ...berlinWhen(b.starts_at), dur: b.duration_h, place: b.place, note: b.note, status: b.status, pay: b.pay_status,
-  payout: b.subtotal, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count,
+  payout: b.subtotal, resched: reschedOf(b), reschedLeft: MAX_RESCHEDULES - b.resched_count, replyBy: b.status === 'pending' ? replyBy(b) : undefined,
   feedback: !!(b as { my_feedback?: number }).my_feedback,
   cancelledBy: b.cancelled_by ?? undefined, cancelNote: b.status === 'cancelled' ? b.cancel_note ?? undefined : undefined,
 });
@@ -149,7 +155,11 @@ async function releaseHold(env: Env, b: BookingRow, ctx?: Ctx): Promise<'release
   return (await dropHold(env, b)) ? 'released' : 'gone';
 }
 
-/** Tells customer and companion about a new (paid) request. */
+/**
+ * Once a booking is paid: a video date is confirmed at once (nothing to answer: it's within the companion's video
+ * hours, and they can still cancel); an in-person request goes to the companion, who has until replyBy to answer.
+ * Tells both sides.
+ */
 async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
   const b = await env.DB.prepare(
     `SELECT b.*, c.display_name AS companion_name, u.name AS customer_name FROM bookings b
@@ -158,8 +168,19 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
   if (!b) return;
   await ensureThread(env, b);
   const when = berlinWhen(b.starts_at);
-  await notify(env, b.customer_id, { icon: 'hourglass', tone: 'warning', title: 'Request sent to ' + b.companion_name, body: `${ACT_LABEL[b.activity]} on ${when.day}. ${b.companion_name} has 24 hours to respond.`, go: 'tab:pending' }, ctx);
-  await notify(env, b.companion_id, { icon: 'inbox', tone: 'violet', title: 'New booking request', body: `${b.customer_name || 'A customer'} · ${ACT_LABEL[b.activity]} · ${when.full}. ${euros(b.subtotal)} is already paid and held.`, go: 'comp:requests' }, ctx);
+  if (b.activity === VIDEO_ACT) {
+    const res = await env.DB.prepare("UPDATE bookings SET status = 'confirmed', updated_at = unixepoch() WHERE id = ? AND status = 'pending'").bind(b.id).run();
+    if (res.meta.changes) {
+      await notify(env, b.customer_id, { icon: 'video', tone: 'success', title: `Video date with ${b.companion_name} booked`, body: `${when.full}. Join from Bookings, from 10 minutes before the start.`, go: 'tab:upcoming' }, ctx);
+      await notify(env, b.companion_id, { icon: 'video', tone: 'violet', title: 'New video date booked', body: `${b.customer_name || 'A customer'} · ${when.full}. ${euros(b.subtotal)} is paid and held.`, go: 'comp:calendar' }, ctx);
+      await inBackground(ctx, () => sendBookingInvoice(env, b.id));
+      await inBackground(ctx, () => sendBookingConfirmation(env, b.id));
+    }
+    return;
+  }
+  const until = untilText(replyBy(b));
+  await notify(env, b.customer_id, { icon: 'hourglass', tone: 'warning', title: 'Request sent to ' + b.companion_name, body: `${ACT_LABEL[b.activity]} on ${when.day}. ${b.companion_name} has until ${until} to reply.`, go: 'tab:pending' }, ctx);
+  await notify(env, b.companion_id, { icon: 'inbox', tone: 'violet', title: 'New booking request', body: `${b.customer_name || 'A customer'} · ${ACT_LABEL[b.activity]} · ${when.full}. Reply by ${until}. ${euros(b.subtotal)} is already paid and held.`, go: 'comp:requests' }, ctx);
   await inBackground(ctx, () => sendBookingInvoice(env, b.id));
 }
 
@@ -216,7 +237,8 @@ bookings.post('/', async (c) => {
   const left = await c.env.DB.prepare('SELECT * FROM bookings WHERE customer_id = ? AND companion_id = ? AND paid = 0').bind(u.id, comp!.user_id).all<BookingRow>();
   for (const old of left.results) await releaseHold(c.env, old, c.executionCtx).catch((e) => console.error('Release failed', old.id, e));
 
-  const slots = await slotsFor(c.env, comp!.user_id);
+  // Video dates and in-person dates have their own hours and notice (but one clock).
+  const slots = await slotsFor(c.env, comp!.user_id, '', kindOf(b.act));
   const day = slots.find((d) => d.date === b.date);
   const at = day ? day.times.indexOf(b.time) : -1;
   if (at < 0) fail(409, 'That time was just taken. Pick another slot.');
@@ -348,7 +370,7 @@ bookings.get('/:id/reschedule', async (c) => {
   return c.json({
     id: b.id, side, cid: b.companion_id, act: b.activity, dur: b.duration_h, status: b.status, startsAt: b.starts_at, ...berlinWhen(b.starts_at),
     other: side === 'customer' ? names.companion : names.customer, resched: reschedOf(b), left: MAX_RESCHEDULES - b.resched_count,
-    slots: await slotsFor(c.env, b.companion_id, b.id),
+    slots: await slotsFor(c.env, b.companion_id, b.id, kindOf(b.activity)),
   });
 });
 
@@ -368,7 +390,7 @@ bookings.post('/:id/reschedule', async (c) => {
   }
   const date = String(body.date ?? '');
   const time = String(body.time ?? '');
-  const day = (await slotsFor(c.env, b.companion_id, b.id)).find((d) => d.date === date);
+  const day = (await slotsFor(c.env, b.companion_id, b.id, kindOf(b.activity))).find((d) => d.date === date);
   const at = day ? day.times.indexOf(time) : -1;
   if (at < 0) fail(409, 'That time isn’t free. Pick another one.');
   const fits = day!.fit[at];
@@ -451,7 +473,7 @@ bookings.post('/:id/reschedule/accept', async (c) => {
   const side = sideOf(b, c.get('user').id);
   if (!b.resched_at || (b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'There’s no new time to answer.');
   if (b.resched_by === side) fail(409, 'The other side has to answer your suggestion.');
-  if (b.resched_at! < now() + 3600) fail(409, 'That time is too close now. Suggest another one.');
+  if (b.resched_at! < now() + RESCHED_CUTOFF_S[kindOf(b.activity)]) fail(409, 'That time is too close now. Suggest another one.');
   const res = await c.env.DB.prepare(
     `UPDATE bookings SET starts_at = resched_at, status = CASE WHEN status = 'pending' AND resched_by = 'companion' THEN 'confirmed' ELSE status END,
        ${NO_RESCHED}, resched_count = resched_count + 1, updated_at = unixepoch()
@@ -492,8 +514,8 @@ bookings.delete('/:id/reschedule', async (c) => {
 });
 
 /**
- * Customer cancels. Pending requests and bookings more than FREE_CANCEL_HOURS ahead are refunded in full;
- * later, the booking is cancelled but the companion keeps their pay for the reserved time.
+ * Customer cancels. Pending requests, bookings more than FREE_CANCEL_HOURS ahead and video dates in their first
+ * minutes (see freeUntil) are refunded in full; later, the booking is cancelled but the companion keeps their pay.
  */
 bookings.post('/:id/cancel', async (c) => {
   const u = c.get('user');
@@ -504,7 +526,7 @@ bookings.post('/:id/cancel', async (c) => {
   const reason = reasonFor('customer', body.reason);
   const who = (await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(u.id).first<{ name: string }>())?.name?.split(' ')[0] || 'The customer';
   const when = `${ACT_LABEL[b.activity]} on ${berlinWhen(b.starts_at).day}`;
-  const late = b.status === 'confirmed' && b.starts_at - now() < FREE_CANCEL_HOURS * 3600;
+  const late = b.status === 'confirmed' && now() > freeUntil(b);
 
   if (!late) {
     if (!(await refundBooking(c.env, b, (amt) => `Cancelled by you · ${amt} refunded in full`, false, 'customer', reason))) fail(409, 'This booking can’t be cancelled any more.');
@@ -608,6 +630,11 @@ async function own(c: { env: Env; get: (k: 'user') => { id: string } }, id: stri
 companionBookings.post('/:id/accept', async (c) => {
   const b = await own(c, c.req.param('id'));
   if (b.status !== 'pending') fail(409, 'This request was already handled.');
+  // Past its reply time (the cron hadn't got to it yet): it expires now, so the customer isn't left waiting.
+  if (now() >= replyBy(b)) {
+    await expireRequest(c.env, b);
+    fail(409, 'This request has expired, so the customer was refunded.');
+  }
   const clash = await c.env.DB.prepare(
     "SELECT 1 FROM bookings WHERE companion_id = ? AND status = 'confirmed' AND id != ? AND starts_at < ? AND starts_at + duration_h * 3600 > ?",
   ).bind(b.companion_id, b.id, b.starts_at + b.duration_h * 3600, b.starts_at).first();
@@ -779,9 +806,11 @@ export async function askFeedback(env: Env) {
   }
 }
 
-/** Cron: a suggested time that's less than an hour away can't be accepted any more, so it stops holding the time. */
+/** Cron: a suggested time too close to accept (an hour; 15 minutes for a video date) stops holding the time. */
 export async function expireReschedules(env: Env) {
-  const r = await env.DB.prepare('SELECT id, companion_id FROM bookings WHERE resched_at IS NOT NULL AND resched_at < ? LIMIT 200').bind(now() + 3600).all<{ id: string; companion_id: string }>();
+  const r = await env.DB.prepare(
+    `SELECT id, companion_id FROM bookings WHERE resched_at IS NOT NULL AND resched_at < ?1 + CASE WHEN activity = ?2 THEN ${RESCHED_CUTOFF_S.video} ELSE ${RESCHED_CUTOFF_S.meet} END LIMIT 200`,
+  ).bind(now(), VIDEO_ACT).all<{ id: string; companion_id: string }>();
   for (const b of r.results) {
     await env.DB.prepare(`UPDATE bookings SET ${NO_RESCHED} WHERE id = ?`).bind(b.id).run();
     await slotsChanged(env, b.companion_id);
@@ -789,13 +818,25 @@ export async function expireReschedules(env: Env) {
   return r.results.length;
 }
 
-/** Cron: requests unanswered for 24h are cancelled and refunded. */
+/** An unanswered request is cancelled and refunded, and both sides are told. False if it was answered meanwhile. */
+async function expireRequest(env: Env, b: BookingRow) {
+  if (!(await refundBooking(env, b, (amt) => `No reply in time · ${amt} refunded in full`, true, 'system'))) return false;
+  const { customer, companion } = await namesOf(env, b);
+  await notify(env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Request expired', body: `${companion} didn’t reply in time, so ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' });
+  await notify(env, b.companion_id, { icon: 'hourglass', tone: 'neutral', title: 'Request expired', body: `${customer}’s request for ${berlinWhen(b.starts_at).full} wasn’t answered in time, so it was cancelled.`, go: 'comp:calendar' });
+  return true;
+}
+
+/**
+ * Cron: requests unanswered by their reply time (REPLY_HOURS, at the latest an hour before the start) are cancelled and
+ * refunded. A request the companion answered with another time waits for the customer instead (until that suggestion
+ * expires too).
+ */
 export async function expirePending(env: Env) {
-  const r = await env.DB.prepare("SELECT * FROM bookings WHERE status = 'pending' AND paid = 1 AND (created_at < ? OR starts_at < ?) LIMIT 200")
-    .bind(now() - 24 * 3600, now()).all<BookingRow>();
-  for (const b of r.results) {
-    if (!(await refundBooking(env, b, (amt) => `No reply in time · ${amt} refunded in full`, true, 'system'))) continue;
-    await notify(env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Request expired', body: `No reply in time, so ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' });
-  }
+  const r = await env.DB.prepare(
+    `SELECT * FROM bookings WHERE status = 'pending' AND paid = 1 AND (created_at <= ?1 - ?2 OR starts_at <= ?1 + 3600)
+       AND NOT (resched_by = 'companion' AND resched_at IS NOT NULL) LIMIT 200`,
+  ).bind(now(), REPLY_HOURS * 3600).all<BookingRow>();
+  for (const b of r.results) await expireRequest(env, b);
   return r.results.length;
 }

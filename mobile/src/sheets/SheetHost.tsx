@@ -397,15 +397,18 @@ const FeedbackTag = ({ label, good, on, onPress }: { label: string; good?: boole
 /** A companion's own hours for one date (or a day off), replacing the weekly windows that day. */
 function CustomDateSheet() {
   const cd = useStore((s) => s.customDate);
-  const dates = useStore((s) => s.comp.dates);
+  // In-person hours or video hours, whichever the Calendar was showing.
+  const video = cd.kind === 'video';
+  const dates = useStore((s) => (s.customDate.kind === 'video' ? s.comp.datesVideo : s.comp.dates));
   const { saveDate, removeDate, closeSheet, showToast } = useStore.getState();
   const set = (o: Partial<typeof cd>) => useStore.setState((s) => ({ customDate: { ...s.customDate, ...o } }));
   const existing = dates.find((d) => d.date === cd.date);
   // Start from what's set for that date, or that weekday's weekly times.
   const pick = useCallback((date: string) => {
-    const { comp } = useStore.getState();
-    const ex = comp.dates.find((d) => d.date === date);
-    const weekly = weeklyRanges(comp.avail, WEEK[weekdayOf(date)]);
+    const { comp, customDate } = useStore.getState();
+    const vid = customDate.kind === 'video';
+    const ex = (vid ? comp.datesVideo : comp.dates).find((d) => d.date === date);
+    const weekly = weeklyRanges(vid ? comp.availVideo : comp.avail, WEEK[weekdayOf(date)]);
     useStore.setState((s) => ({ customDate: { ...s.customDate, date, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : weekly.length ? weekly : [['18:00', '22:00']] } }));
   }, []);
   const setRange = (i: number, r: Range) => set({ ranges: cd.ranges.map((x, k) => (k === i ? r : x)) });
@@ -414,22 +417,22 @@ function CustomDateSheet() {
   const save = async () => {
     if (!cd.date || problem || cd.busy) return;
     set({ busy: true });
-    const ok = await saveDate(cd.date, cd.off ? [] : [...cd.ranges].sort((a, b) => minutes(a[0]) - minutes(b[0])));
+    const ok = await saveDate(cd.date, cd.off ? [] : [...cd.ranges].sort((a, b) => minutes(a[0]) - minutes(b[0])), cd.kind);
     set({ busy: false });
     if (ok) closeSheet();
   };
   const reset = async () => {
     if (!cd.date || cd.busy) return;
     set({ busy: true });
-    const ok = await removeDate(cd.date);
+    const ok = await removeDate(cd.date, cd.kind);
     set({ busy: false });
-    if (ok) { closeSheet(); showToast('Back to your weekly times for that day.'); }
+    if (ok) { closeSheet(); showToast(video ? 'Back to your weekly video hours for that day.' : 'Back to your weekly times for that day.'); }
   };
 
   return (
     <Pad scroll>
-      <SheetTitle style={{ marginBottom: 2 }}>Hours for a date</SheetTitle>
-      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>They replace your weekly times on that day. Bookings you already have stay.</Txt>
+      <SheetTitle style={{ marginBottom: 2 }}>{video ? 'Video hours for a date' : 'Hours for a date'}</SheetTitle>
+      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>{video ? 'They replace your weekly video hours on that day. Bookings you already have stay.' : 'They replace your weekly times on that day. Bookings you already have stay.'}</Txt>
       <DateStrip selected={cd.date} marked={dates.map((d) => d.date).join()} onPick={pick} />
       {cd.date ? (
         <>
@@ -439,7 +442,7 @@ function CustomDateSheet() {
             <Chip label="Day off" icon="calendar-x" on={cd.off} onPress={() => set({ off: true })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
           </Row>
           {cd.off ? (
-            <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>Customers can’t book you that day.</Txt>
+            <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>{video ? 'Customers can’t book a video date with you that day.' : 'Customers can’t book you that day.'}</Txt>
           ) : (
             <View style={{ gap: 10, marginTop: 14 }}>
               {cd.ranges.map(([from, to], i) => (
@@ -456,7 +459,7 @@ function CustomDateSheet() {
           )}
           {problem ? <Txt size={13} color={colors.redDeep} style={{ marginTop: 10 }}>{problem}</Txt> : null}
           <PrimaryButton label={cd.busy ? 'Saving…' : 'Save'} dim={!!problem || cd.busy} style={{ marginTop: 16 }} onPress={() => void save()} />
-          {existing ? <TextButton label="Use my weekly times again" size={14} onPress={() => void reset()} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
+          {existing ? <TextButton label={video ? 'Use my weekly video hours again' : 'Use my weekly times again'} size={14} onPress={() => void reset()} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
         </>
       ) : (
         <Txt size={14} color={colors.gray600} style={{ marginTop: 16 }}>Pick a date.</Txt>
@@ -791,7 +794,7 @@ function CancelSheet() {
   if (!b) return <Pad><View /></Pad>;
   const pending = b.status === 'pending';
   const other = companion ? (theirs?.who ?? 'Your customer') : (mine?.companionName ?? 'your companion');
-  const late = !companion && b.status === 'confirmed' && b.startsAt - Date.now() / 1000 < FREE_CANCEL_HOURS * 3600;
+  const late = !companion && b.status === 'confirmed' && Date.now() / 1000 > (mine?.freeUntil ?? b.startsAt - FREE_CANCEL_HOURS * 3600);
 
   const policy = companion
     ? { icon: 'rotate-ccw', bg: colors.lilac, text: `${other} gets everything back. You won’t receive the ${eur((theirs?.payout ?? 0) / 100)}.` }

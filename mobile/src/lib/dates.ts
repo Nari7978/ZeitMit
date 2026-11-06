@@ -80,14 +80,29 @@ const weekdayShort = (date: string) => {
   if (!f) weekdays.set(l, (f = new Intl.DateTimeFormat(l, { weekday: 'short', timeZone: 'UTC' })));
   return f.format(new Date(date + 'T12:00:00Z'));
 };
+/** Unix time of a Berlin date and time (YYYY-MM-DD, HH:MM), handling CET/CEST (as on the server). */
+export function berlinUnix(date: string, time: string) {
+  const guess = Date.parse(`${date}T${time}:00Z`) / 1000;
+  const off = (u: number) => { const p = berlinAt(u); return Date.parse(`${p.date}T${p.time}:00Z`) / 1000 - u; };
+  return guess - off(guess - off(guess));
+}
+/** "16:30" today, otherwise "Tomorrow · 01:00": until when something holds. */
+export function untilLabel(unix: number) {
+  const p = berlinAt(unix);
+  return p.date === berlinToday() ? p.time : whenFree(p.date, p.time);
+}
 /** "Today · 18:30", "Tomorrow · 09:00", "Sat, 8 Nov · 17:00": when someone is next free. */
 export function whenFree(date: string, time: string) {
   const today = berlinToday();
   return date === today ? `Today · ${time}` : date === addDays(today, 1) ? `Tomorrow · ${time}` : `${dateLabel(date)} · ${time}`;
 }
-/** "Free today · 18:30", "Free tomorrow · 09:00", "Free Sat · 17:00": the short form for cards. */
-export function freeTag(date: string, time: string) {
+/**
+ * "Free today · 18:30", "Free tomorrow · 09:00", "Free Sat · 17:00": the short form for cards. For a video date
+ * time: "Video today · 21:00".
+ */
+export function freeTag(date: string, time: string, video = false) {
   const today = berlinToday();
-  return date === today ? `Free today · ${time}` : date === addDays(today, 1) ? `Free tomorrow · ${time}` : `Free ${weekdayShort(date)} · ${time}`;
+  const w = video ? 'Video' : 'Free';
+  return date === today ? `${w} today · ${time}` : date === addDays(today, 1) ? `${w} tomorrow · ${time}` : `${w} ${weekdayShort(date)} · ${time}`;
 }
 

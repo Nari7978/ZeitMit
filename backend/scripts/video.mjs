@@ -40,11 +40,10 @@ const S = await login(`stranger+${Date.now()}@example.com`);
 const left = (await call('GET', '/companion/bookings', Y.token)).data;
 for (const x of [...left.requests, ...left.upcoming]) await call('POST', `/companion/bookings/${x.id}/cancel`, Y.token, { reason: 'Something else' });
 
-/** Books a video date on a free slot and has Yuki accept it. */
-const book = async (accept = true) => {
-  const day = (await call('GET', `/companions/${CID}/slots`)).data.find((d) => d.times.length);
+/** Books a video date at Yuki's next free video time (it's confirmed at once: nothing to accept). */
+const book = async () => {
+  const day = (await call('GET', `/companions/${CID}/times`)).data.video.find((d) => d.times.length);
   const r = await call('POST', '/bookings', C.token, { companionId: CID, act: 'call', date: day.date, time: day.times[0], dur: 1, place: 'Café Einstein', boundariesAgreed: true });
-  if (accept) await call('POST', `/companion/bookings/${r.data.id}/accept`, Y.token);
   return r.data.id;
 };
 /** Moves a booking so it started `ago` seconds ago (negative: starts later). */
@@ -70,11 +69,12 @@ ok(r.data.releaseAfter === 3 && r.data.endsAt - r.data.startsAt === 3600, `ends 
 r = await call('POST', `/calls/${id}`, Y.token);
 ok(r.status === 200 && r.data.side === 'companion' && r.data.peer === 'Cora', 'the companion can join');
 ok((await call('POST', `/calls/${id}`, S.token)).status === 404, 'nobody else can (404)');
-const pendingId = await book(false);
-startedAgo(pendingId, -300);
-r = await call('POST', `/calls/${pendingId}`, C.token);
-ok(r.status === 409 && /opens once Yuki accepts/.test(r.data?.error), 'not before the companion accepts');
-await call('POST', `/bookings/${pendingId}/cancel`, C.token);
+const soonId = await book();
+ok(row(soonId).status === 'confirmed' && (await call('POST', `/companion/bookings/${soonId}/accept`, Y.token)).status === 409, 'booked means confirmed: there’s no request for Yuki to accept');
+startedAgo(soonId, -300);
+r = await call('POST', `/calls/${soonId}`, C.token);
+ok(r.status === 200, 'so it opens 10 minutes before without anyone accepting');
+await call('POST', `/bookings/${soonId}/cancel`, C.token);
 const coffee = (await call('GET', '/companions/demo_noah/slots')).data.find((d) => d.times.length);
 const cof = (await call('POST', '/bookings', C.token, { companionId: 'demo_noah', act: 'movies', date: coffee.date, time: coffee.times[0], dur: 1, place: '' })).data.id;
 ok((await call('POST', `/calls/${cof}`, C.token)).data?.error === 'This booking isn’t a video date.', 'only video dates have a call');

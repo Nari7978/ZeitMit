@@ -2,7 +2,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { colors } from '../theme';
-import { AM, ageStr, ratingStr, ROM, eur, isDateCompanion, type ActId, type Companion } from '../data';
+import { AM, ageStr, freeOf, ratingStr, ROM, eur, isDateCompanion, type ActId, type Companion } from '../data';
 import { useStore } from '../store';
 import { openProfile, searchWith } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -334,7 +334,7 @@ export default function Discover() {
                 <View style={{ gap: 2, paddingHorizontal: 2 }}>
                   <Txt size={15} weight={600}>{c.name}{ageStr(c)}</Txt>
                   <Txt size={13} color={colors.gray600}>{eur(c.rate)}/h · {c.area}</Txt>
-                  {c.next ? <Txt size={12} weight={600} color={colors.green}>{freeTag(berlinAt(c.next).date, berlinAt(c.next).time)}</Txt> : null}
+                  <FreeLine c={c} />
                 </View>
               </Pressable>
             ))}
@@ -473,11 +473,20 @@ function Faces({ people }: { people: Companion[] }) {
   return <FaceMarquee people={people} running={useIsFocused()} onOpen={openProfile} />;
 }
 
+/** When they're next free on a card: in person when they're free that day, otherwise a video date ("Video today · 21:00"). */
+function FreeLine({ c }: { c: Companion }) {
+  const f = freeOf(c);
+  if (!f.next) return null;
+  const at = berlinAt(f.next);
+  return <Txt size={12} weight={600} color={colors.green} numberOfLines={1}>{freeTag(at.date, at.time, f.video)}</Txt>;
+}
+
 function FeaturedCard({ c, i, wide }: { c: Companion; i: number; wide?: number }) {
   const w = wide ?? 252;
   // A sticker that says what's special: free today, the rating, or that they're new.
-  const free = c.today && c.next ? berlinAt(c.next).time : null;
-  const badge = free ? { text: `Free from ${free}`, bg: colors.mint, fg: colors.ink }
+  const f = freeOf(c);
+  const free = f.today && f.next ? berlinAt(f.next).time : null;
+  const badge = free ? { text: f.video ? `Video from ${free}` : `Free from ${free}`, bg: colors.mint, fg: colors.ink }
     : c.rating ? { text: `★ ${ratingStr(c)}`, bg: colors.sun, fg: colors.ink }
       : { text: 'New', bg: colors.pink, fg: colors.white };
   return (

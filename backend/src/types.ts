@@ -69,3 +69,7 @@ export const FEEDBACK_CONCERNS = ['Pushy or rude', 'Crossed boundaries', 'Asked 
 
 /** Customers cancel for free until this many hours before the start. */
 export const FREE_CANCEL_HOURS = 24;
+/** An in-person request waits this long for the companion's answer (at the latest until an hour before the start). */
+export const REPLY_HOURS = 2;
+/** Video dates are confirmed at once, so a customer can still cancel one for free this many minutes after booking it. */
+export const VIDEO_GRACE_MIN = 10;
