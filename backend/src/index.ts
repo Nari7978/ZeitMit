@@ -23,7 +23,7 @@ export { CallRoom } from './calls';
 
 const app = new Hono<AppEnv>();
 
-app.use('*', cors({ origin: '*', allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] }));
+app.use('*', cors({ origin: '*', allowHeaders: ['Authorization', 'Content-Type', 'X-ZeitMit-Api'], allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] }));
 
 app.get('/', (c) => c.json({ name: 'zeitmit-api', ok: true, devLoginCodes: c.env.DEV_LOGIN_CODES === 'true', payments: stripeOn(c.env), email: !!(c.env.BREVO_API_KEY || c.env.RESEND_API_KEY) }));
 
