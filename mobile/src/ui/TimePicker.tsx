@@ -147,9 +147,10 @@ export function LengthPicker({ video, minutes, min, max, rate, onChange }: {
           return (
             <Pressable
               key={m} accessibilityRole="radio" accessibilityState={{ checked: on, disabled: !open }} onPress={() => open && onChange(m)}
-              style={{ width: '30%', flexGrow: 1, gap: 3, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1.5, borderColor: open ? colors.ink : colors.butter, backgroundColor: on ? colors.butter : open ? colors.white : colors.butter }}
+              style={{ width: '30%', flexGrow: 1, gap: 3, paddingVertical: 12, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1.5, borderColor: open ? colors.ink : colors.butter, backgroundColor: on ? colors.butter : open ? colors.white : colors.butter }}
             >
-              <Txt size={15} weight={700} color={open ? colors.ink : colors.gray350} style={!open ? { textDecorationLine: 'line-through' } : null} numberOfLines={1}>{lengthLabel(m)}</Txt>
+              {/* Small phones: "1½ hours" just fits (and shrinks a little on Android and iOS if it has to). */}
+              <Txt size={14.5} weight={700} color={open ? colors.ink : colors.gray350} style={!open ? { textDecorationLine: 'line-through' } : null} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>{lengthLabel(m)}</Txt>
               <Txt size={13} color={!open ? colors.gray350 : on ? colors.ink : colors.gray600}>{priceOf(m)}</Txt>
             </Pressable>
           );

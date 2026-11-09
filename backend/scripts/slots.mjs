@@ -99,7 +99,7 @@ e = await viewer.next((x) => gone(x, date, time));
 ok(!!e, 'someone else on the profile sees the time go at once');
 ok(fitOf(e.slots, date, early) === 1.5, `${early} now fits 1½ hours at most (it would run into the booking)`);
 r = await book(B, date, early, 2);
-ok(r.status === 409 && /only free for 1 hour 30 minutes/.test(r.data.error), `a booking that would overlap the confirmed one is refused (“${r.data.error}”)`);
+ok(r.status === 409 && /only free for 1½ hours/.test(r.data.error), `a booking that would overlap the confirmed one is refused (“${r.data.error}”)`);
 r = await book(B, date, time, 1);
 ok(r.status === 409, 'the confirmed time can’t be booked again');
 
