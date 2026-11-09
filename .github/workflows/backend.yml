@@ -115,6 +115,14 @@ jobs:
             BODY=$(curl -sf "$URL/" || true)
             if echo "$BODY" | grep -q '"ok":true'; then
               echo "::notice::API is live at $URL — $BODY — public companions: $(curl -sf "$URL/companions" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).length))")"
+              # The booking engine answers for a listed companion: their free time, and the older apps' start times.
+              FIRST=$(curl -sf "$URL/companions" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s)[0]?.id??''))")
+              if [ -n "$FIRST" ]; then
+                A=$(curl -sf "$URL/companions/$FIRST/availability" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const a=JSON.parse(s);console.log(a.tz+' · '+Object.entries(a.kinds).map(([k,v])=>k+': '+(v?v.open.length+' free stretches':'not offered')).join(' · '))})" || echo "failed")
+                SLOTS=$(curl -sf "$URL/companions/$FIRST/slots" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).reduce((n,d)=>n+d.times.length,0)))" || echo "failed")
+                echo "::notice::Availability of $FIRST: $A — older apps' start times this week: $SLOTS"
+                case "$A$SLOTS" in *failed*) echo "::warning::The availability check didn't answer as expected.";; esac
+              fi
               exit 0
             fi
             sleep 10
