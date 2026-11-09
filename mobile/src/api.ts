@@ -47,7 +47,8 @@ export async function api<T = unknown>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' 
   try {
     res = await fetch(API_URL + path, {
       method,
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      // API version 3: booking statuses as they are (declined, expired, time taken), not folded into "cancelled".
+      headers: { 'Content-Type': 'application/json', 'X-ZeitMit-Api': '3', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {

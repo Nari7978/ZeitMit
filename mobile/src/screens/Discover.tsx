@@ -14,7 +14,7 @@ import { openSettings } from './Settings';
 import { useNavBottom } from '../ui/chrome';
 import { useAppWidth } from '../ui/layout';
 import { oklch } from '../lib/oklch';
-import { berlinAt, freeTag } from '../lib/dates';
+import { localAt, freeTag } from '../lib/dates';
 import { feedbackDue, useFeedbackPopup } from '../lib/feedbackPrompt';
 
 /** "Rent …" — the headline's last word keeps changing. */
@@ -477,7 +477,7 @@ function Faces({ people }: { people: Companion[] }) {
 function FreeLine({ c }: { c: Companion }) {
   const f = freeOf(c);
   if (!f.next) return null;
-  const at = berlinAt(f.next);
+  const at = localAt(f.next);
   return <Txt size={12} weight={600} color={colors.green} numberOfLines={1}>{freeTag(at.date, at.time, f.video)}</Txt>;
 }
 
@@ -485,7 +485,7 @@ function FeaturedCard({ c, i, wide }: { c: Companion; i: number; wide?: number }
   const w = wide ?? 252;
   // A sticker that says what's special: free today, the rating, or that they're new.
   const f = freeOf(c);
-  const free = f.today && f.next ? berlinAt(f.next).time : null;
+  const free = f.today && f.next ? localAt(f.next).time : null;
   const badge = free ? { text: f.video ? `Video from ${free}` : `Free from ${free}`, bg: colors.mint, fg: colors.ink }
     : c.rating ? { text: `★ ${ratingStr(c)}`, bg: colors.sun, fg: colors.ink }
       : { text: 'New', bg: colors.pink, fg: colors.white };

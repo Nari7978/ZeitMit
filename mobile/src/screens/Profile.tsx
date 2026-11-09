@@ -9,8 +9,8 @@ import { AM, ageStr, eur, kindsOf, LEVEL, NO, ratingStr, reviewsStr, slotDay, ty
 import { api, ApiError } from '../api';
 import { useStore } from '../store';
 import { canMessage, goBack, messageCompanion, openBooking, openQuickBook } from '../nav';
-import { nextFree, useSlots, type DaySlots, type Times } from '../lib/slots';
-import { whenFree } from '../lib/dates';
+import { daysOf, firstStart, timeOf, useAvailability, type Availability } from '../lib/avail';
+import { whenAt } from '../lib/dates';
 import { Icon } from '../ui/Icon';
 import { Chip, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primitives';
 import { CircleButton, SaveButton, SecondaryButton, Unavailable, usePullRefresh, useTopPad } from '../ui/common';
@@ -72,9 +72,8 @@ function PhotoSlides({ c, height }: { c: Companion; height: number }) {
 
 type Detail = Companion & {
   reviewList: { n: string; a: string; stars: number; t: string; created_at: number }[];
-  slots: DaySlots[];
-  /** Open times per kind (null for a kind they don't offer). */
-  times?: Times;
+  /** When they can be booked (free intervals per kind they offer); kept current with useAvailability. */
+  availability?: Availability | null;
   no: string[];
 };
 
@@ -92,7 +91,7 @@ export default function Profile() {
     [id],
   );
   useEffect(() => { void loadDetail(); }, [loadDetail]);
-  const { times: liveTimes, reload: reloadSlots } = useSlots(missing ? undefined : id);
+  const { a: liveFree, reload: reloadSlots } = useAvailability(missing ? undefined : id);
   // Which kind the day strip shows when they offer both (in person first).
   const [stripPick, setStripPick] = useState<Kind | null>(null);
   const refresh = usePullRefresh(() => Promise.all([loadDetail(), reloadSlots()]));
@@ -111,13 +110,13 @@ export default function Profile() {
   if (!c) return <View style={{ flex: 1, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.ink} /></View>;
 
   const reviews = detail?.reviewList ?? [];
-  // Video dates and in-person dates have their own hours, so each has its own next free time.
+  // In-person and video dates share one calendar, but each range of hours can be for one kind: each its next free time.
   const kinds = kindsOf(c.acts);
-  const times: Times = liveTimes ?? detail?.times ?? { meet: null, video: null };
-  const free: Record<Kind, ReturnType<typeof nextFree>> = { meet: nextFree(times.meet), video: nextFree(times.video) };
+  const avail = liveFree ?? detail?.availability ?? null;
+  const free: Record<Kind, number | null> = { meet: avail ? firstStart(avail, 'meet') : null, video: avail ? firstStart(avail, 'video') : null };
   const stripKind: Kind = stripPick && kinds.includes(stripPick) ? stripPick : kinds[0] ?? 'meet';
-  const slots = times[stripKind] ?? [];
-  const bookKind = free[stripKind] ? stripKind : kinds.find((k) => free[k]);
+  const strip = avail ? daysOf(avail, stripKind) : [];
+  const bookKind = free[stripKind] !== null ? stripKind : kinds.find((k) => free[k] !== null);
   const freeLabel = (k: Kind) => (k === 'video' ? 'Next free video date' : kinds.length > 1 ? 'Next free in person' : 'Next free');
   const btnBg = scrolled ? colors.white : 'rgba(255,255,255,.88)';
   const btnBd = scrolled ? colors.ink : 'transparent';
@@ -222,14 +221,14 @@ export default function Profile() {
           {/* When they're next free, live, for each kind they offer: once someone books it, it moves on to the next free time. */}
           {kinds.map((k) => {
             const f = free[k];
-            if (!times[k]) return null; // still loading
-            return f ? (
-              <PressBox key={k} shadow={4} shadowColor={colors.greenDeep} fx="push" onPress={() => openQuickBook(c.id, k)} accessibilityLabel={`${freeLabel(k)}: ${whenFree(f.date, f.time)}. Book it`}
+            if (!avail?.kinds[k]) return null; // still loading
+            return f !== null ? (
+              <PressBox key={k} shadow={4} shadowColor={colors.greenDeep} fx="push" onPress={() => openQuickBook(c.id, k)} accessibilityLabel={`${freeLabel(k)}: ${whenAt(f)}. Book it`}
                 style={{ marginBottom: 12, padding: 14, borderRadius: 18, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.mintSoft, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 {k === 'video' ? <Icon name="video" size={16} color={colors.greenDeep} /> : <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.green }} />}
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Txt size={12} weight={600} color={colors.gray800} numberOfLines={1}>{freeLabel(k)}</Txt>
-                  <Txt size={17} weight={700} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{whenFree(f.date, f.time)}</Txt>
+                  <Txt size={17} weight={700} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{whenAt(f)}</Txt>
                 </View>
                 <View style={{ height: 40, paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.ink, justifyContent: 'center' }}>
                   <Txt size={14} weight={700} color={colors.white}>Book it</Txt>
@@ -250,21 +249,22 @@ export default function Profile() {
             </Row>
           ) : null}
           <Row style={{ gap: 6 }}>
-            {(slots.length ? slots : Array.from({ length: 7 }, () => null)).map((slot, i) => {
-              const d = slot ? slotDay(slot.date, i) : null;
-              const n = slot ? slot.times.length : 0;
+            {(strip.length ? strip : Array.from({ length: 7 }, () => null)).map((day, i) => {
+              const d = day ? slotDay(day.date, i) : null;
+              const n = day ? day.starts.length : 0;
+              const first = n ? timeOf(day!.starts[0]) : '';
               return (
                 <Pressable
-                  key={slot?.date ?? i}
+                  key={day?.date ?? i}
                   accessibilityRole="button"
-                  accessibilityLabel={d ? (n ? `${d.full}, free from ${slot!.times[0]}` : `${d.full}, not free`) : 'Loading'}
+                  accessibilityLabel={d ? (n ? `${d.full}, free from ${first}` : `${d.full}, not free`) : 'Loading'}
                   accessibilityState={{ disabled: !n }}
-                  onPress={() => n && openBooking(c.id, slot!.date, kinds.length > 1 ? stripKind : undefined)}
+                  onPress={() => n && openBooking(c.id, day!.date, kinds.length > 1 ? stripKind : undefined)}
                   style={{ flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRadius: 14, borderWidth: 1, borderColor: n ? colors.ink : colors.cream, backgroundColor: n ? colors.white : colors.cream }}
                 >
                   <Txt size={11} weight={500} color={n ? colors.ink : colors.gray400}>{d?.d ?? ' '}</Txt>
                   <Txt size={17} weight={700} color={n ? colors.ink : colors.gray400}>{d?.n ?? ' '}</Txt>
-                  <Txt size={9.5} color={colors.gray600} numberOfLines={1}>{!d ? ' ' : n ? slot!.times[0] : '—'}</Txt>
+                  <Txt size={9.5} color={colors.gray600} numberOfLines={1}>{!d ? ' ' : n ? first : '—'}</Txt>
                 </Pressable>
               );
             })}

@@ -19,8 +19,8 @@ npm run typecheck
 | `src/app/` | Routes: customer tabs `(tabs)/`, companion tabs `companion/`, overlays `profile/[id]`, `book/[cid]`, `chat/[id]`, `notifications`, `become`, `swipe`, `history` (a companion's booking history), `call/[id]` (a video date) |
 | `src/screens/` | Screen implementations |
 | `src/sheets/SheetHost.tsx` | All bottom sheets (filters, sort, city, gift, safety check-in, SOS, meet code, report, review, …) |
-| `src/ui/` | Primitives: hard-shadow `Box`/`PressBox`, `Txt`, `Icon` (Lucide), `Stripes`, `Toggle`, `Chip`, nav bar, toast |
-| `src/lib/` | Helpers: Berlin dates and companions' own hours (`dates.ts`), the "How did it go?" card and one-time pop-up (`feedbackPrompt.ts`), open times (`slots.ts`), … |
+| `src/ui/` | Primitives: hard-shadow `Box`/`PressBox`, `Txt`, `Icon` (Lucide), `Stripes`, `Toggle`, `Chip`, nav bar, toast; picking a booking time (`TimePicker.tsx`: days, a day's free hours, a start in 15-minute steps, the length) |
+| `src/lib/` | Helpers: dates in the phone's time zone and companions' hours with the API's rules (`dates.ts`, `tz.ts`), a companion's free time kept live, with the booking rules (`avail.ts`), the "How did it go?" card and one-time pop-up (`feedbackPrompt.ts`), … |
 | `src/theme.ts` | Colours and font mapping (DM Sans + Bricolage Grotesque) |
 
 ## Startup

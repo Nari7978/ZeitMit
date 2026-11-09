@@ -6,8 +6,9 @@ import Slider from '@react-native-community/slider';
 import { useShallow } from 'zustand/react/shallow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, LANGS, PREF, SORT, WEEK, WHEN } from '../data';
-import { addDays, berlinToday, clock, CUSTOM_DAYS_AHEAD, dateLabel, MAX_RANGES, minutes, nextRange, rangeProblem, weekdayOf, weeklyRanges, type Range } from '../lib/dates';
+import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, kindsOf, LANGS, PREF, SORT, WHEN } from '../data';
+import { addDays, clock, dateLabel, KIND_SHORT, localToday, localUnix, MAX_RANGES, minutes, nextRange, PLAN_DAYS, rangeProblem, span, weekdayOf, type HourKind, type Range } from '../lib/dates';
+import { TZ } from '../lib/tz';
 import { locale } from '../i18n';
 import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
@@ -82,7 +83,8 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'delete': return <DeleteSheet />;
     case 'redeem': return <RedeemSheet />;
     case 'feedback': return <FeedbackSheet />;
-    case 'customDate': return <CustomDateSheet />;
+    case 'hours': return <HoursSheet />;
+    case 'block': return <BlockSheet />;
   }
 }
 
@@ -392,74 +394,105 @@ const FeedbackTag = ({ label, good, on, onPress }: { label: string; good?: boole
   </Pressable>
 );
 
-// ---------- Companion: hours for a specific date ----------
+// ---------- Companion: hours (one weekday's weekly hours, or one date's own) and blocked time ----------
 
-/** A companion's own hours for one date (or a day off), replacing the weekly windows that day. */
-function CustomDateSheet() {
-  const cd = useStore((s) => s.customDate);
-  // In-person hours or video hours, whichever the Calendar was showing.
-  const video = cd.kind === 'video';
-  const dates = useStore((s) => (s.customDate.kind === 'video' ? s.comp.datesVideo : s.comp.dates));
-  const { saveDate, removeDate, closeSheet, showToast } = useStore.getState();
-  const set = (o: Partial<typeof cd>) => useStore.setState((s) => ({ customDate: { ...s.customDate, ...o } }));
-  const existing = dates.find((d) => d.date === cd.date);
-  // Start from what's set for that date, or that weekday's weekly times.
+const WEEKDAYS = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
+const NEW_RANGE: Range = { from: '18:00', to: '22:00', kind: 'both' };
+/** "02:00 +1" for minutes past midnight (an end on the next day). */
+const clockText = (m: number) => (m > 1440 ? `${clock(m)} +1` : clock(m));
+/** Minutes of a range's end from its day's midnight (past 1440: the next day). */
+const endOf = (r: Range) => minutes(r.from) + span(r);
+/** The "to" of a range ending `e` minutes after its day's midnight. */
+const toOf = (e: number) => (e > 1440 ? clock(e - 1440) : clock(e));
+
+/** One weekday's weekly hours or a date's own hours: ranges in 15-minute steps (past midnight too), each for both kinds or one. */
+function HoursSheet() {
+  const h = useStore((s) => s.hoursEdit);
+  const cal = useStore((s) => s.comp.hours);
+  const both = useStore((s) => kindsOf(s.comp.acts).length > 1);
+  const { saveWeekDay, saveDay, removeDay, closeSheet, showToast } = useStore.getState();
+  const [open, setOpen] = useState<string | null>(null);
+  const set = (o: Partial<typeof h>) => useStore.setState((s) => ({ hoursEdit: { ...s.hoursEdit, ...o } }));
+  const tz = cal?.tz ?? TZ;
+  const weekly = h.day !== null;
+  const existing = h.date ? cal?.days.find((d) => d.date === h.date) : undefined;
+  // Start from what's set for that date, or that weekday's weekly hours.
   const pick = useCallback((date: string) => {
-    const { comp, customDate } = useStore.getState();
-    const vid = customDate.kind === 'video';
-    const ex = (vid ? comp.datesVideo : comp.dates).find((d) => d.date === date);
-    const weekly = weeklyRanges(vid ? comp.availVideo : comp.avail, WEEK[weekdayOf(date)]);
-    useStore.setState((s) => ({ customDate: { ...s.customDate, date, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : weekly.length ? weekly : [['18:00', '22:00']] } }));
+    const c = useStore.getState().comp.hours;
+    const ex = c?.days.find((d) => d.date === date);
+    const wk = (c?.week ?? []).filter((r) => r.day === weekdayOf(date)).map(({ from, to, kind }) => ({ from, to, kind }));
+    setOpen(null);
+    useStore.setState((s) => ({ hoursEdit: { ...s.hoursEdit, date, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : wk.length ? wk : [NEW_RANGE] } }));
   }, []);
-  const setRange = (i: number, r: Range) => set({ ranges: cd.ranges.map((x, k) => (k === i ? r : x)) });
-  const more = nextRange(cd.ranges);
-  const problem = cd.off ? null : rangeProblem(cd.ranges);
+  const setRange = (i: number, r: Range) => set({ ranges: h.ranges.map((x, k) => (k === i ? r : x)) });
+  const more = nextRange(h.ranges);
+  const problem = h.off ? null : !h.ranges.length ? 'Add some hours, or choose Day off.' : rangeProblem(h.ranges);
   const save = async () => {
-    if (!cd.date || problem || cd.busy) return;
+    if (problem || h.busy || (!weekly && !h.date)) return;
     set({ busy: true });
-    const ok = await saveDate(cd.date, cd.off ? [] : [...cd.ranges].sort((a, b) => minutes(a[0]) - minutes(b[0])), cd.kind);
+    const ranges = h.off ? [] : [...h.ranges].sort((x, y) => minutes(x.from) - minutes(y.from));
+    const ok = weekly ? await saveWeekDay(h.day!, ranges) : await saveDay(h.date!, ranges);
     set({ busy: false });
     if (ok) closeSheet();
   };
   const reset = async () => {
-    if (!cd.date || cd.busy) return;
+    if (!h.date || h.busy) return;
     set({ busy: true });
-    const ok = await removeDate(cd.date, cd.kind);
+    const ok = await removeDay(h.date);
     set({ busy: false });
-    if (ok) { closeSheet(); showToast(video ? 'Back to your weekly video hours for that day.' : 'Back to your weekly times for that day.'); }
+    if (ok) { closeSheet(); showToast('Back to your weekly hours for that day.'); }
   };
 
   return (
     <Pad scroll>
-      <SheetTitle style={{ marginBottom: 2 }}>{video ? 'Video hours for a date' : 'Hours for a date'}</SheetTitle>
-      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>{video ? 'They replace your weekly video hours on that day. Bookings you already have stay.' : 'They replace your weekly times on that day. Bookings you already have stay.'}</Txt>
-      <DateStrip selected={cd.date} marked={dates.map((d) => d.date).join()} onPick={pick} />
-      {cd.date ? (
+      <SheetTitle style={{ marginBottom: 2 }}>{weekly ? WEEKDAYS[h.day!] : 'Hours for a date'}</SheetTitle>
+      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>
+        {weekly ? 'Every week on this day, in 15-minute steps. An end before the start runs past midnight. Bookings you already have stay.' : 'They replace your weekly hours on that day. Bookings you already have stay.'}
+      </Txt>
+      {!weekly ? <DateStrip today={localToday(tz)} selected={h.date} marked={(cal?.days ?? []).map((d) => d.date).join()} onPick={pick} /> : null}
+      {weekly || h.date ? (
         <>
-          <Txt size={15} weight={700} style={{ marginTop: 16 }}>{dateLabel(cd.date)}</Txt>
+          {h.date ? <Txt size={15} weight={700} style={{ marginTop: 16 }}>{dateLabel(h.date)}</Txt> : null}
           <Row style={{ gap: 8, marginTop: 10 }}>
-            <Chip label="Available" icon="clock" on={!cd.off} onPress={() => set({ off: false, ranges: cd.ranges.length ? cd.ranges : [['18:00', '22:00']] })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
-            <Chip label="Day off" icon="calendar-x" on={cd.off} onPress={() => set({ off: true })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
+            <Chip label={weekly ? 'Open' : 'Available'} icon="clock" on={!h.off} onPress={() => set({ off: false, ranges: h.ranges.length ? h.ranges : [NEW_RANGE] })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
+            <Chip label={weekly ? 'Closed' : 'Day off'} icon="calendar-x" on={h.off} onPress={() => set({ off: true })} height={42} radius={12} weight={600} style={{ flex: 1 }} />
           </Row>
-          {cd.off ? (
-            <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>{video ? 'Customers can’t book a video date with you that day.' : 'Customers can’t book you that day.'}</Txt>
+          {h.off ? (
+            <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>{weekly ? 'Customers can’t book you on this day of the week, except on dates with their own hours.' : 'Customers can’t book you that day.'}</Txt>
           ) : (
-            <View style={{ gap: 10, marginTop: 14 }}>
-              {cd.ranges.map(([from, to], i) => (
-                <Row key={i} style={{ gap: 8, alignItems: 'center' }}>
-                  <TimeStepper label="From" value={from} min="06:00" max={clock(minutes(to) - 60)} onChange={(v) => setRange(i, [v, to])} />
-                  <TimeStepper label="To" value={to} min={clock(minutes(from) + 60)} max="24:00" onChange={(v) => setRange(i, [from, v])} />
-                  {cd.ranges.length > 1 ? <CircleButton icon="x" label="Remove these hours" size={34} iconSize={16} bg={colors.butter} border={0} onPress={() => set({ ranges: cd.ranges.filter((_, k) => k !== i) })} /> : null}
-                </Row>
-              ))}
-              {cd.ranges.length < MAX_RANGES && more ? (
-                <TextButton label="Add more hours" icon="plus" size={14} onPress={() => set({ ranges: [...cd.ranges, more] })} style={{ alignSelf: 'flex-start' }} />
+            <View style={{ gap: 12, marginTop: 14 }}>
+              {h.ranges.map((r, i) => {
+                const from = minutes(r.from), end = endOf(r);
+                return (
+                  <View key={i} style={{ gap: 10, padding: 10, borderRadius: 16, backgroundColor: colors.sun }}>
+                    <Row style={{ gap: 8 }}>
+                      <ClockField label="From" value={from} open={open === `${i}f`} onToggle={() => setOpen(open === `${i}f` ? null : `${i}f`)} />
+                      <ClockField label="To" value={end} open={open === `${i}t`} onToggle={() => setOpen(open === `${i}t` ? null : `${i}t`)} />
+                      {h.ranges.length > 1 ? <CircleButton icon="x" label="Remove these hours" size={34} iconSize={16} bg={colors.butter} border={0} onPress={() => { setOpen(null); set({ ranges: h.ranges.filter((_, k) => k !== i) }); }} /> : null}
+                    </Row>
+                    {open === `${i}f` ? (
+                      // A new start keeps the end where it was if that still works, else keeps the length.
+                      <ClockGrid value={from} min={0} max={1425} onChange={(m) => setRange(i, { ...r, from: clock(m), to: toOf(end - m >= 30 && end - m <= 1440 ? end : m + span(r)) })} />
+                    ) : null}
+                    {open === `${i}t` ? <ClockGrid value={end} min={from + 30} max={from + 1440} onChange={(m) => setRange(i, { ...r, to: toOf(m) })} /> : null}
+                    {both ? (
+                      <Row style={{ gap: 6 }}>
+                        {(['both', 'meet', 'video'] as HourKind[]).map((k) => (
+                          <Chip key={k} label={KIND_SHORT[k]} on={r.kind === k} onPress={() => setRange(i, { ...r, kind: k })} height={32} size={11.5} padL={6} padR={6} style={{ flex: 1 }} />
+                        ))}
+                      </Row>
+                    ) : null}
+                  </View>
+                );
+              })}
+              {h.ranges.length < MAX_RANGES && more ? (
+                <TextButton label="Add more hours" icon="plus" size={14} onPress={() => { setOpen(null); set({ ranges: [...h.ranges, more] }); }} style={{ alignSelf: 'flex-start' }} />
               ) : null}
             </View>
           )}
           {problem ? <Txt size={13} color={colors.redDeep} style={{ marginTop: 10 }}>{problem}</Txt> : null}
-          <PrimaryButton label={cd.busy ? 'Saving…' : 'Save'} dim={!!problem || cd.busy} style={{ marginTop: 16 }} onPress={() => void save()} />
-          {existing ? <TextButton label={video ? 'Use my weekly video hours again' : 'Use my weekly times again'} size={14} onPress={() => void reset()} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
+          <PrimaryButton label={h.busy ? 'Saving…' : 'Save'} dim={!!problem || h.busy} style={{ marginTop: 16 }} onPress={() => void save()} />
+          {existing ? <TextButton label="Use my weekly hours again" size={14} onPress={() => void reset()} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
         </>
       ) : (
         <Txt size={14} color={colors.gray600} style={{ marginTop: 16 }}>Pick a date.</Txt>
@@ -468,16 +501,70 @@ function CustomDateSheet() {
   );
 }
 
+/** Blocked time: from a date and time until a date and time (a break, a night off, days away). Closed until removed. */
+function BlockSheet() {
+  const e = useStore((s) => s.blockEdit);
+  const tz = useStore((s) => s.comp.hours?.tz ?? TZ);
+  const { saveBlock, removeBlock, closeSheet } = useStore.getState();
+  const [open, setOpen] = useState<'from' | 'to' | null>(null);
+  const set = (o: Partial<typeof e>) => useStore.setState((s) => ({ blockEdit: { ...s.blockEdit, ...o } }));
+  const today = localToday(tz);
+  const start = e.date ? localUnix(e.date, e.from, tz) : null;
+  const end = e.until ? localUnix(e.until, e.to, tz) : null;
+  const problem = start === null || end === null ? 'Pick when it starts and ends.'
+    : end <= start ? 'The end has to be after the start.'
+      : end <= Date.now() / 1000 ? 'That time is already over.' : null;
+  const save = async () => {
+    if (problem || e.busy) return;
+    set({ busy: true });
+    const ok = await saveBlock({ id: e.id, startsAt: start!, endsAt: end!, note: e.note.trim() });
+    set({ busy: false });
+    if (ok) closeSheet();
+  };
+  const remove = async () => {
+    if (!e.id || e.busy) return;
+    set({ busy: true });
+    const ok = await removeBlock(e.id);
+    set({ busy: false });
+    if (ok) closeSheet();
+  };
+  return (
+    <Pad scroll>
+      <SheetTitle style={{ marginBottom: 2 }}>{e.id ? 'Blocked time' : 'Block time'}</SheetTitle>
+      <Txt size={13} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>A break, a night off or days away: customers can’t book it, whatever your hours say, until you remove it. Bookings already in it stay.</Txt>
+      <Txt size={14} weight={700} style={{ marginBottom: 8 }}>From</Txt>
+      <DateStrip today={today} selected={e.date} marked="" onPick={(d) => set({ date: d, until: !e.until || e.until < d ? d : e.until })} />
+      <View style={{ marginTop: 10, gap: 10 }}>
+        <ClockField label="Start" value={minutes(e.from)} open={open === 'from'} onToggle={() => setOpen(open === 'from' ? null : 'from')} />
+        {open === 'from' ? <ClockGrid value={minutes(e.from)} min={0} max={1425} onChange={(m) => set({ from: clock(m) })} /> : null}
+      </View>
+      <Txt size={14} weight={700} style={{ marginTop: 16, marginBottom: 8 }}>Until</Txt>
+      <DateStrip today={e.date ?? today} selected={e.until} marked="" onPick={(d) => set({ until: d })} />
+      <View style={{ marginTop: 10, gap: 10 }}>
+        <ClockField label="End" value={minutes(e.to)} open={open === 'to'} onToggle={() => setOpen(open === 'to' ? null : 'to')} />
+        {open === 'to' ? <ClockGrid value={minutes(e.to)} min={0} max={1425} onChange={(m) => set({ to: clock(m) })} /> : null}
+      </View>
+      <Txt size={14} weight={700} style={{ marginTop: 16, marginBottom: 8 }}>Note for yourself <Txt size={13} color={colors.gray600}>optional</Txt></Txt>
+      <TextInput
+        value={e.note} onChangeText={(v) => set({ note: v.slice(0, 60) })} accessibilityLabel={t('Note for yourself')} placeholder={t('e.g. Lunch, Holiday')} placeholderTextColor={colors.gray400}
+        style={[font('body'), { height: 48, paddingHorizontal: 14, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white, fontSize: 15, color: colors.ink, outlineStyle: 'none' } as object]}
+      />
+      {problem && e.date && e.until ? <Txt size={13} color={colors.redDeep} style={{ marginTop: 10 }}>{problem}</Txt> : null}
+      <PrimaryButton label={e.busy ? 'Saving…' : e.id ? 'Save' : 'Block this time'} dim={!!problem || e.busy} style={{ marginTop: 16 }} onPress={() => void save()} />
+      {e.id ? <TextButton label="Remove and open this time again" size={14} color={colors.roseDeep} onPress={() => void remove()} style={{ alignSelf: 'center', paddingVertical: 10 }} /> : null}
+    </Pad>
+  );
+}
+
 /**
- * The next CUSTOM_DAYS_AHEAD days as tiles (a dot on dates with their own hours), scrolled to the picked one.
- * Labels are made once and the strip only redraws when the pick or the dots change, not on every time step.
+ * The next PLAN_DAYS days from `today` (the companion's date) as tiles, a dot on `marked` dates, scrolled to the
+ * picked one. Labels are made once and the strip only redraws when the pick or the dots change.
  */
-const DateStrip = memo(function DateStrip({ selected, marked, onPick }: { selected: string | null; marked: string; onPick: (date: string) => void }) {
-  const today = berlinToday();
+const DateStrip = memo(function DateStrip({ today, selected, marked, onPick }: { today: string; selected: string | null; marked: string; onPick: (date: string) => void }) {
   const days = useMemo(() => {
     const wd = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
     const mo = new Intl.DateTimeFormat(locale(), { month: 'short', timeZone: 'UTC' });
-    return Array.from({ length: CUSTOM_DAYS_AHEAD + 1 }, (_, i) => {
+    return Array.from({ length: PLAN_DAYS + 1 }, (_, i) => {
       const d = addDays(today, i);
       const day = new Date(d + 'T12:00:00Z');
       // The month on the first tile and on each 1st, the weekday otherwise.
@@ -515,29 +602,58 @@ const DateStrip = memo(function DateStrip({ selected, marked, onPick }: { select
   );
 });
 
-/** A time in half-hour steps between `min` and `max`. */
-function TimeStepper({ label, value, min, max, onChange }: { label: string; value: string; min: string; max: string; onChange: (v: string) => void }) {
-  const m = minutes(value);
-  const step = (d: number) => {
-    const next = m + d;
-    if (next >= minutes(min) && next <= minutes(max)) onChange(clock(next));
-  };
-  const btn = (icon: string, a11y: string, d: number) => {
-    const off = m + d < minutes(min) || m + d > minutes(max);
-    return (
-      <Pressable accessibilityRole="button" accessibilityLabel={t(a11y)} accessibilityState={{ disabled: off }} disabled={off} onPress={() => step(d)} hitSlop={6}
-        style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: off ? colors.track : colors.butter, alignItems: 'center', justifyContent: 'center' }}>
-        <Icon name={icon} size={16} color={off ? colors.gray400 : colors.ink} />
-      </Pressable>
-    );
-  };
+/** A clock time; tapping it opens the hour and minute picker below. */
+function ClockField({ label, value, open, onToggle }: { label: string; value: number; open: boolean; onToggle: () => void }) {
   return (
-    <View style={{ flex: 1, minWidth: 0, paddingVertical: 6, paddingHorizontal: 6, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}>
-      <Txt size={11} color={colors.gray600} align="center">{label}</Txt>
-      <Row style={{ alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-        {btn('minus', `${label}: earlier`, -30)}
-        <Txt size={17} weight={700}>{value}</Txt>
-        {btn('plus', `${label}: later`, 30)}
+    <Pressable
+      accessibilityRole="button" accessibilityLabel={`${t(label)} ${clockText(value)}`} accessibilityState={{ expanded: open }} onPress={onToggle}
+      style={{ flex: 1, minWidth: 0, height: 56, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: open ? colors.butter : colors.white, alignItems: 'center', justifyContent: 'center' }}
+    >
+      <Txt size={11} color={colors.gray600}>{label}</Txt>
+      <Row style={{ gap: 4 }}>
+        <Txt size={17} weight={700}>{clock(value)}</Txt>
+        {value > 1440 ? <Txt size={11} weight={700} color={colors.roseDeep}>next day</Txt> : null}
+      </Row>
+    </Pressable>
+  );
+}
+
+/** Hours, then minutes in 15-minute steps, between `min` and `max` (minutes from midnight; past 1440 is the next day). */
+function ClockGrid({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (m: number) => void }) {
+  const hrs: number[] = [];
+  for (let x = Math.floor(min / 60); x <= Math.floor(max / 60); x++) hrs.push(x);
+  const hour = Math.floor(value / 60);
+  const ok = (m: number) => m >= min && m <= max;
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        {hrs.map((x) => {
+          const on = x === hour;
+          const label = String(x % 24).padStart(2, '0');
+          return (
+            <Pressable
+              key={x} accessibilityRole="button" accessibilityLabel={x >= 24 ? t(`${label}:00 next day`) : `${label}:00`} accessibilityState={{ selected: on }}
+              onPress={() => { const m = x * 60 + (value % 60); onChange(ok(m) ? m : Math.min(max, Math.max(min, x * 60))); }}
+              style={{ width: 46, height: 38, borderRadius: 10, borderWidth: on ? 2 : 1, borderColor: colors.ink, backgroundColor: on ? colors.ink : x >= 24 ? colors.lilac : colors.white, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Txt size={14} weight={700} color={on ? colors.white : colors.ink}>{label}</Txt>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Row style={{ gap: 6 }}>
+        {[0, 15, 30, 45].map((q) => {
+          const m = hour * 60 + q;
+          const on = m === value;
+          return (
+            <Pressable
+              key={q} accessibilityRole="button" accessibilityLabel={clockText(m)} accessibilityState={{ selected: on, disabled: !ok(m) }} disabled={!ok(m)} onPress={() => onChange(m)}
+              style={{ flex: 1, height: 38, borderRadius: 10, borderWidth: 1, borderColor: ok(m) ? colors.ink : colors.butter, backgroundColor: on ? colors.ink : ok(m) ? colors.white : colors.butter, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Txt size={14} weight={600} color={on ? colors.white : ok(m) ? colors.ink : colors.gray350}>{`:${String(q).padStart(2, '0')}`}</Txt>
+            </Pressable>
+          );
+        })}
       </Row>
     </View>
   );

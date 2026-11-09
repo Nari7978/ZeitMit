@@ -30,7 +30,7 @@ export default function Overview() {
   // A video date stays here while its booked time runs, even once the call confirmed it, so you can get back in.
   const meeting = [
     ...upcoming.filter((b) => b.startsAt - nowS <= CODE_OPENS_HOURS * 3600),
-    ...done.filter((b) => isVideo(b.act) && b.startsAt <= nowS && nowS < b.startsAt + b.dur * 3600),
+    ...done.filter((b) => isVideo(b.act) && b.startsAt <= nowS && nowS < b.endsAt),
   ];
   // The latest meet-up that ended in the past week without the private “How did it go?” answered; it also pops up
   // once by itself.
@@ -111,7 +111,7 @@ export default function Overview() {
             <Initial who={next.who} hue={hueOf(next.customerId)} url={next.avatarUrl} />
             <View style={{ flex: 1 }}>
               <Txt size={16} weight={700}>{next.who} · {AM[next.act].label}</Txt>
-              <Txt size={13} color={colors.gray600}>{next.day} · {next.time} · {hours(next.dur)}</Txt>
+              <Txt size={13} color={colors.gray600}>{next.day} · {next.time}–{next.end} · {hours(next.dur)}</Txt>
             </View>
             <Icon name="chevron-right" size={18} color={colors.gray400} />
           </Row>

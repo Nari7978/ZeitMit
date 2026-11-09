@@ -5,6 +5,7 @@ import { colors } from '../theme';
 import { useStore, type Resched } from '../store';
 import { Icon } from './Icon';
 import { Row, Txt } from './primitives';
+import { untilLabel } from '../lib/dates';
 import { PrimaryButton, SecondaryButton, TextButton } from './common';
 
 export function ReschedBox({ bookingId, resched, mine, other, current }: {
@@ -17,7 +18,9 @@ export function ReschedBox({ bookingId, resched, mine, other, current }: {
     await useStore.getState().answerReschedule(bookingId, a);
     setBusy(null);
   };
-  const when = `${resched.day} · ${resched.time}`;
+  const when = `${resched.day} · ${resched.time}–${resched.end}`;
+  // A new time has to be agreed at least 3 hours before it (as on the server).
+  const by = untilLabel(resched.at - 3 * 3600);
   return (
     <View style={{ padding: 12, borderRadius: 14, backgroundColor: colors.lilac, gap: 10 }}>
       <Row style={{ gap: 10, alignItems: 'flex-start' }}>
@@ -25,6 +28,7 @@ export function ReschedBox({ bookingId, resched, mine, other, current }: {
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <Txt size={14} weight={700}>{mine ? `You suggested ${when}` : `${other} suggests ${when}`}</Txt>
           <Txt size={12} lh={1.45} color={colors.gray800}>{mine ? `Waiting for ${other}. Until then it stays on ${current}.` : `Instead of ${current}.`}</Txt>
+          <Txt size={12} weight={600} lh={1.45} color={colors.gray800}>{mine ? `${other} can accept until ${by}.` : `Answer by ${by}.`}</Txt>
         </View>
       </Row>
       {mine ? (

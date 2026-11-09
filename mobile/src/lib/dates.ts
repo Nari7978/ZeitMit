@@ -1,23 +1,88 @@
-// Companions' own hours for specific dates: Berlin dates, the weekly windows as hours, and the same rules as the API
-// (backend/src/lib/companions.ts cleanRanges).
+// Dates and times as the app shows them (in this phone's time zone, lib/tz.ts), and companions' hours under the same
+// rules as the API (backend/src/lib/hours.ts cleanRanges): up to 6 ranges a day in 15-minute steps, each at least
+// 30 minutes, an end at or before the start running into the next day, each open for both kinds of date or one.
 import { locale, t } from '../i18n';
+import { TZ } from './tz';
 
-export type Range = [string, string];
-/** How far ahead hours can be set for a date (customers can book 7 days ahead). */
-export const CUSTOM_DAYS_AHEAD = 60;
-export const MAX_RANGES = 3;
-const FIRST = 6 * 60;
-const LAST = 24 * 60;
+/** Which kinds of date a range of hours is open for. */
+export type HourKind = 'both' | 'meet' | 'video';
+export type Range = { from: string; to: string; kind: HourKind };
+export type WeekRange = Range & { day: number };
+/** How far ahead a date's hours can be set or time blocked (customers can book 7 days ahead). */
+export const PLAN_DAYS = 60;
+export const MAX_RANGES = 6;
+export const STEP_MIN = 15;
 
 export const minutes = (time: string) => +time.slice(0, 2) * 60 + +time.slice(3, 5);
-export const clock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+/** "HH:MM" for minutes of a day; 1440 is "24:00" (an end at midnight), later ones are the next day's clock. */
+export const clock = (m: number) => {
+  const x = m > 1440 ? m - 1440 : m;
+  return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+};
+/** Minutes a range lasts: an end at or before the start runs into the next day ("18:00"–"18:00" is a whole day). */
+export const span = (r: { from: string; to: string }) => {
+  const a = minutes(r.from), b = minutes(r.to);
+  return b > a ? b - a : b + 1440 - a;
+};
+/** The range ends after midnight, on the next day. */
+export const pastMidnight = (r: { from: string; to: string }) => minutes(r.from) + span(r) > 1440;
 
-/** Today in Berlin, YYYY-MM-DD. */
-export const berlinToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+/** What's wrong with one day's ranges, or null. */
+export function rangeProblem(ranges: Range[]): string | null {
+  if (ranges.length > MAX_RANGES) return `Add up to ${MAX_RANGES} time ranges a day.`;
+  const sorted = [...ranges].sort((a, b) => minutes(a.from) - minutes(b.from));
+  for (const r of sorted) {
+    if (minutes(r.from) % STEP_MIN || minutes(r.to) % STEP_MIN) return 'Times go in 15-minute steps, like 18:00 or 22:15.';
+    if (span(r) < 30) return 'Each time range needs at least 30 minutes.';
+  }
+  for (let i = 1; i < sorted.length; i++) if (minutes(sorted[i].from) < minutes(sorted[i - 1].from) + span(sorted[i - 1])) return 'Time ranges can’t overlap.';
+  return null;
+}
+
+/** Two more hours where there's room: after the last range, else before the first; null when the day is full. */
+export function nextRange(ranges: Range[]): Range | null {
+  const sorted = [...ranges].sort((a, b) => minutes(a.from) - minutes(b.from));
+  if (!sorted.length) return { from: '18:00', to: '22:00', kind: 'both' };
+  const last = sorted[sorted.length - 1];
+  const end = minutes(last.from) + span(last);
+  if (end + 30 <= 1440) return { from: clock(end), to: clock(Math.min(1440, end + 120)), kind: last.kind };
+  const first = minutes(sorted[0].from);
+  if (first >= 30) return { from: clock(Math.max(0, first - 120)), to: clock(first), kind: sorted[0].kind };
+  return null;
+}
+
+/** "18:00–24:00", "18:00–02:00": a range (an end before the start is on the next day). */
+export const rangeText = (r: { from: string; to: string }) => `${r.from}–${r.to}`;
+export const KIND_SHORT: Record<HourKind, string> = { both: 'In person & video', meet: 'In person only', video: 'Video only' };
+/** "18:00–22:00, 23:00–02:00", the kind added when it isn't both; or "Day off". */
+export const rangesText = (ranges: Range[], kinds = false) =>
+  (ranges.length ? ranges.map((r) => rangeText(r) + (kinds && r.kind !== 'both' ? ` (${t(r.kind === 'video' ? 'video' : 'in person')})` : '')).join(', ') : t('Day off'));
+
+// ---------- Moments, dates and labels (this phone's time zone unless another is given) ----------
+
+const partFmts = new Map<string, Intl.DateTimeFormat>();
+const partsIn = (unix: number, tz: string) => {
+  let f = partFmts.get(tz);
+  if (!f) partFmts.set(tz, (f = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })));
+  return Object.fromEntries(f.formatToParts(new Date(unix * 1000)).map((x) => [x.type, x.value]));
+};
+/** A moment as a date (YYYY-MM-DD) and clock time (HH:MM). */
+export function localAt(unix: number, tz = TZ) {
+  const p = partsIn(unix, tz);
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` };
+}
+/** Today, YYYY-MM-DD. */
+export const localToday = (tz = TZ) => localAt(Date.now() / 1000, tz).date;
 /** The date `n` days after `date` (both YYYY-MM-DD). */
 export const addDays = (date: string, n: number) => new Date(Date.parse(date + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10);
 /** 0 = Monday … 6 = Sunday. */
 export const weekdayOf = (date: string) => (new Date(date + 'T12:00:00Z').getUTCDay() + 6) % 7;
+/** The moment a date and clock time happens (its first time when the clocks go back). */
+export function localUnix(date: string, time: string, tz = TZ) {
+  const guess = Date.parse(`${date}T${time}:00Z`) / 1000;
+  const off = (u: number) => { const p = localAt(u, tz); return Date.parse(`${p.date}T${p.time}:00Z`) / 1000 - u; };
+  return guess - off(guess - off(guess));
+}
 const labelFormats = new Map<string, Intl.DateTimeFormat>();
 /** "Sat, 8 Nov" in the app's language. */
 export function dateLabel(date: string) {
@@ -26,53 +91,6 @@ export function dateLabel(date: string) {
   if (!f) labelFormats.set(l, (f = new Intl.DateTimeFormat(l, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })));
   return f.format(new Date(date + 'T12:00:00Z'));
 }
-
-const WINDOW_HOURS: Record<string, [number, number]> = { am: [9 * 60, 12 * 60], pm: [12 * 60, 17 * 60], eve: [17 * 60, LAST] };
-
-/** One weekday's weekly windows as hours (morning 09–12, afternoon 12–17, evening 17–24), joined where they touch. */
-export function weeklyRanges(avail: string[], weekday: string): Range[] {
-  const out: [number, number][] = [];
-  for (const w of ['am', 'pm', 'eve']) {
-    if (!avail.includes(`${weekday}-${w}`)) continue;
-    const [a, b] = WINDOW_HOURS[w];
-    const last = out[out.length - 1];
-    if (last && last[1] === a) last[1] = b;
-    else out.push([a, b]);
-  }
-  return out.map(([a, b]) => [clock(a), clock(b)]);
-}
-
-/** "18:00–22:00, 23:00–24:00", or "Day off". */
-export const rangesText = (ranges: Range[]) => (ranges.length ? ranges.map(([a, b]) => `${a}–${b}`).join(', ') : t('Day off'));
-
-/** What's wrong with these hours, or null. */
-export function rangeProblem(ranges: Range[]): string | null {
-  if (!ranges.length) return 'Add some hours, or choose Day off.';
-  const sorted = [...ranges].sort((a, b) => minutes(a[0]) - minutes(b[0]));
-  for (const [a, b] of sorted) {
-    if (minutes(a) < FIRST || minutes(b) > LAST || minutes(a) % 30 || minutes(b) % 30) return 'Times go in half hours, from 06:00 to midnight.';
-    if (minutes(b) - minutes(a) < 60) return 'Each time range needs at least an hour.';
-  }
-  for (let i = 1; i < sorted.length; i++) if (minutes(sorted[i][0]) < minutes(sorted[i - 1][1])) return 'Time ranges can’t overlap.';
-  return null;
-}
-
-/** Two more hours where there's room: after the last range, else before the first; null when the day is full. */
-export function nextRange(ranges: Range[]): Range | null {
-  const sorted = [...ranges].sort((a, b) => minutes(a[0]) - minutes(b[0]));
-  const end = sorted.length ? minutes(sorted[sorted.length - 1][1]) : 18 * 60;
-  if (end + 60 <= LAST) return [clock(end), clock(Math.min(LAST, end + 120))];
-  const start = sorted.length ? minutes(sorted[0][0]) : FIRST;
-  if (start - 60 >= FIRST) return [clock(Math.max(FIRST, start - 120)), clock(start)];
-  return null;
-}
-
-const berlinParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-/** A unix time as a Berlin date (YYYY-MM-DD) and time (HH:MM). */
-export function berlinAt(unix: number) {
-  const p = Object.fromEntries(berlinParts.formatToParts(new Date(unix * 1000)).map((x) => [x.type, x.value]));
-  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
-}
 const weekdays = new Map<string, Intl.DateTimeFormat>();
 const weekdayShort = (date: string) => {
   const l = locale();
@@ -80,29 +98,24 @@ const weekdayShort = (date: string) => {
   if (!f) weekdays.set(l, (f = new Intl.DateTimeFormat(l, { weekday: 'short', timeZone: 'UTC' })));
   return f.format(new Date(date + 'T12:00:00Z'));
 };
-/** Unix time of a Berlin date and time (YYYY-MM-DD, HH:MM), handling CET/CEST (as on the server). */
-export function berlinUnix(date: string, time: string) {
-  const guess = Date.parse(`${date}T${time}:00Z`) / 1000;
-  const off = (u: number) => { const p = berlinAt(u); return Date.parse(`${p.date}T${p.time}:00Z`) / 1000 - u; };
-  return guess - off(guess - off(guess));
-}
 /** "16:30" today, otherwise "Tomorrow · 01:00": until when something holds. */
 export function untilLabel(unix: number) {
-  const p = berlinAt(unix);
-  return p.date === berlinToday() ? p.time : whenFree(p.date, p.time);
+  const p = localAt(unix);
+  return p.date === localToday() ? p.time : whenFree(p.date, p.time);
 }
 /** "Today · 18:30", "Tomorrow · 09:00", "Sat, 8 Nov · 17:00": when someone is next free. */
 export function whenFree(date: string, time: string) {
-  const today = berlinToday();
+  const today = localToday();
   return date === today ? `Today · ${time}` : date === addDays(today, 1) ? `Tomorrow · ${time}` : `${dateLabel(date)} · ${time}`;
 }
+/** The same for a moment. */
+export const whenAt = (unix: number) => { const p = localAt(unix); return whenFree(p.date, p.time); };
 /**
  * "Free today · 18:30", "Free tomorrow · 09:00", "Free Sat · 17:00": the short form for cards. For a video date
  * time: "Video today · 21:00".
  */
 export function freeTag(date: string, time: string, video = false) {
-  const today = berlinToday();
+  const today = localToday();
   const w = video ? 'Video' : 'Free';
   return date === today ? `${w} today · ${time}` : date === addDays(today, 1) ? `${w} tomorrow · ${time}` : `${w} ${weekdayShort(date)} · ${time}`;
 }
-

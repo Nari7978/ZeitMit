@@ -1,12 +1,12 @@
-import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../../theme';
-import { AM, CALL_OPENS_EARLY_S, hours, isVideo, kindsOf, placeFor, WEEK, WIN, whenShort, type Kind } from '../../data';
+import { AM, CALL_OPENS_EARLY_S, hours, isVideo, kindsOf, placeFor, WEEK, whenShort } from '../../data';
 import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
-import { addDays, berlinToday, dateLabel, rangesText, weekdayOf, weeklyRanges } from '../../lib/dates';
+import { addDays, dateLabel, localAt, localToday, rangesText } from '../../lib/dates';
+import { cityOf, offsetMin, TZ } from '../../lib/tz';
 import { Icon } from '../../ui/Icon';
-import { Box, Chip, PressBox, Row, Txt } from '../../ui/primitives';
+import { Box, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
 import { PastRow } from './History';
 import { t } from '../../i18n';
@@ -15,92 +15,112 @@ import { SecondaryButton, TextButton } from '../../ui/common';
 import { ReschedBox } from '../../ui/ReschedBox';
 
 export default function Calendar() {
-  // Video dates and in-person dates have their own hours: with both on offer, a switch shows one kind at a time.
-  const offered = kindsOf(useStore((s) => s.comp.acts));
-  const [pick, setPick] = useState<Kind | null>(null);
-  const kind: Kind = pick && offered.includes(pick) ? pick : offered[0] ?? 'meet';
-  const video = kind === 'video';
-  const avail = useStore((s) => (video ? s.comp.availVideo : s.comp.avail));
+  // One calendar for in-person and video dates: each range of hours is open for both, or one of them.
+  const both = kindsOf(useStore((s) => s.comp.acts)).length > 1;
+  const cal = useStore((s) => s.comp.hours);
   const up = useStore((s) => s.comp.upcoming);
-  const all = useStore((s) => (video ? s.comp.datesVideo : s.comp.dates));
-  const today = berlinToday();
-  const dates = all.filter((d) => d.date >= today); // a date that just passed, with the app left open
   const history = useStore((s) => s.comp.history);
   const done = useStore((s) => s.comp.done);
-  const { openSheet, setAvail } = useStore.getState();
-  // Opens the date sheet: on a date that has hours, those; a new one starts tomorrow with that weekday's weekly times.
+  const { openSheet, setCompanionTz } = useStore.getState();
+  const tz = cal?.tz ?? TZ;
+  const today = localToday(tz);
+  const dates = (cal?.days ?? []).filter((d) => d.date >= today); // a date that just passed, with the app left open
+  const blocks = (cal?.blocks ?? []).filter((x) => x.endsAt > Date.now() / 1000);
+  // This phone is in another zone than the hours (travelling, or set up elsewhere): offer to use the phone's.
+  const otherTz = tz !== TZ && offsetMin(Date.now() / 1000, tz) !== offsetMin(Date.now() / 1000, TZ);
+  const editDay = (day: number) => openSheet('hours', { hoursEdit: { day, date: null, off: false, busy: false, ranges: (cal?.week ?? []).filter((r) => r.day === day).map(({ from, to, kind }) => ({ from, to, kind })) } });
+  // On a date that has hours, those; a new one starts tomorrow with that weekday's weekly hours.
   const editDate = (date?: string) => {
     const d = date ?? addDays(today, 1);
     const ex = dates.find((x) => x.date === d);
-    const weekly = weeklyRanges(avail, WEEK[weekdayOf(d)]);
-    openSheet('customDate', { customDate: { date: d, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : weekly.length ? weekly : [['18:00', '22:00']], busy: false, kind } });
+    const weekly = (cal?.week ?? []).filter((r) => r.day === (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7).map(({ from, to, kind }) => ({ from, to, kind }));
+    openSheet('hours', { hoursEdit: { day: null, date: d, busy: false, off: ex ? !ex.ranges.length : false, ranges: ex?.ranges.length ? ex.ranges : weekly.length ? weekly : [{ from: '18:00', to: '22:00', kind: 'both' }] } });
+  };
+  // A new block starts at the next full hour, for an hour.
+  const editBlock = (id?: string) => {
+    const x = blocks.find((b) => b.id === id);
+    if (x) {
+      const s0 = localAt(x.startsAt, tz), e0 = localAt(x.endsAt, tz);
+      return openSheet('block', { blockEdit: { id: x.id, date: s0.date, from: s0.time, until: e0.date, to: e0.time, note: x.note, busy: false } });
+    }
+    const start = Math.ceil(Date.now() / 3600000) * 3600;
+    const s0 = localAt(start, tz), e0 = localAt(start + 3600, tz);
+    openSheet('block', { blockEdit: { id: null, date: s0.date, from: s0.time, until: e0.date, to: e0.time, note: '', busy: false } });
+  };
+  const blockText = (x: { startsAt: number; endsAt: number }) => {
+    const s0 = localAt(x.startsAt, tz), e0 = localAt(x.endsAt, tz);
+    return s0.date === e0.date ? `${dateLabel(s0.date)} · ${s0.time}–${e0.time}` : `${dateLabel(s0.date)} ${s0.time} – ${dateLabel(e0.date)} ${e0.time}`;
   };
   return (
     <CompShell title="Calendar">
-      {offered.length > 1 ? (
-        <Row style={{ gap: 8 }}>
-          <Chip label="In person" icon="map-pin" on={!video} onPress={() => setPick('meet')} height={42} radius={12} weight={600} style={{ flex: 1 }} />
-          <Chip label="Video dates" icon="video" on={video} onPress={() => setPick('video')} height={42} radius={12} weight={600} style={{ flex: 1 }} />
-        </Row>
-      ) : null}
+      <Row style={{ gap: 10, padding: 12, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.ink, alignItems: 'flex-start' }}>
+        <Icon name="globe" size={17} style={{ marginTop: 1 }} />
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <Txt size={13.5} weight={600}>{`Your hours are in ${cityOf(tz)} time`}</Txt>
+          <Txt size={12} lh={1.45} color={colors.gray600}>Customers see them in their own time. Bookings start 3½ hours ahead at the earliest, and you accept requests within 24 hours, at least 3 hours before the start.</Txt>
+          {otherTz ? <TextButton label={`Use this phone’s time zone (${cityOf(TZ)})`} size={13} weight={700} onPress={() => void setCompanionTz(TZ)} style={{ alignSelf: 'flex-start', paddingVertical: 4 }} /> : null}
+        </View>
+      </Row>
+
       <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
-        <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: offered.includes('video') ? 4 : 12 }}>
-          <Txt size={15} weight={700}>{video ? 'Weekly video hours' : 'Weekly availability'}</Txt>
-          <Txt size={12} color={colors.gray600}>Tap to toggle</Txt>
+        <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 4 }}>
+          <Txt size={15} weight={700}>Weekly hours</Txt>
+          <Txt size={12} color={colors.gray600}>Tap a day to change it</Txt>
         </Row>
-        {offered.includes('video') ? (
-          <Txt size={12.5} lh={1.45} color={colors.gray600} style={{ marginBottom: 12 }}>
-            {video ? 'When customers can book a video date with you. It’s confirmed at once and can start from 15 minutes ahead.' : 'When customers can meet you. Requests start from 2 hours ahead, and you have 2 hours to accept.'}
-          </Txt>
-        ) : null}
-        <Row style={{ gap: 6, marginBottom: 6 }}>
-          <View style={{ width: 44 }} />
-          {WIN.map(([k, l]) => <Txt key={k} size={11} color={colors.gray600} align="center" style={{ flex: 1 }}>{l}</Txt>)}
-        </Row>
-        {WEEK.map((d) => (
-          <Row key={d} style={{ gap: 6, marginBottom: 6 }}>
-            <Txt size={13} weight={600} style={{ width: 44 }}>{d}</Txt>
-            {WIN.map(([k, l]) => {
-              const on = avail.includes(d + '-' + k);
-              return (
-                <Pressable
-                  key={k}
-                  accessibilityRole="switch"
-                  accessibilityLabel={`${d} ${l}`}
-                  accessibilityState={{ checked: on }}
-                  onPress={() => setAvail(d, k, !on, kind)}
-                  style={{ flex: 1, height: 38, borderRadius: 10, backgroundColor: on ? colors.ink : colors.butter, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Icon name={on ? 'check' : 'plus'} size={15} color={on ? colors.white : colors.gray500} />
-                </Pressable>
-              );
-            })}
-          </Row>
-        ))}
+        <Txt size={12.5} lh={1.45} color={colors.gray600} style={{ marginBottom: 8 }}>
+          {both ? 'Any times, in 15-minute steps, past midnight too. Each range is for in-person and video dates, or just one of them.' : 'Any times, in 15-minute steps, past midnight too.'}
+        </Txt>
+        {WEEK.map((d, i) => {
+          const ranges = (cal?.week ?? []).filter((r) => r.day === i);
+          return (
+            <Pressable key={d} accessibilityRole="button" accessibilityLabel={`${t(d)}: ${rangesText(ranges, both)}`} onPress={() => editDay(i)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+              <Txt size={14} weight={700} style={{ width: 40 }}>{d}</Txt>
+              <Txt size={13.5} color={ranges.length ? colors.ink : colors.gray500} style={{ flex: 1 }}>{ranges.length ? rangesText(ranges, both) : 'Closed'}</Txt>
+              <Icon name="pencil" size={15} color={colors.gray600} />
+            </Pressable>
+          );
+        })}
       </Box>
 
       {/* Own hours for specific dates, or days off */}
       <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 10 }}>
-        <Txt size={15} weight={700}>{video ? 'Specific dates for video' : 'Specific dates'}</Txt>
-        <Txt size={12.5} lh={1.45} color={colors.gray600}>
-          {video
-            ? 'Set your own video hours for a date, or take a day off from video dates. They replace your weekly video hours on that day.'
-            : 'Set your own hours for a date, or take a day off. They replace your weekly times on that day. Customers can book up to 7 days ahead.'}
-        </Txt>
+        <Txt size={15} weight={700}>Specific dates</Txt>
+        <Txt size={12.5} lh={1.45} color={colors.gray600}>Set your own hours for a date, or take a day off. They replace your weekly hours that day. Customers can book up to 7 days ahead.</Txt>
         {dates.map((d) => (
-          <Pressable key={d.date} accessibilityRole="button" accessibilityLabel={`${dateLabel(d.date)}, ${rangesText(d.ranges)}`} onPress={() => editDate(d.date)}
+          <Pressable key={d.date} accessibilityRole="button" accessibilityLabel={`${dateLabel(d.date)}, ${rangesText(d.ranges, both)}`} onPress={() => editDate(d.date)}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.hairline }}>
             <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: d.ranges.length ? colors.mintSoft : colors.redSoft, alignItems: 'center', justifyContent: 'center' }}>
               <Icon name={d.ranges.length ? 'clock' : 'calendar-x'} size={17} color={d.ranges.length ? colors.greenDeep : colors.redDeep} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt size={14} weight={600}>{dateLabel(d.date)}</Txt>
-              <Txt size={13} color={colors.gray600} numberOfLines={1}>{rangesText(d.ranges)}</Txt>
+              <Txt size={13} color={colors.gray600} numberOfLines={2}>{rangesText(d.ranges, both)}</Txt>
             </View>
             <Icon name="pencil" size={15} color={colors.gray600} />
           </Pressable>
         ))}
         <SecondaryButton label="Add a date" icon="calendar-plus" height={44} radius={12} onPress={() => editDate()} />
+      </Box>
+
+      {/* Blocked time: closed whatever the hours say, until removed (never reopens by itself) */}
+      <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 10 }}>
+        <Txt size={15} weight={700}>Blocked time</Txt>
+        <Txt size={12.5} lh={1.45} color={colors.gray600}>A break, a night off or days away. Customers can’t book it until you remove it, and it never opens again by itself.</Txt>
+        {blocks.map((x) => (
+          <Pressable key={x.id} accessibilityRole="button" accessibilityLabel={`${blockText(x)}${x.note ? `, ${x.note}` : ''}`} onPress={() => editBlock(x.id)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.hairline }}>
+            <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: colors.butter, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="ban" size={17} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Txt size={14} weight={600} numberOfLines={2}>{blockText(x)}</Txt>
+              {x.note ? <Txt raw size={13} color={colors.gray600} numberOfLines={1}>{x.note}</Txt> : null}
+            </View>
+            <Icon name="pencil" size={15} color={colors.gray600} />
+          </Pressable>
+        ))}
+        <SecondaryButton label="Block time" icon="calendar-x" height={44} radius={12} onPress={() => editBlock()} />
       </Box>
 
       <Txt size={15} weight={700} style={{ marginTop: 6 }}>Upcoming</Txt>
@@ -110,12 +130,12 @@ export default function Calendar() {
             <Initial who={u.who} hue={hueOf(u.customerId)} url={u.avatarUrl} size={44} radius={14} fontSize={15} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt size={15} weight={600}>{u.who} · {AM[u.act].label}</Txt>
-              <Txt size={13} color={colors.gray600}>{u.day} · {u.time} · {hours(u.dur)}</Txt>
+              <Txt size={13} color={colors.gray600}>{u.day} · {u.time}–{u.end} · {hours(u.dur)}</Txt>
               <Txt size={12} color={colors.gray600} numberOfLines={1}>{placeFor(u.act, u.place)}</Txt>
             </View>
             <Icon name="chevron-right" size={16} color={colors.gray400} />
           </Pressable>
-          {u.resched ? <ReschedBox bookingId={u.id} resched={u.resched} mine={u.resched.by === 'companion'} other={u.who.split(' ')[0]} current={`${u.day} · ${u.time}`} /> : null}
+          {u.resched ? <ReschedBox bookingId={u.id} resched={u.resched} mine={u.resched.by === 'companion'} other={u.who.split(' ')[0]} current={`${u.day} · ${u.time}–${u.end}`} /> : null}
           <Row style={{ gap: 8 }}>
             {([
               ['message-circle', 'Message', () => void openBookingChat(u.id)],

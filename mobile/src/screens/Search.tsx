@@ -11,7 +11,7 @@ import { Chip, Enter, H, PressBox, Row, Stripes, Txt, Photo } from '../ui/primit
 import { EmptyState, SaveButton, SecondaryButton, StatusCover, TextButton, useTopPad, usePullRefresh } from '../ui/common';
 import { useNavBottom } from '../ui/chrome';
 import { t } from '../i18n';
-import { berlinAt, freeTag } from '../lib/dates';
+import { localAt, freeTag } from '../lib/dates';
 
 export function activeChips(f: Filters): [string, Partial<Filters>][] {
   const chips: [string, Partial<Filters>][] = [];
@@ -163,7 +163,7 @@ export default function Search() {
                       {/* Follows the kind of date picked in the filters: video dates only, in person only, or either. */}
                       {(() => {
                         const fr = freeOf(c, f.acts);
-                        const at = fr.next ? berlinAt(fr.next) : null;
+                        const at = fr.next ? localAt(fr.next) : null;
                         return at ? <Txt size={12} weight={600} color={colors.green} numberOfLines={1} style={{ marginTop: 'auto', paddingTop: 6 }}>{freeTag(at.date, at.time, fr.video)}</Txt> : null;
                       })()}
                       <Row style={{ marginTop: freeOf(c, f.acts).next ? 2 : 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>

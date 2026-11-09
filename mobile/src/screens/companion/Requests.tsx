@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, eur, memberSince, placeOr } from '../../data';
+import { AM, eur, isVideo, memberSince, placeFor } from '../../data';
 import { untilLabel } from '../../lib/dates';
 import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
@@ -38,11 +38,18 @@ export default function Requests() {
               </Pressable>
               <Pill label="New" bg={colors.blush} fg={colors.ink} height={24} />
             </Row>
-            {/* Unanswered by then, the request is cancelled and the customer refunded. */}
-            {r.replyBy ? (
+            {/* Not accepted by then (within 24 hours, at least 3 hours before the start), the request expires and is refunded. */}
+            {r.expiresAt ? (
               <Row style={{ gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FDF3E2' }}>
                 <Icon name="hourglass" size={14} color="#8A5A0F" />
-                <Txt size={13} weight={600} color="#8A5A0F" style={{ flex: 1 }}>{`Reply by ${untilLabel(r.replyBy)}`}</Txt>
+                <Txt size={13} weight={600} color="#8A5A0F" style={{ flex: 1 }}>{`Accept by ${untilLabel(r.expiresAt)}`}</Txt>
+              </Row>
+            ) : null}
+            {/* Requests don't hold time: other customers may want the same time, and accepting one ends the others. */}
+            {r.overlaps ? (
+              <Row style={{ gap: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: colors.lilac, alignItems: 'flex-start' }}>
+                <Icon name="layers" size={14} style={{ marginTop: 2 }} />
+                <Txt size={13} lh={1.45} style={{ flex: 1 }}>{r.overlaps === 1 ? 'Another request wants time that overlaps this one. Accepting one ends the other, refunded in full.' : `${r.overlaps} other requests want time that overlaps this one. Accepting one ends the others, refunded in full.`}</Txt>
               </Row>
             ) : null}
             {r.customer ? (
@@ -54,18 +61,18 @@ export default function Requests() {
                 <TextButton label="View full profile" icon="user-round" size={13} weight={700} onPress={() => openCustomer(r.customerId)} style={{ alignSelf: 'flex-start', paddingVertical: 4 }} />
               </View>
             ) : null}
-            <Row style={{ gap: 16 }}>
+            <Row style={{ gap: 16, flexWrap: 'wrap' }}>
               <Row style={{ gap: 6 }}><Icon name="calendar" size={15} color={colors.gray600} /><Txt size={13}>{r.day}</Txt></Row>
-              <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{r.time}</Txt></Row>
+              <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{`${r.time}–${r.end}`}</Txt></Row>
             </Row>
-            <Row style={{ gap: 6 }}><Icon name="map-pin" size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={r.place ? colors.ink : colors.gray600}>{placeOr(r.place)}</Txt></Row>
+            <Row style={{ gap: 6 }}><Icon name={isVideo(r.act) ? 'video' : 'map-pin'} size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={r.place || isVideo(r.act) ? colors.ink : colors.gray600}>{placeFor(r.act, r.place)}</Txt></Row>
             {r.note ? (
               <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun }}>
                 <Txt raw size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>
               </View>
             ) : null}
-            <Txt size={12} color={colors.gray600}>{eur(r.payout / 100)} already paid and held by ZeitMit · released when you enter their meet code</Txt>
-            {r.resched ? <ReschedBox bookingId={r.id} resched={r.resched} mine={r.resched.by === 'companion'} other={r.who.split(' ')[0]} current={`${r.day} · ${r.time}`} /> : null}
+            <Txt size={12} color={colors.gray600}>{isVideo(r.act) ? `${eur(r.payout / 100)} already paid and held by ZeitMit · released after 10 minutes on the call together` : `${eur(r.payout / 100)} already paid and held by ZeitMit · released when you enter their meet code`}</Txt>
+            {r.resched ? <ReschedBox bookingId={r.id} resched={r.resched} mine={r.resched.by === 'companion'} other={r.who.split(' ')[0]} current={`${r.day} · ${r.time}–${r.end}`} /> : null}
             <Row style={{ gap: 8 }}>
               <SecondaryButton label="Decline" height={44} radius={12} style={{ flex: 1 }} onPress={() => void declineRequest(r.id)} />
               <PrimaryButton label="Accept" height={44} radius={12} size={14} shadowColor="transparent" style={{ flex: 1 }} onPress={() => void acceptRequest(r.id)} />

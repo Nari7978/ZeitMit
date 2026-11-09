@@ -1,6 +1,7 @@
 // Static catalogue (activities, labels, colours) and pure helpers. Live data comes from the API (src/api.ts).
 import { colors } from './theme';
 import { locale, t } from './i18n';
+import { TZ } from './lib/tz';
 
 export type Gender = 'w' | 'm' | 'nb';
 export type ActId =
@@ -41,7 +42,7 @@ export type Companion = {
   gallery?: string[];
 };
 
-/** Video dates and in-person dates have their own hours and rules (one clock: a booking blocks both). */
+/** In-person dates and video dates: one calendar and the same rules, each range of hours open for one kind or both. */
 export type Kind = 'meet' | 'video';
 /** When someone is next free (unix or null), whether that's today, and the weekdays (0 = Mon) with open times. */
 export type Free = { next: number | null; today: boolean; days: number[] };
@@ -79,26 +80,36 @@ export const SORT = {recommended:'Recommended',price:'Price: low to high',rating
 export const WEEK = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 export const WIN: [string, string][] = [['am','Morning'],['pm','Afternoon'],['eve','Evening']];
 
-export type BookingStatus = 'confirmed' | 'pending' | 'completed' | 'cancelled';
+/**
+ * A request is pending until the companion accepts it (confirmed) or declines it (rejected), or it runs out of time
+ * (expired) or someone else is confirmed for that time (conflicted). Either side can cancel; completed means they met.
+ */
+export type BookingStatus = 'confirmed' | 'pending' | 'completed' | 'cancelled' | 'rejected' | 'expired' | 'conflicted';
 export const ST: Record<BookingStatus, { l: string; bg: string; fg: string; dot: string }> = {
   confirmed:{l:'Confirmed',bg:'#E7F5EE',fg:'#12704E',dot:'#178A60'},
   pending:{l:'Awaiting reply',bg:'#FDF3E2',fg:'#8A5A0F',dot:'#E99A24'},
   completed:{l:'Completed',bg:'#FFF4B8',fg:'#2A2A2A',dot:'#4A4A4A'},
   cancelled:{l:'Cancelled',bg:'#FCEBEE',fg:'#A8304A',dot:'#D9435F'},
+  rejected:{l:'Declined',bg:'#FCEBEE',fg:'#A8304A',dot:'#D9435F'},
+  expired:{l:'Expired',bg:'#F1EFEA',fg:'#5A5A5A',dot:'#8A8A8A'},
+  conflicted:{l:'Time taken',bg:'#F1EFEA',fg:'#5A5A5A',dot:'#8A8A8A'},
 };
 export type BTab = 'upcoming' | 'pending' | 'completed' | 'cancelled';
-export const BTAB: Record<BTab, BookingStatus> = {upcoming:'confirmed',pending:'pending',completed:'completed',cancelled:'cancelled'};
+/** Which tab a booking shows under: everything that won't happen goes with the cancelled ones. */
+export const tabOf = (s: BookingStatus): BTab => (s === 'confirmed' ? 'upcoming' : s === 'pending' ? 'pending' : s === 'completed' ? 'completed' : 'cancelled');
+/** Ended before it happened: declined, expired, someone else got the time, or cancelled. */
+export const isClosed = (s: BookingStatus) => tabOf(s) === 'cancelled';
 export const BSTEPS = ['Activity','Date & time','Duration','Meeting place','Note','Review'];
 export const CSTEPS = ['About you','Activities & languages','Rate & availability','Verification','Review'];
 export type Tone = 'violet' | 'success' | 'warning' | 'error' | 'neutral';
 export const TONE: Record<Tone, [string, string]> = {violet:['#FFD6E5','#111111'],success:['#E7F5EE','#178A60'],warning:['#FDF3E2','#B37112'],error:['#FCEBEE','#D9435F'],neutral:['#FFF4B8','#2A2A2A']};
 
-// ---- Berlin date helpers (the service runs in Berlin time) ----
+// ---- Date helpers, in this phone's time zone (lib/tz.ts) ----
 
-const fmt = (o: Intl.DateTimeFormatOptions, loc = locale()) => new Intl.DateTimeFormat(loc, { timeZone: 'Europe/Berlin', ...o });
+const fmt = (o: Intl.DateTimeFormatOptions, loc = locale()) => new Intl.DateTimeFormat(loc, { timeZone: TZ, ...o });
 
-/** Weekday index in Berlin, 0 = Mon. */
-export function berlinWeekday(d = new Date()) {
+/** Weekday index today, 0 = Mon. */
+export function localWeekday(d = new Date()) {
   return WEEK.indexOf(fmt({ weekday: 'short' }, 'en-GB').format(d));
 }
 
@@ -137,7 +148,7 @@ export function msgTime(unix: number) {
   return notifWhen(unix).time;
 }
 
-const berlinDay = (unix: number) => fmt({ year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-CA').format(new Date(unix * 1000));
+const localDay = (unix: number) => fmt({ year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-CA').format(new Date(unix * 1000));
 
 /**
  * When a companion is free for what you're looking for: video dates only if the activities picked are just video
@@ -150,7 +161,7 @@ export function freeOf(c: Companion, acts: ActId[] = []): Free & { video: boolea
   const meet = want.includes('meet') ? c.free.meet : null;
   const video = want.includes('video') ? c.free.video : null;
   const m = meet?.next ?? null, v = video?.next ?? null;
-  const useVideo = v !== null && (m === null || berlinDay(v) < berlinDay(m));
+  const useVideo = v !== null && (m === null || localDay(v) < localDay(m));
   return {
     next: useVideo ? v : m,
     today: !!(meet?.today || video?.today),
@@ -170,13 +181,21 @@ export const eur = (n: number) => {
   return '€' + (Number.isInteger(v) ? v : v.toFixed(2));
 };
 export const memberSince = (unix: number) => 'Member since ' + new Date(unix * 1000).getFullYear();
-export const hours = (d: number) => t(`${Math.floor(d)}${d % 1 ? '½' : ''} ${d === 1 ? 'hour' : 'hours'}`);
+/** "45 min", "1 hour", "2½ hours", "1 h 15 min": a length in minutes. */
+export function lengthLabel(min: number) {
+  const h = Math.floor(min / 60), m = Math.round(min % 60);
+  if (!h) return t(`${m} min`);
+  if (!m) return t(`${h} ${h === 1 ? 'hour' : 'hours'}`);
+  return t(m === 30 ? `${h}½ hours` : `${h} h ${m} min`);
+}
+/** The same for a length in hours (bookings' `dur`). */
+export const hours = (d: number) => lengthLabel(Math.round(d * 60));
 /** What stood out at a meet-up, for the private safety feedback (the server accepts the same lists). */
 export const FEEDBACK_GOOD = ['Respectful', 'Kept to boundaries', 'On time', 'Friendly'];
 export const FEEDBACK_CONCERNS = ['Pushy or rude', 'Crossed boundaries', 'Asked for contact details', 'Wanted to meet outside ZeitMit', 'Made me uncomfortable'];
-/** Booking lengths: 1 to 8 hours in half-hour steps (the server allows the same). */
-export const MIN_HOURS = 1;
-export const MAX_HOURS = 8;
+/** Booking lengths in minutes, in 15-minute steps (the server allows the same): from 30 minutes for a video date, from an hour in person, up to 8 hours. */
+export const MIN_MINUTES: Record<Kind, number> = { video: 30, meet: 60 };
+export const MAX_MINUTES = 480;
 /** A booking's meeting place, or the reminder shown when it was left for the chat. */
 export const placeOr = (place: string) => place || 'Agree on a place in the chat';
 /** Video dates happen in the app: no meeting place, check-in or meet code. */
@@ -184,13 +203,6 @@ export const isVideo = (act: ActId) => act === 'call';
 export const kindOf = (act: ActId): Kind => (isVideo(act) ? 'video' : 'meet');
 /** The kinds a list of activities covers (in person first). */
 export const kindsOf = (acts: ActId[]): Kind[] => (['meet', 'video'] as Kind[]).filter((k) => acts.some((a) => kindOf(a) === k));
-/** How soon a booking can start (as on the server): video dates from 15 minutes ahead, in person from 2 hours. */
-export const LEAD_MIN: Record<Kind, number> = { video: 15, meet: 120 };
-/** An in-person request waits this long for the companion's answer, at the latest until an hour before the start. */
-export const REPLY_HOURS = 2;
-export const replyByFor = (startsAt: number, sentAt = Date.now() / 1000) => Math.min(sentAt + REPLY_HOURS * 3600, startsAt - 3600);
-/** A video date is confirmed at once, so it can be cancelled for free this many minutes after booking. */
-export const VIDEO_GRACE_MIN = 10;
 /** The video call opens this long before the start (as on the server). */
 export const CALL_OPENS_EARLY_S = 10 * 60;
 export const placeFor = (act: ActId, place: string) => (isVideo(act) ? 'Video call in the app' : placeOr(place));

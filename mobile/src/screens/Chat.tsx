@@ -3,7 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInp
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { BTAB, notifWhen, ST, type BTab } from '../data';
+import { notifWhen, ST, tabOf } from '../data';
 import { useStore } from '../store';
 import { api, ApiError, wsUrl } from '../api';
 import { asksForCode, sharesCode } from '../lib/meetCode';
@@ -168,7 +168,7 @@ export default function Chat() {
       return;
     }
     const bk = useStore.getState().bookings.find((y) => y.id === x.bookingId);
-    const tab = bk ? (Object.keys(BTAB) as BTab[]).find((k) => BTAB[k] === bk.status)! : 'upcoming';
+    const tab = bk ? tabOf(bk.status) : 'upcoming';
     toBookings(tab);
   };
 

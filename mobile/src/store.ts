@@ -7,7 +7,9 @@ import { welcomeStore } from './lib/welcome';
 import { askLocation, currentLocation } from './lib/location';
 import { runCheckout } from './lib/checkout';
 import { resolveLang, setLang } from './i18n';
-import { berlinWeekday, eur, firstOpen, freeOf, type ActId, type BookingStatus, type BTab, type Companion, type Gender, type Kind, type SORT, type Tone } from './data';
+import { TZ } from './lib/tz';
+import type { Range, WeekRange } from './lib/dates';
+import { localWeekday, eur, firstOpen, freeOf, type ActId, type BookingStatus, type BTab, type Companion, type Gender, type Kind, type SORT, type Tone } from './data';
 
 /** Same rule as the API: customers cancel for free until this many hours before the start. */
 export const FREE_CANCEL_HOURS = 24;
@@ -27,17 +29,22 @@ export type Filters = {
 export const EMPTY_FILTERS: Filters = { type: 'all', acts: [], when: 'any', max: 60, langs: [], rating: 0, pref: 'any', lgbtq: false };
 
 export type Pay = 'held' | 'released' | 'refunded';
-/** A suggested new time for a booking, waiting for the other side's answer. */
-export type Resched = { at: number; by: 'customer' | 'companion'; day: string; time: string; full: string };
-export type Booking = {
-  id: string; cid: string; companionName: string; hue: number; photoUrl?: string | null; creditUsed?: number; act: ActId; startsAt: number; day: string; time: string; full: string;
-  dur: number; place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
+/** A suggested new time for a booking, waiting for the other side's answer (`end`: its end, same length). */
+export type Resched = { at: number; by: 'customer' | 'companion'; day: string; time: string; end: string; full: string };
+/** When a booking is: start and end (unix), length, and as shown (`day`, `time`, `end`, in this phone's zone). */
+type When = { kind: Kind; startsAt: number; endsAt: number; minutes: number; day: string; time: string; end: string; full: string; dur: number };
+export type Booking = When & {
+  id: string; cid: string; companionName: string; hue: number; photoUrl?: string | null; creditUsed?: number; act: ActId;
+  place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
   /** You already told the safety team how this meet-up went. */
   feedback?: boolean;
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system';
   resched?: Resched | null; reschedLeft?: number;
-  /** A request: when it expires if the companion doesn't answer. A confirmed booking: until when cancelling is free. */
-  replyBy?: number; freeUntil?: number;
+  /**
+   * A request: until when the companion can accept it (within 24 hours of the request and at least 3 hours before
+   * the start), after which it expires and is refunded. A confirmed booking: until when cancelling is free.
+   */
+  expiresAt?: number; freeUntil?: number;
 };
 export type Convo = {
   id: string; cid: string; customerId: string; name: string; hue: number; photoUrl?: string | null; bookingId: string | null; act: ActId | null; startsAt: number | null;
@@ -46,21 +53,27 @@ export type Convo = {
   canSend: boolean;
 };
 export type Notif = { id: string; icon: string; tone: Tone; title: string; body: string; go: string; read: number; created_at: number };
-export type CompBooking = {
-  id: string; who: string; customerId: string; avatarUrl?: string | null; act: ActId; startsAt: number; day: string; time: string; full: string;
-  dur: number; place: string; note: string; status: BookingStatus; pay: Pay; payout: number; feedback?: boolean;
+export type CompBooking = When & {
+  id: string; who: string; customerId: string; avatarUrl?: string | null; act: ActId;
+  place: string; note: string; status: BookingStatus; pay: Pay; payout: number; feedback?: boolean;
   customer?: { bio: string; verified: boolean; since: number | null };
   resched?: Resched | null; reschedLeft?: number;
-  /** A request: answer it by then, or it's cancelled and refunded. */
-  replyBy?: number;
+  /** A request: accept it by then (within 24 hours, at least 3 hours before the start), or it expires and is refunded. */
+  expiresAt?: number;
+  /** A request: how many other requests want time that overlaps it (accepting one of them ends the others). */
+  overlaps?: number;
   /** Cancelled bookings: who cancelled, and the note shown for it. */
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system'; cancelNote?: string;
 };
-/** A companion's own hours for one date (they replace the weekly windows that day); no ranges = a day off. */
-export type CustomDate = { date: string; ranges: [string, string][] };
+/** A companion's own hours for one date (they replace that weekday's weekly hours); no ranges = a day off. */
+export type HoursDay = { date: string; ranges: Range[] };
+/** Time a companion blocked (a break, time off): closed whatever the hours say, until removed. */
+export type Block = { id: string; startsAt: number; endsAt: number; note: string };
+/** One calendar for both kinds of date, in the companion's time zone. */
+export type Hours = { tz: string; week: WeekRange[]; days: HoursDay[]; blocks: Block[] };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'customDate';
+  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'hours' | 'block';
 
 /** Private answers after a meet-up: only the safety team sees them. `about` is the other person's user id. */
 export type Feedback = {
@@ -90,7 +103,8 @@ export type Checkin = {
 export type IdStatus = 'none' | 'pending' | 'approved' | 'rejected';
 export type CompanionStatus = 'none' | 'pending' | 'approved' | 'rejected';
 
-export type NewBooking = { cid: string; act: ActId; date: string; time: string; dur: number; place: string; note: string; boundariesAgreed: boolean };
+/** A request: start (unix) and length in minutes. */
+export type NewBooking = { cid: string; act: ActId; startsAt: number; minutes: number; place: string; note: string; boundariesAgreed: boolean };
 export type CompanionApplication = {
   name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; langs: string[];
   rate: number; days: string[]; wins: string[]; adult: boolean; rules: boolean; idPhotoId?: string; photoId?: string; tagline?: string;
@@ -119,9 +133,8 @@ type State = {
   notifs: Notif[];
   toast: string | null;
   /** `gallery`: how many photos the listing has besides the profile photo (null until loaded). */
-  /** `history`: past meet-ups and cancellations, newest first; `dates`: own hours for specific dates. */
-  /** In-person hours (`avail` weekly, `dates` specific dates) and video hours (`availVideo`, `datesVideo`) are kept apart. */
-  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; dates: CustomDate[]; datesVideo: CustomDate[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; avail: string[]; availVideo: string[]; gallery: number | null };
+  /** `history`: past meet-ups and bookings that didn't happen, newest first; `hours`: the calendar (null until loaded). */
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; gallery: number | null; hours: Hours | null };
   edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
   feedback: Feedback;
@@ -134,8 +147,10 @@ type State = {
   otpFor: string | null;
   /** Draft for the cancel sheet: which booking, from whose side, and the reason picked. */
   cancel: { bid: string | null; side: 'customer' | 'companion'; reason: string | null; busy: boolean };
-  /** The "hours for a date" sheet: the picked date, a day off or these ranges. */
-  customDate: { date: string | null; off: boolean; ranges: [string, string][]; busy: boolean; kind: Kind };
+  /** The hours sheet: one weekday's weekly hours (`day`, 0 = Mon) or one date's (`date`), a day off or these ranges. */
+  hoursEdit: { day: number | null; date: string | null; off: boolean; ranges: Range[]; busy: boolean };
+  /** The blocked-time sheet: a new block (`id` null) or one to change, from `date` `from` until `until` `to`, in the companion's zone. */
+  blockEdit: { id: string | null; date: string | null; from: string; until: string | null; to: string; note: string; busy: boolean };
   otpIn: { uid: string | null; val: string; err: boolean; done: boolean; busy: boolean };
   gift: { amt: number; to: string; msg: string; done: boolean; code?: string };
   checkin: Checkin | null;
@@ -167,10 +182,17 @@ type Actions = {
   /** Opens the private “How did it go?” sheet for a meet-up of yours (either side). */
   openFeedback: (bookingId: string) => void;
   submitFeedback: () => Promise<void>;
-  /** Saves a companion's hours of one kind for one date (`ranges` empty = a day off); false if it didn't work. */
-  saveDate: (date: string, ranges: [string, string][], kind?: Kind) => Promise<boolean>;
-  /** Back to that kind's weekly windows on this date. */
-  removeDate: (date: string, kind?: Kind) => Promise<boolean>;
+  /** Saves one weekday's weekly hours; false if it didn't work. */
+  saveWeekDay: (day: number, ranges: Range[]) => Promise<boolean>;
+  /** Saves a date's own hours (`ranges` empty = a day off); false if it didn't work. */
+  saveDay: (date: string, ranges: Range[]) => Promise<boolean>;
+  /** Back to the weekly hours on this date. */
+  removeDay: (date: string) => Promise<boolean>;
+  /** Blocks time (`id`: changes that block). */
+  saveBlock: (b: { id: string | null; startsAt: number; endsAt: number; note: string }) => Promise<boolean>;
+  removeBlock: (id: string) => Promise<boolean>;
+  /** The time zone a companion's hours are in. */
+  setCompanionTz: (tz: string) => Promise<boolean>;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
@@ -190,7 +212,6 @@ type Actions = {
   verifyOtp: () => Promise<void>;
   submitCompanion: (a: CompanionApplication) => Promise<boolean>;
   submitVerification: (idPhotoId: string, selfiePhotoId: string) => Promise<boolean>;
-  setAvail: (day: string, win: string, on: boolean, kind?: Kind) => void;
   setListing: (patch: { rate?: number; acts?: ActId[] }) => void;
   startCheckin: () => Promise<void>;
   checkinOk: () => Promise<void>;
@@ -212,7 +233,7 @@ type Actions = {
 
 export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
 
-const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], dates: [], datesVideo: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], avail: [], availVideo: [], gallery: null };
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], gallery: null, hours: null };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;
@@ -257,6 +278,8 @@ type MeResponse = {
   credit: number; prefs: Prefs; language: Lang; idStatus: IdStatus; idNote: string | null; gender: Gender | null; age: number | null; languages: string[]; interests: string[];
   /** The language the app last reported showing (emails use it when the setting follows the phone). */
   uiLang?: 'en' | 'de' | null;
+  /** The time zone the app last reported (notifications and emails show times in it). */
+  timezone?: string | null;
 };
 /** Draft for the "Personal details" sheet. */
 export type ProfileEdit = { name: string; bio: string; gender: Gender | null; age: string; languages: string[]; interests: string[] };
@@ -276,6 +299,8 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     const shown = resolveLang(me.language);
     setLang(shown);
     if (me.uiLang !== shown) api('PATCH', '/me', { uiLanguage: shown }).catch(() => {});
+    // Times in notifications and emails follow this phone's time zone.
+    if (me.timezone !== TZ) api('PATCH', '/me', { timezone: TZ }).catch(() => {});
     // Discovery preferences pre-fill the search filters (until the user changes them).
     const f = get().f;
     if (f === EMPTY_FILTERS && me.prefs && (me.prefs.discoveryPref !== 'any' || me.prefs.discoveryMaxRate < 60)) {
@@ -307,7 +332,8 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
     cancel: { bid: null, side: 'customer', reason: null, busy: false },
-    customDate: { date: null, off: false, ranges: [['18:00', '22:00']], busy: false, kind: 'meet' },
+    hoursEdit: { day: null, date: null, off: false, ranges: [], busy: false },
+    blockEdit: { id: null, date: null, from: '12:00', until: null, to: '13:00', note: '', busy: false },
     otpFor: null, otpIn: { uid: null, val: '', err: false, done: false, busy: false },
     gift: { amt: 100, to: '', msg: '', done: false },
     checkin: null,
@@ -423,7 +449,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
         api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'history' | 'earnings'>>('GET', '/companion/bookings'),
-        api<Companion & { avail: string[]; dates?: CustomDate[]; availVideo?: string[]; datesVideo?: CustomDate[] }>('GET', '/companion'),
+        api<Companion & { timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[] }>('GET', '/companion'),
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
@@ -431,8 +457,8 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
           ...s.comp,
           ...(bk.status === 'fulfilled' ? bk.value : {}),
           ...(profile.status === 'fulfilled' && profile.value.rate ? {
-            rate: profile.value.rate, acts: profile.value.acts, avail: profile.value.avail, dates: profile.value.dates ?? [],
-            availVideo: profile.value.availVideo ?? [], datesVideo: profile.value.datesVideo ?? [], gallery: profile.value.gallery?.length ?? 0,
+            rate: profile.value.rate, acts: profile.value.acts, gallery: profile.value.gallery?.length ?? 0,
+            hours: { tz: profile.value.timezone ?? 'Europe/Berlin', week: profile.value.week ?? [], days: profile.value.days ?? [], blocks: profile.value.blocks ?? [] },
           } : {}),
         }),
         compConvos: convos.status === 'fulfilled' ? keep(s.compConvos, convos.value) : s.compConvos,
@@ -457,12 +483,12 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
 
     // ---------- bookings ----------
     addBooking: async (b) => {
-      // Retrying after an unfinished payment reuses the same booking (its slot is held for ~30 min).
-      const key = `${b.cid}|${b.act}|${b.date}|${b.time}|${b.dur}`;
+      // Retrying after an unfinished payment reuses the same checkout (it stays open for ~30 min).
+      const key = `${b.cid}|${b.act}|${b.startsAt}|${b.minutes}`;
       let pending = get().pendingCheckout;
       if (!pending || pending.key !== key) {
         const bk = await attempt(() => api<Booking & { checkoutUrl?: string }>('POST', '/bookings', {
-          companionId: b.cid, act: b.act, date: b.date, time: b.time, dur: b.dur, place: b.place, note: b.note, boundariesAgreed: b.boundariesAgreed,
+          companionId: b.cid, act: b.act, startsAt: b.startsAt, minutes: b.minutes, place: b.place, note: b.note, boundariesAgreed: b.boundariesAgreed,
         }));
         if (!bk) return null;
         if (!bk.checkoutUrl) {
@@ -491,11 +517,11 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
         }
       }
       if (outcome === 'success') {
-        // Stripe says it went through but hasn't confirmed it yet: keep the time held, the request follows.
+        // Stripe says it went through but hasn't confirmed it yet: the request follows once it has.
         get().showToast('We’re still confirming your payment. Check Bookings in a moment.');
         return null;
       }
-      // Cancelled or closed without paying: give the time back right away so others (and you) can book it.
+      // Cancelled or closed without paying: close that checkout so it can't be paid later.
       await get().releaseCheckout();
       if (!get().pendingCheckout && get().bookings.some((x) => x.id === pending!.id)) return get().bookings.find((x) => x.id === pending!.id)!;
       get().showToast('Payment cancelled. Your request wasn’t sent.');
@@ -619,8 +645,10 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     acceptRequest: async (id) => {
       const r = get().comp.requests.find((x) => x.id === id);
       const ok = await attempt(() => api('POST', `/companion/bookings/${id}/accept`));
-      if (!ok) return;
-      get().showToast('Accepted. ' + (r?.who ?? 'The customer') + ' has been notified.');
+      // Not accepted (too late, or that time was just taken): it's ended now, so the lists change either way.
+      if (!ok) return void (await get().loadCompanionSide());
+      const others = r?.overlaps ?? 0;
+      get().showToast(`Accepted. ${r?.who ?? 'The customer'} has been notified.${others ? ` ${others === 1 ? 'The other request' : `The ${others} other requests`} for that time ended and ${others === 1 ? 'was' : 'were'} refunded.` : ''}`);
       await get().loadCompanionSide();
     },
     declineRequest: async (id) => {
@@ -657,40 +685,61 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       set((s) => ({ user: s.user ? { ...s.user, idStatus: 'pending', idNote: null } : s.user }));
       return true;
     },
-    setAvail: (day, win, on, kind = 'meet') => {
-      const key = day + '-' + win;
-      const field = kind === 'video' ? 'availVideo' : 'avail';
-      set((s) => ({ comp: { ...s.comp, [field]: on ? [...s.comp[field], key] : s.comp[field].filter((x) => x !== key) } }));
-      api('PUT', '/companion/availability', { day, win, on, kind }).catch((e) => {
-        set((s) => ({ comp: { ...s.comp, [field]: on ? s.comp[field].filter((x) => x !== key) : [...s.comp[field], key] } }));
-        get().showToast(msg(e));
-      });
-    },
-    saveDate: async (date, ranges, kind = 'meet') => {
-      const r = await attempt(() => api<{ date: string; ranges: [string, string][]; kept: number }>('PUT', `/companion/dates/${date}`, { ranges, kind }));
+    saveWeekDay: async (day, ranges) => {
+      const h = get().comp.hours;
+      if (!h) return false;
+      const week = [...h.week.filter((r) => r.day !== day), ...ranges.map((r) => ({ ...r, day }))];
+      const r = await attempt(() => api<{ week: WeekRange[] }>('PUT', '/companion/hours/week', { ranges: week }));
       if (!r) return false;
-      const field = kind === 'video' ? 'datesVideo' : 'dates';
-      set((s) => ({ comp: { ...s.comp, [field]: [...s.comp[field].filter((d) => d.date !== date), { date, ranges: r.ranges }].sort((a, b) => a.date.localeCompare(b.date)) } }));
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, week: r.week } } }));
+      get().showToast('Saved. Bookings you already have stay.');
+      return true;
+    },
+    saveDay: async (date, ranges) => {
+      const r = await attempt(() => api<{ date: string; ranges: Range[]; kept: number }>('PUT', `/companion/hours/days/${date}`, { ranges }));
+      if (!r) return false;
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, days: [...s.comp.hours.days.filter((d) => d.date !== date), { date, ranges: r.ranges }].sort((a, b) => a.date.localeCompare(b.date)) } } }));
       // Bookings already made that day aren't touched.
       get().showToast(r.kept ? (r.kept === 1 ? 'Saved. Your booking that day stays.' : `Saved. Your ${r.kept} bookings that day stay.`) : 'Saved');
       return true;
     },
-    removeDate: async (date, kind = 'meet') => {
-      const ok = await attempt(() => api('DELETE', `/companion/dates/${date}${kind === 'video' ? '?kind=video' : ''}`));
+    removeDay: async (date) => {
+      const ok = await attempt(() => api('DELETE', `/companion/hours/days/${date}`));
       if (!ok) return false;
-      const field = kind === 'video' ? 'datesVideo' : 'dates';
-      set((s) => ({ comp: { ...s.comp, [field]: s.comp[field].filter((d) => d.date !== date) } }));
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, days: s.comp.hours.days.filter((d) => d.date !== date) } } }));
+      return true;
+    },
+    saveBlock: async (b) => {
+      const body = { startsAt: b.startsAt, endsAt: b.endsAt, note: b.note };
+      const r = await attempt(() => (b.id
+        ? api<{ block: Block; kept: number }>('PATCH', `/companion/hours/blocks/${b.id}`, body)
+        : api<{ block: Block; kept: number }>('POST', '/companion/hours/blocks', body)));
+      if (!r) return false;
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, blocks: [...s.comp.hours.blocks.filter((x) => x.id !== r.block.id), r.block].sort((x, y) => x.startsAt - y.startsAt) } } }));
+      get().showToast(r.kept ? (r.kept === 1 ? 'Blocked. The booking already in that time stays.' : `Blocked. The ${r.kept} bookings already in that time stay.`) : 'Blocked. Customers can’t book that time.');
+      return true;
+    },
+    removeBlock: async (id) => {
+      const ok = await attempt(() => api('DELETE', `/companion/hours/blocks/${id}`));
+      if (!ok) return false;
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, blocks: s.comp.hours.blocks.filter((x) => x.id !== id) } } }));
+      get().showToast('Unblocked. That time is open again where your hours are.');
+      return true;
+    },
+    setCompanionTz: async (tz) => {
+      const ok = await attempt(() => api('PATCH', '/companion', { timezone: tz }));
+      if (!ok) return false;
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, tz } } }));
+      void get().loadCompanionSide();
       return true;
     },
     setListing: (patch) => {
       set((s) => ({ comp: { ...s.comp, ...patch } }));
       clearTimeout(listingTimer);
       listingTimer = setTimeout(() => {
-        const { rate, acts, availVideo } = get().comp;
-        api('PATCH', '/companion', { rate, acts })
-          // Starting video dates: the server gives them a copy of the weekly hours to begin with.
-          .then(() => { if (acts.includes('call') && !availVideo.length) void get().loadCompanionSide(); })
-          .catch((e) => get().showToast(msg(e)));
+        const { rate, acts } = get().comp;
+        // Hours open for both kinds are video hours too, the moment video dates are on offer.
+        api('PATCH', '/companion', { rate, acts }).catch((e) => get().showToast(msg(e)));
       }, 600);
     },
 
@@ -827,7 +876,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
 
 export function filtered(list: Companion[], query: string, f: Filters, sort: SortKey) {
   const q = query.trim().toLowerCase();
-  const today = berlinWeekday();
+  const today = localWeekday();
   const r = list.filter((c) => {
     if (q) {
       const hay = [c.name, c.area, c.tagline, 'berlin', ...c.interests, ...c.langs.map((l) => l[0]), ...c.acts].join(' ').toLowerCase();

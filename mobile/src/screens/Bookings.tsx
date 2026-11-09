@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { AM, BTAB, eur, hours, isVideo, placeFor, ST, whenShort, type BTab } from '../data';
+import { AM, eur, hours, isVideo, placeFor, ST, tabOf, whenShort, type BTab } from '../data';
 import { untilLabel } from '../lib/dates';
 import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
 import { bookAgain, joinVideoDate, openBookingChat, openProfile, openReschedule } from '../nav';
@@ -16,10 +16,10 @@ const TABS: BTab[] = ['upcoming', 'pending', 'completed', 'cancelled'];
 // Short labels, so all four fit on small phones in English and German ("Abgeschlossen" didn't).
 const TAB_LABEL: Record<BTab, string> = { upcoming: 'Upcoming', pending: 'Pending', completed: 'Past', cancelled: 'Cancelled' };
 const EMPTY: Record<BTab, [string, string]> = {
-  upcoming: ['No upcoming plans', 'Video dates show here as soon as they’re booked, in-person dates once the companion accepts.'],
-  pending: ['No pending requests', 'Requests wait here until the companion responds.'],
+  upcoming: ['No upcoming plans', 'Bookings show here once the companion accepts your request.'],
+  pending: ['No pending requests', 'Requests wait here until the companion accepts them, at least 3 hours before the start.'],
   completed: ['Nothing completed yet', 'Past bookings and reviews will collect here.'],
-  cancelled: ['No cancellations', 'Good news: nothing has been cancelled.'],
+  cancelled: ['No cancellations', 'Declined, expired and cancelled bookings show here, always refunded unless you cancelled late.'],
 };
 
 export default function Bookings() {
@@ -29,7 +29,7 @@ export default function Bookings() {
   const btab = useStore((s) => s.btab);
   const narrow = useAppWidth() < 360;
   const bookings = useStore((s) => s.bookings);
-  const list = bookings.filter((b) => b.status === BTAB[btab]);
+  const list = bookings.filter((b) => tabOf(b.status) === btab);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.sun }}>
@@ -39,7 +39,7 @@ export default function Bookings() {
           <View style={{ paddingTop: 8, paddingHorizontal: 20 }}><H size={30} ls={-0.035}>Bookings</H></View>
           <View accessibilityRole="tablist" style={{ marginTop: 16, marginHorizontal: narrow ? 14 : 20, marginBottom: 18, padding: 4, borderRadius: 14, backgroundColor: 'rgba(17,17,17,.1)', flexDirection: 'row', gap: narrow ? 0 : 2 }}>
             {TABS.map((k) => {
-              const n = bookings.filter((b) => b.status === BTAB[k]).length;
+              const n = bookings.filter((b) => tabOf(b.status) === k).length;
               const on = btab === k;
               return (
                 <Pressable
@@ -88,8 +88,7 @@ function BookingCard({ b }: { b: Booking }) {
     void openBookingChat(b.id);
   };
   const cancel = () => openSheet('cancel', { cancel: { bid: b.id, side: 'customer', reason: null, busy: false } });
-  // Free cancellation until FREE_CANCEL_HOURS before the start (shown on confirmed bookings); a video date, confirmed
-  // the moment it's booked, also in its first minutes. The server says until when.
+  // Free cancellation until FREE_CANCEL_HOURS before the start (shown on confirmed bookings). The server says until when.
   const freeUntil = b.freeUntil ?? b.startsAt - FREE_CANCEL_HOURS * 3600;
   const freeNow = Date.now() / 1000 < freeUntil;
   const moveUntil = b.startsAt - FREE_CANCEL_HOURS * 3600;
@@ -119,7 +118,7 @@ function BookingCard({ b }: { b: Booking }) {
     ],
     // First the private “How did it go?” for the safety team, then the public review. A video date confirmed by the
     // call keeps its call open until the booked end, so you can get back in.
-    completed: video && Date.now() / 1000 < b.startsAt + b.dur * 3600
+    completed: video && Date.now() / 1000 < b.endsAt
       ? [{ label: 'Message', fn: msg }, { label: 'Rejoin video date', fn: () => joinVideoDate(b.id, b.startsAt), primary: true }]
       : !b.feedback
       ? [again, { label: 'How did it go?', fn: () => useStore.getState().openFeedback(b.id), primary: true }]
@@ -127,13 +126,16 @@ function BookingCard({ b }: { b: Booking }) {
         ? [{ ...again, primary: true }]
         : [again, { label: 'Leave a review', fn: () => openSheet('review', { review: { bid: b.id, stars: 5, text: '' } }), primary: true }],
     cancelled: [again],
+    rejected: [again],
+    expired: [again],
+    conflicted: [again],
   }[b.status];
 
   const pay = {
     held: {
       icon: 'lock', text: price + ' held by ZeitMit', bg: colors.lilac,
       sub: b.status === 'pending'
-        ? (b.replyBy ? `${c.name} replies by ${untilLabel(b.replyBy)}, or it’s refunded in full` : 'Refunded in full if ' + c.name + ' declines')
+        ? (b.expiresAt ? `${c.name} has until ${untilLabel(b.expiresAt)} to accept, or it’s refunded in full` : 'Refunded in full if ' + c.name + ' declines')
         : video ? 'Released after 10 minutes on the call together' : 'Released when ' + c.name + ' enters your meet code',
     },
     released: b.status === 'cancelled'
@@ -162,7 +164,7 @@ function BookingCard({ b }: { b: Booking }) {
         <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun, gap: 10 }}>
           <Row style={{ gap: 7 }}>
             <Icon name="calendar" size={15} color={colors.gray600} />
-            <Txt size={13} numberOfLines={1}>{b.day} · {b.time} · {hours(b.dur)}</Txt>
+            <Txt size={13} numberOfLines={1} style={{ flex: 1 }}>{b.day} · {b.time}–{b.end} · {hours(b.dur)}</Txt>
           </Row>
           <Row style={{ gap: 7 }}>
             <Icon name={video ? 'video' : 'map-pin'} size={15} color={colors.gray600} />
@@ -184,7 +186,7 @@ function BookingCard({ b }: { b: Booking }) {
 
         {b.note ? <Txt size={13} color={colors.gray600} style={{ marginTop: -4 }}>{b.note}</Txt> : null}
 
-        {open && b.resched ? <ReschedBox bookingId={b.id} resched={b.resched} mine={b.resched.by === 'customer'} other={c.name} current={`${b.day} · ${b.time}`} /> : null}
+        {open && b.resched ? <ReschedBox bookingId={b.id} resched={b.resched} mine={b.resched.by === 'customer'} other={c.name} current={`${b.day} · ${b.time}–${b.end}`} /> : null}
 
         <Row style={{ gap: 8 }}>
           {actions.map((a) => (

@@ -68,11 +68,14 @@ export function historyLine(history: CompBooking[]) {
   return gone ? `${a} · ${gone} cancelled` : a;
 }
 
-/** What happened, from the companion's side: met and earned, declined, cancelled by whom, or expired. */
+/** What happened, from the companion's side: met and earned, declined, expired, the time taken, or cancelled by whom. */
 function outcome(b: CompBooking): string {
   const first = b.who.split(' ')[0];
   const pay = eur(b.payout / 100);
   if (b.status === 'completed') return b.pay === 'released' ? `Met · ${pay} earned` : 'Met';
+  if (b.status === 'rejected') return 'You declined';
+  if (b.status === 'expired') return 'No reply in time';
+  if (b.status === 'conflicted') return 'Another booking took this time';
   // A video date someone never joined (settled after its end).
   if (b.cancelNote?.includes('didn’t join the video date')) {
     if (b.cancelledBy === 'companion') return 'You didn’t join';
@@ -87,7 +90,7 @@ function outcome(b: CompBooking): string {
 export function PastRow({ b, first }: { b: CompBooking; first: boolean }) {
   const st = ST[b.status];
   // The private "How did it go?" stays open for completed meet-ups until it's answered.
-  const ask = b.status === 'completed' && !b.feedback && b.startsAt + b.dur * 3600 <= Date.now() / 1000;
+  const ask = b.status === 'completed' && !b.feedback && b.endsAt <= Date.now() / 1000;
   return (
     <View style={{ paddingVertical: 12, gap: 10, borderTopWidth: first ? 0 : 1, borderTopColor: colors.hairline }}>
       <Row style={{ gap: 12 }}>
@@ -96,7 +99,7 @@ export function PastRow({ b, first }: { b: CompBooking; first: boolean }) {
         </Pressable>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Txt size={14} weight={600} numberOfLines={1}>{b.who} · {AM[b.act].label}</Txt>
-          <Txt size={12} color={colors.gray600}>{b.day} · {b.time} · {hours(b.dur)}</Txt>
+          <Txt size={12} color={colors.gray600}>{b.day} · {b.time}–{b.end} · {hours(b.dur)}</Txt>
           <Txt size={12} color={colors.gray600} numberOfLines={2}>{outcome(b)}</Txt>
         </View>
         <Pill label={st.l} bg={st.bg} fg={st.fg} height={24} />
