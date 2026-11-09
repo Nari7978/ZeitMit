@@ -2,7 +2,7 @@
 //   slots:<companionId>  a companion's open times, for everyone on their profile or booking them
 //   user:<userId>        "something changed for you", so open apps refresh at once instead of waiting
 import type { Env } from '../types';
-import { timesFor } from './companions';
+import { availabilityOf, legacyViews } from './hours';
 
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 
@@ -16,11 +16,12 @@ export function broadcast(env: Env, name: string, event: object, ctx?: Ctx) {
 }
 
 /**
- * Pushes a companion's current open times to everyone looking at them (after a booking, cancellation or availability
- * change): `meet` and `video` for each kind, `slots` as one list for app versions from before kinds had their own hours.
+ * Pushes a companion's current free time to everyone looking at them (after a booking is confirmed or cancelled, or the
+ * companion changes their hours): `availability` (free intervals per kind), and for older app versions `slots`
+ * (one list of half-hour start times) and `meet` / `video` (the same per kind).
  */
 export function slotsChanged(env: Env, companionId: string, ctx?: Ctx) {
-  const send = timesFor(env, companionId).then((times) => broadcast(env, `slots:${companionId}`, { type: 'slots', slots: times.meet ?? times.video ?? [], ...times }), () => undefined);
+  const send = availabilityOf(env, companionId).then((a) => (a ? broadcast(env, `slots:${companionId}`, { type: 'slots', availability: a, ...legacyViews(a) }) : undefined), () => undefined);
   if (ctx) ctx.waitUntil(send);
   return send;
 }

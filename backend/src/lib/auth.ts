@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv, AuthUser } from '../types';
+import { DEFAULT_TZ } from './time';
 import { fail, now } from './util';
 
 const enc = new TextEncoder();
@@ -40,10 +41,10 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   const token = h.startsWith('Bearer ') ? h.slice(7) : c.req.query('token') ?? '';
   const user = token ? await verifySession(token, c.env.JWT_SECRET) : null;
   if (!user) fail(401, 'Please log in again.');
-  const row = await c.env.DB.prepare('SELECT suspended FROM users WHERE id = ?').bind(user!.id).first<{ suspended: number }>();
+  const row = await c.env.DB.prepare('SELECT suspended, timezone FROM users WHERE id = ?').bind(user!.id).first<{ suspended: number; timezone: string | null }>();
   if (!row) fail(401, 'Account not found.');
   if (row!.suspended) fail(403, 'This account is suspended. Contact support.');
-  c.set('user', user!);
+  c.set('user', { ...user!, tz: row!.timezone || DEFAULT_TZ });
   await next();
 };
 

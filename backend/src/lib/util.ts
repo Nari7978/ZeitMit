@@ -1,4 +1,5 @@
 import { HTTPException } from 'hono/http-exception';
+import { DEFAULT_TZ, whenIn } from './time';
 
 export const now = () => Math.floor(Date.now() / 1000);
 
@@ -48,23 +49,8 @@ export const euros = (cents: number) => {
   return '€' + (Number.isInteger(v) ? v : v.toFixed(2));
 };
 
-/** Berlin-local formatting for notifications ("Tue, 27 Oct · 14:00"). */
-export function berlinWhen(unix: number) {
-  const d = new Date(unix * 1000);
-  const day = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', weekday: 'short', day: 'numeric', month: 'short' }).format(d);
-  const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
-  return { day, time, full: `${day} · ${time}` };
-}
-
-/** Weekday index (0=Mon), hour and minute in Berlin for a unix time. */
-export function berlinParts(unix: number) {
-  const d = new Date(unix * 1000);
-  const wd = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', weekday: 'short' }).format(d);
-  const [hour, minute] = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d).split(':').map(Number);
-  return { day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(wd), hour, minute };
-}
-
-export const windowOf = (hour: number) => (hour < 12 ? 'am' : hour < 17 ? 'pm' : 'eve');
+/** Berlin-local formatting ("Tue 27 Oct · 14:00"); for someone's own zone use whenIn from ./time. */
+export const berlinWhen = (unix: number) => whenIn(unix, DEFAULT_TZ);
 
 // Flags messages that try to move payment/contact off-platform or ask for sexual services.
 const FLAG_RE = /(paypal|revolut|cash ?app|bank ?transfer|iban|whats ?app|telegram|signal|snapchat|instagram|\+?\d[\d ()-]{7,}\d|\bsex|\bnude|\bescort|hotel room|overnight)/i;

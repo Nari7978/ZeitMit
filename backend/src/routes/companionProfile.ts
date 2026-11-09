@@ -1,16 +1,23 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_ACT, WINDOWS } from '../types';
-import { berlinDate, berlinToUnix, cleanRanges, CUSTOM_DAYS_AHEAD, GALLERY_MAX, GALLERY_MIN, HOURS_TABLES, kindParam, toCompanion, type CompanionRow } from '../lib/companions';
+import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
+import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
+import {
+  changeCoverage, cleanRanges, dayJson, normalize, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson, type Range, type WeekRange,
+} from '../lib/hours';
 import { slotsChanged } from '../lib/live';
-import { berlinWhen, CONTACT_MSG, fail, hasContactDetails, now, parseJson } from '../lib/util';
+import { addDays, clock, dateIn, DEFAULT_TZ, localToUnix, minutes, realDate, validTz, weekdayOf, whenIn } from '../lib/time';
+import { CONTACT_MSG, fail, hasContactDetails, newId, now, parseJson } from '../lib/util';
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+/** The fixed windows of older app versions, in minutes of the day. */
+const WIN_MIN: Record<string, [number, number]> = { am: [540, 720], pm: [720, 1020], eve: [1020, 1440] };
+const MASKS = { meet: 1, video: 2, both: 3 } as const;
 
 type Listing = {
   name?: string; showAge?: boolean; age?: number; about?: string; interests?: string[]; acts?: string[]; ok?: string[];
   langs?: string[]; rate?: number; days?: string[]; wins?: string[]; area?: string; gender?: 'w' | 'm' | 'nb'; pronouns?: string; lgbtq?: boolean;
-  tagline?: string; levels?: Record<string, string>; photoId?: string; idPhotoId?: string; galleryIds?: string[];
+  tagline?: string; levels?: Record<string, string>; photoId?: string; idPhotoId?: string; galleryIds?: string[]; timezone?: string;
 };
 
 const LEVELS = ['Native', 'Fluent', 'Conversational', 'Intermediate', 'Basic'];
@@ -27,6 +34,7 @@ function validate(b: Listing, full: boolean) {
   if (full || b.age !== undefined) if (!Number.isInteger(b.age) || b.age! < 18 || b.age! > 99) fail(400, 'Enter your age. You must be 18 or older.');
   if (full || b.gender !== undefined) if (!['w', 'm', 'nb'].includes(b.gender ?? '')) fail(400, 'Choose how you identify.');
   if (b.pronouns && b.pronouns.length > 20) fail(400, 'Pronouns are limited to 20 characters.');
+  if (b.timezone !== undefined && !validTz(b.timezone)) fail(400, 'Unknown time zone.');
   if (full) {
     if (!b.days?.length || !b.wins?.length) fail(400, 'Choose at least one day and time of day.');
   }
@@ -38,17 +46,68 @@ companionProfile.get('/', async (c) => {
   const id = c.get('user').id;
   const row = await c.env.DB.prepare('SELECT * FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
   if (!row) return c.json({ status: 'none' });
-  const today = berlinDate(now());
-  const weekly = (table: string) => c.env.DB.prepare(`SELECT day, win FROM ${table} WHERE companion_id = ?`).bind(id).all<{ day: number; win: string }>()
-    .then((r) => r.results.map((a) => `${WEEK[a.day]}-${a.win}`));
-  const dated = (table: string) => c.env.DB.prepare(`SELECT date, ranges FROM ${table} WHERE companion_id = ? AND date >= ? ORDER BY date`).bind(id, today).all<{ date: string; ranges: string }>()
-    .then((r) => r.results.map((d) => ({ date: d.date, ranges: parseJson<[string, string][]>(d.ranges, []) })));
-  // In-person hours (`avail`, `dates`) and video hours (`availVideo`, `datesVideo`) are kept apart.
-  const [avail, dates, availVideo, datesVideo] = await Promise.all([
-    weekly(HOURS_TABLES.meet.weekly), dated(HOURS_TABLES.meet.dates), weekly(HOURS_TABLES.video.weekly), dated(HOURS_TABLES.video.dates),
-  ]);
-  return c.json({ ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []), avail, dates, availVideo, datesVideo });
+  const tz = row.timezone || DEFAULT_TZ;
+  const { week, days, blocks } = await hoursRows(c.env, id, tz);
+  const byDay = (d: number) => week.filter((r) => r.day === d);
+  // Older app versions: fixed windows that are fully open for a kind, and the dates whose hours for a kind differ
+  // from the weekly ones, with those hours (cut at midnight: they can't show later).
+  const windows = (mask: number) => WEEK.flatMap((name, d) => Object.entries(WIN_MIN).filter(([, [a, b]]) => covers(byDay(d), a, b, mask)).map(([w]) => `${name}-${w}`));
+  const datesOf = (mask: number) => days.flatMap((x) => {
+    const own = coverage(x.ranges, mask);
+    if (JSON.stringify(own) === JSON.stringify(coverage(byDay(weekdayOf(x.date)), mask))) return [];
+    return [{ date: x.date, ranges: own.map(([a, b]) => [clock(a), b >= 1440 ? '24:00' : clock(b)]) }];
+  });
+  return c.json({
+    ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []),
+    // One calendar, in her zone: weekly hours, dates with their own hours, blocked time (unix).
+    timezone: tz, week, days, blocks,
+    avail: windows(1), dates: datesOf(1), availVideo: windows(2), datesVideo: datesOf(2),
+  });
 });
+
+/** Her stored hours, tidied: the week per day, dates from today on (in her zone), blocks that haven't ended. */
+async function hoursRows(env: AppEnv['Bindings'], id: string, tz: string) {
+  const today = dateIn(now(), tz);
+  const [w, d, bl] = await env.DB.batch([
+    env.DB.prepare('SELECT ranges FROM hours_week WHERE companion_id = ?').bind(id),
+    env.DB.prepare('SELECT date, ranges FROM hours_days WHERE companion_id = ? AND date >= ? ORDER BY date').bind(id, today),
+    env.DB.prepare('SELECT id, starts_at, ends_at, note FROM hours_blocks WHERE companion_id = ? AND ends_at > ? ORDER BY starts_at').bind(id, now()),
+  ]);
+  const weekRaw = parseWeek((w.results as { ranges: string }[])[0]?.ranges);
+  const week: WeekRange[] = [0, 1, 2, 3, 4, 5, 6].flatMap((day) => normalize(weekRaw.filter((r) => r.day === day)).map((r) => ({ day, ...r })));
+  const days = (d.results as { date: string; ranges: string }[]).map((x) => ({ date: x.date, ranges: normalize(parseDay(x.ranges)) }));
+  const blocks = (bl.results as { id: string; starts_at: number; ends_at: number; note: string }[]).map((b) => ({ id: b.id, startsAt: b.starts_at, endsAt: b.ends_at, note: b.note }));
+  return { week, days, blocks, weekRaw };
+}
+
+/** A day's open minutes for any of the kinds in `mask`, joined where they touch ([start, end], an end past 1440 is the next day). */
+function coverage(ranges: Range[], mask: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const r of [...ranges].sort((x, y) => minutes(x.from) - minutes(y.from))) {
+    if (!(MASKS[r.kind] & mask)) continue;
+    const a = minutes(r.from), b = a + span(r), last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+/** Whether a day's ranges open all of [a, b) (minutes) for the kinds in `mask`. */
+function covers(ranges: Range[], a: number, b: number, mask: number) {
+  let at = a;
+  for (const r of [...normalize(ranges)].sort((x, y) => minutes(x.from) - minutes(y.from))) {
+    const s = minutes(r.from), e = s + span(r);
+    if ((MASKS[r.kind] & mask) !== mask) continue;
+    if (s <= at && e > at) at = e;
+  }
+  return at >= b;
+}
+
+async function ownProfile(env: AppEnv['Bindings'], id: string) {
+  const row = await env.DB.prepare('SELECT timezone FROM companions WHERE user_id = ?').bind(id).first<{ timezone: string | null }>();
+  if (!row) fail(404, 'You don’t have a companion profile yet.');
+  return { tz: row!.timezone || DEFAULT_TZ };
+}
 
 /** "Become a Companion" submission. Goes to the admin review queue. */
 companionProfile.post('/apply', async (c) => {
@@ -86,12 +145,16 @@ companionProfile.post('/apply', async (c) => {
       b.photoId!, b.idPhotoId!, JSON.stringify(gallery),
     ),
     dropUnusedGallery(c.env, u.id, gallery),
-    // The days and times picked are the weekly hours, for video dates too if they offer them (changed apart later).
-    ...[HOURS_TABLES.meet.weekly, ...(b.acts!.includes(VIDEO_ACT) ? [HOURS_TABLES.video.weekly] : [])].flatMap((table) => [
-      c.env.DB.prepare(`DELETE FROM ${table} WHERE companion_id = ?`).bind(u.id),
-      ...b.days!.flatMap((d) => b.wins!.filter((w) => (WINDOWS as readonly string[]).includes(w)).map((w) =>
-        c.env.DB.prepare(`INSERT OR IGNORE INTO ${table} (companion_id, day, win) VALUES (?, ?, ?)`).bind(u.id, WEEK.indexOf(d), w))),
-    ]),
+    // The days and times of day picked are the weekly hours to start with, for both kinds of date.
+    c.env.DB.prepare(
+      'INSERT INTO hours_week (companion_id, ranges) VALUES (?, ?) ON CONFLICT (companion_id) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()',
+    ).bind(u.id, weekJson(b.days!.flatMap((d) => {
+      const day = WEEK.indexOf(d);
+      if (day < 0) return [];
+      const picked = b.wins!.filter((w) => (WINDOWS as readonly string[]).includes(w));
+      return normalize(picked.map((w) => ({ from: clock(WIN_MIN[w][0]), to: WIN_MIN[w][1] === 1440 ? '24:00' : clock(WIN_MIN[w][1]), kind: 'both' as const })))
+        .map((r) => ({ day, ...r }));
+    }))),
   ]);
   void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ status: 'pending' }, 201);
@@ -146,90 +209,211 @@ companionProfile.patch('/', async (c) => {
     `UPDATE companions SET rate = COALESCE(?, rate), activities = COALESCE(?, activities), boundaries = COALESCE(?, boundaries),
        bio = COALESCE(?, bio), tagline = COALESCE(?, tagline), interests = COALESCE(?, interests), languages = COALESCE(?, languages),
        area = COALESCE(?, area), show_age = COALESCE(?, show_age), lgbtq = COALESCE(?, lgbtq),
-       age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END WHERE user_id = ?`,
+       age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END, timezone = COALESCE(?, timezone) WHERE user_id = ?`,
   ).bind(
     b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.about?.trim() ?? null,
     b.tagline?.trim() ?? null, b.interests ? JSON.stringify(b.interests) : null, langs, b.area?.trim() ?? null,
     b.showAge === undefined ? null : b.showAge ? 1 : 0, b.lgbtq === undefined ? null : b.lgbtq ? 1 : 0,
-    b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, u.id,
+    b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, b.timezone ?? null, u.id,
   ).run();
   if (!res.meta.changes) fail(404, 'You don’t have a companion profile yet.');
-  if (b.acts) {
-    // Starting video dates without video hours: they begin as a copy of the weekly in-person hours.
-    if (b.acts.includes(VIDEO_ACT)) {
-      await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO availability_video (companion_id, day, win) SELECT companion_id, day, win FROM availability
-         WHERE companion_id = ?1 AND NOT EXISTS (SELECT 1 FROM availability_video WHERE companion_id = ?1)`,
-      ).bind(u.id).run();
-    }
-    void slotsChanged(c.env, u.id, c.executionCtx); // which kinds they offer may have changed
-  }
+  // The kinds of date offered (or the zone her hours are in) may have changed: open profiles update at once.
+  if (b.acts || b.timezone) void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });
 
-/** Weekly availability grid toggle. Body: { day: 'Mon', win: 'am', on: boolean, kind?: 'meet' | 'video' } (in person by default). */
+// ---------- Hours: one calendar for in-person and video dates ----------
+
+/** A date from today to PLAN_DAYS ahead in her zone, as YYYY-MM-DD. */
+function checkDate(date: string, tz: string) {
+  const today = dateIn(now(), tz);
+  if (!realDate(date) || date < today || date > addDays(today, PLAN_DAYS)) fail(400, `Pick a date in the next ${PLAN_DAYS} days.`);
+}
+
+/** Bookings (requests and confirmed) that start on a date in her zone: they stay when the hours change. */
+async function bookingsOn(env: AppEnv['Bindings'], id: string, date: string, tz: string) {
+  const from = localToUnix(date, 0, tz)!, to = localToUnix(addDays(date, 1), 0, tz)!;
+  const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at >= ? AND starts_at < ?").bind(id, from, to).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
+const saveWeek = (env: AppEnv['Bindings'], id: string, week: WeekRange[]) => env.DB.prepare(
+  'INSERT INTO hours_week (companion_id, ranges) VALUES (?, ?) ON CONFLICT (companion_id) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()',
+).bind(id, weekJson(week)).run();
+const saveDay = (env: AppEnv['Bindings'], id: string, date: string, ranges: Range[]) => env.DB.prepare(
+  'INSERT INTO hours_days (companion_id, date, ranges) VALUES (?, ?, ?) ON CONFLICT (companion_id, date) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()',
+).bind(id, date, dayJson(ranges)).run();
+
+/**
+ * Weekly hours, all at once. Body: { ranges: [{ day: 0–6 (Mon–Sun) or 'Mon', from: '18:00', to: '02:00', kind }] }:
+ * any times in 15-minute steps, past midnight too, each for 'both' kinds of date (the default), 'meet' or 'video'.
+ */
+companionProfile.put('/hours/week', async (c) => {
+  const u = c.get('user');
+  await ownProfile(c.env, u.id);
+  const body = await c.req.json<{ ranges?: unknown }>().catch(() => ({}) as { ranges?: unknown });
+  if (!Array.isArray(body.ranges)) fail(400, 'Send the hours as a list.');
+  const list = body.ranges as { day?: unknown }[];
+  const dayOf = (r: { day?: unknown }) => (typeof r?.day === 'number' ? r.day : WEEK.indexOf(String(r?.day)));
+  if (list.some((r) => !Number.isInteger(dayOf(r)) || dayOf(r) < 0 || dayOf(r) > 6)) fail(400, 'Each time range needs a day of the week.');
+  const week: WeekRange[] = [];
+  for (let day = 0; day < 7; day++) {
+    try {
+      week.push(...normalize(cleanRanges(list.filter((r) => dayOf(r) === day))).map((r) => ({ day, ...r })));
+    } catch (e) {
+      fail(400, `${WEEK[day]}: ${(e as Error).message}`);
+    }
+  }
+  await saveWeek(c.env, u.id, week);
+  void slotsChanged(c.env, u.id, c.executionCtx); // open profiles show the new times at once
+  return c.json({ ok: true, week });
+});
+
+/**
+ * Hours for one date (in her zone), replacing that weekday's weekly hours. Body: { ranges: [{ from, to, kind }] };
+ * an empty list is a day off. A range can run past midnight into the next day. Bookings already made that day stay
+ * (`kept` says how many).
+ */
+companionProfile.put('/hours/days/:date', async (c) => {
+  const u = c.get('user');
+  const { tz } = await ownProfile(c.env, u.id);
+  const date = c.req.param('date');
+  checkDate(date, tz);
+  const body = await c.req.json<{ ranges?: unknown }>().catch(() => ({}) as { ranges?: unknown });
+  let ranges: Range[] = [];
+  try {
+    ranges = normalize(cleanRanges(body.ranges));
+  } catch (e) {
+    fail(400, (e as Error).message);
+  }
+  await saveDay(c.env, u.id, date, ranges);
+  void slotsChanged(c.env, u.id, c.executionCtx);
+  return c.json({ ok: true, date, ranges, kept: await bookingsOn(c.env, u.id, date, tz) });
+});
+
+/** Back to the weekly hours on this date. */
+companionProfile.delete('/hours/days/:date', async (c) => {
+  const u = c.get('user');
+  await c.env.DB.prepare('DELETE FROM hours_days WHERE companion_id = ? AND date = ?').bind(u.id, c.req.param('date')).run();
+  void slotsChanged(c.env, u.id, c.executionCtx);
+  return c.json({ ok: true });
+});
+
+/** A blocked period: moments on the 15-minute grid, ending after it starts and in the future, within PLAN_DAYS. */
+function checkBlock(startsAt: unknown, endsAt: unknown) {
+  const s = Number(startsAt), e = Number(endsAt), t = now();
+  if (!Number.isInteger(s) || !Number.isInteger(e) || s % STEP_S || e % STEP_S) fail(400, 'Block time in 15-minute steps.');
+  if (e <= s) fail(400, 'The end has to be after the start.');
+  if (e <= t) fail(400, 'That time is already over.');
+  if (s > t + PLAN_DAYS * 86400 || e - s > PLAN_DAYS * 86400) fail(400, `Block time up to ${PLAN_DAYS} days ahead.`);
+  return [s, e] as const;
+}
+
+/** Requests and confirmed bookings inside a period: they stay when it's blocked (she can still answer or cancel them). */
+const bookingsIn = async (env: AppEnv['Bindings'], id: string, s: number, e: number) =>
+  (await env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at < ? AND ends_at > ?").bind(id, e, s).first<{ n: number }>())?.n ?? 0;
+
+/**
+ * Blocks time (a break, time off): closed whatever the hours say, until she removes it. Body: { startsAt, endsAt,
+ * note? } (unix). `kept`: bookings already in that time, which stay.
+ */
+companionProfile.post('/hours/blocks', async (c) => {
+  const u = c.get('user');
+  await ownProfile(c.env, u.id);
+  const body = await c.req.json<{ startsAt?: unknown; endsAt?: unknown; note?: unknown }>().catch(() => ({}) as { startsAt?: unknown; endsAt?: unknown; note?: unknown });
+  const [s, e] = checkBlock(body.startsAt, body.endsAt);
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 60) : '';
+  if (note && hasContactDetails(note)) fail(400, CONTACT_MSG);
+  const id = newId('hb');
+  await c.env.DB.prepare('INSERT INTO hours_blocks (id, companion_id, starts_at, ends_at, note) VALUES (?, ?, ?, ?, ?)').bind(id, u.id, s, e, note).run();
+  void slotsChanged(c.env, u.id, c.executionCtx);
+  return c.json({ ok: true, block: { id, startsAt: s, endsAt: e, note }, kept: await bookingsIn(c.env, u.id, s, e) }, 201);
+});
+
+/** Moves a blocked period's start or end (to extend or shorten it). Body: { startsAt?, endsAt? }. */
+companionProfile.patch('/hours/blocks/:id', async (c) => {
+  const u = c.get('user');
+  const cur = await c.env.DB.prepare('SELECT starts_at, ends_at, note FROM hours_blocks WHERE id = ? AND companion_id = ?').bind(c.req.param('id'), u.id)
+    .first<{ starts_at: number; ends_at: number; note: string }>();
+  if (!cur) fail(404, 'That blocked time was already removed.');
+  const body = await c.req.json<{ startsAt?: unknown; endsAt?: unknown }>().catch(() => ({}) as { startsAt?: unknown; endsAt?: unknown });
+  const [s, e] = checkBlock(body.startsAt ?? cur!.starts_at, body.endsAt ?? cur!.ends_at);
+  await c.env.DB.prepare('UPDATE hours_blocks SET starts_at = ?, ends_at = ? WHERE id = ? AND companion_id = ?').bind(s, e, c.req.param('id'), u.id).run();
+  void slotsChanged(c.env, u.id, c.executionCtx);
+  return c.json({ ok: true, block: { id: c.req.param('id'), startsAt: s, endsAt: e, note: cur!.note }, kept: await bookingsIn(c.env, u.id, s, e) });
+});
+
+/** Opens blocked time again (it becomes bookable if it's inside her hours). */
+companionProfile.delete('/hours/blocks/:id', async (c) => {
+  const u = c.get('user');
+  await c.env.DB.prepare('DELETE FROM hours_blocks WHERE id = ? AND companion_id = ?').bind(c.req.param('id'), u.id).run();
+  void slotsChanged(c.env, u.id, c.executionCtx);
+  return c.json({ ok: true });
+});
+
+// ---------- Older app versions' hours controls, on the same calendar ----------
+
+/** Fixed window toggle. Body: { day: 'Mon', win: 'am' | 'pm' | 'eve', on, kind?: 'meet' | 'video' } (no kind: both). */
 companionProfile.put('/availability', async (c) => {
   const u = c.get('user');
   const { day, win, on, kind } = await c.req.json<{ day: string; win: string; on: boolean; kind?: string }>();
   const d = WEEK.indexOf(day);
-  if (d < 0 || !(WINDOWS as readonly string[]).includes(win)) fail(400, 'Unknown time slot.');
-  const has = await c.env.DB.prepare('SELECT 1 FROM companions WHERE user_id = ?').bind(u.id).first();
-  if (!has) fail(404, 'You don’t have a companion profile yet.');
-  const table = HOURS_TABLES[kindParam(kind)].weekly;
-  await c.env.DB.prepare(on ? `INSERT OR IGNORE INTO ${table} (companion_id, day, win) VALUES (?, ?, ?)` : `DELETE FROM ${table} WHERE companion_id = ? AND day = ? AND win = ?`)
-    .bind(u.id, d, win).run();
-  void slotsChanged(c.env, u.id, c.executionCtx); // open profiles show the new times at once
+  if (d < 0 || !WIN_MIN[win]) fail(400, 'Unknown time slot.');
+  const { tz } = await ownProfile(c.env, u.id);
+  const { weekRaw } = await hoursRows(c.env, u.id, tz);
+  const mask = kind === 'video' ? 2 : kind === 'meet' ? 1 : 3;
+  const [a, b] = WIN_MIN[win];
+  const that = changeCoverage(weekRaw.filter((r) => r.day === d), a, b, mask, !!on).map((r) => ({ day: d, ...r }));
+  await saveWeek(c.env, u.id, [...weekRaw.filter((r) => r.day !== d), ...that]);
+  void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });
 
-/** A date in the next CUSTOM_DAYS_AHEAD days (Berlin), as YYYY-MM-DD. */
-function checkDate(date: string) {
-  const today = berlinDate(now());
-  const last = berlinDate(berlinToUnix(today, '12:00') + CUSTOM_DAYS_AHEAD * 86400);
-  const d = new Date(date + 'T12:00:00Z');
-  const real = /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date; // no 30 February
-  if (!real || date < today || date > last) {
-    fail(400, `Pick a date in the next ${CUSTOM_DAYS_AHEAD} days.`);
-  }
-}
-
-/**
- * Hours for one date, replacing that kind's weekly windows that day. Body: { ranges: [['18:00', '23:00'], …], kind? }
- * (in person by default, or 'video'); an empty list is a day off for that kind. Bookings already made that day stay
- * (`kept` says how many of that kind), so the app can mention them.
- */
+/** A date's hours for one kind (or both). Body: { ranges: [['18:00', '23:00'], …], kind?: 'meet' | 'video' }. */
 companionProfile.put('/dates/:date', async (c) => {
   const u = c.get('user');
+  const { tz } = await ownProfile(c.env, u.id);
   const date = c.req.param('date');
-  checkDate(date);
-  let ranges: [string, string][] = [];
+  checkDate(date, tz);
   const body = await c.req.json<{ ranges?: unknown; kind?: string }>().catch(() => ({}) as { ranges?: unknown; kind?: string });
-  const kind = kindParam(body.kind);
+  let given: Range[] = [];
   try {
-    ranges = cleanRanges(body.ranges);
+    given = cleanRanges(body.ranges);
   } catch (e) {
     fail(400, (e as Error).message);
   }
-  const has = await c.env.DB.prepare('SELECT 1 FROM companions WHERE user_id = ?').bind(u.id).first();
-  if (!has) fail(404, 'You don’t have a companion profile yet.');
-  const dayStart = berlinToUnix(date, '00:00');
-  const dayEnd = berlinToUnix(berlinDate(berlinToUnix(date, '12:00') + 86400), '00:00'); // 23 or 25 hours on clock-change days
-  const [, kept] = await Promise.all([
-    c.env.DB.prepare(
-      `INSERT INTO ${HOURS_TABLES[kind].dates} (companion_id, date, ranges) VALUES (?, ?, ?)
-       ON CONFLICT (companion_id, date) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()`,
-    ).bind(u.id, date, JSON.stringify(ranges)).run(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at >= ? AND starts_at < ? AND (activity = ?) = ?`)
-      .bind(u.id, dayStart, dayEnd, VIDEO_ACT, kind === 'video' ? 1 : 0).first<{ n: number }>(),
-  ]);
+  let ranges: Range[];
+  if (body.kind === 'meet' || body.kind === 'video') {
+    // That kind's hours that day become these; the other kind keeps what it had.
+    const mask = MASKS[body.kind];
+    const { weekRaw, days } = await hoursRows(c.env, u.id, tz);
+    const cur = days.find((x) => x.date === date)?.ranges ?? rangesOn({ tz, week: weekRaw, days: new Map(), blocks: [] }, date);
+    ranges = given.reduce((acc, r) => changeCoverage(acc, minutes(r.from), minutes(r.from) + span(r), mask, true), changeCoverage(cur, 0, 2880, mask, false));
+  } else ranges = normalize(given);
+  await saveDay(c.env, u.id, date, ranges);
   void slotsChanged(c.env, u.id, c.executionCtx);
-  return c.json({ ok: true, date, ranges, kind, kept: kept?.n ?? 0 });
+  return c.json({ ok: true, date, ranges: given.map((r) => [r.from, r.to]), kind: body.kind ?? 'both', kept: await bookingsOn(c.env, u.id, date, tz) });
 });
 
-/** Back to that kind's weekly windows on this date (`?kind=video` for video hours). */
+/** Back to the weekly hours on this date (`?kind=`: for that kind only). */
 companionProfile.delete('/dates/:date', async (c) => {
   const u = c.get('user');
-  await c.env.DB.prepare(`DELETE FROM ${HOURS_TABLES[kindParam(c.req.query('kind'))].dates} WHERE companion_id = ? AND date = ?`).bind(u.id, c.req.param('date')).run();
+  const kind = c.req.query('kind');
+  const date = c.req.param('date');
+  if (kind === 'meet' || kind === 'video') {
+    const { tz } = await ownProfile(c.env, u.id);
+    const { weekRaw, days } = await hoursRows(c.env, u.id, tz);
+    const own = days.find((x) => x.date === date);
+    if (own) {
+      const mask = MASKS[kind];
+      const weekly = rangesOn({ tz, week: weekRaw, days: new Map(), blocks: [] }, date);
+      let ranges = changeCoverage(own.ranges, 0, 2880, mask, false);
+      for (const r of weekly) if (MASKS[r.kind] & mask) ranges = changeCoverage(ranges, minutes(r.from), minutes(r.from) + span(r), mask, true);
+      if (JSON.stringify(normalize(ranges)) === JSON.stringify(normalize(weekly))) {
+        await c.env.DB.prepare('DELETE FROM hours_days WHERE companion_id = ? AND date = ?').bind(u.id, date).run();
+      } else await saveDay(c.env, u.id, date, ranges);
+    }
+  } else await c.env.DB.prepare('DELETE FROM hours_days WHERE companion_id = ? AND date = ?').bind(u.id, date).run();
   void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });
@@ -253,6 +437,6 @@ companionProfile.get('/customers/:id', async (c) => {
     verified: u!.id_status === 'approved', since: u!.created_at, gender: u!.gender, age: u!.age,
     languages: parseJson<string[]>(u!.languages, []), interests: parseJson<string[]>(u!.interests, []),
     meetups: met?.n ?? 0,
-    together: together.results.map((b) => ({ id: b.id, act: b.activity, startsAt: b.starts_at, dur: b.duration_h, status: b.status, ...berlinWhen(b.starts_at) })),
+    together: together.results.map((b) => ({ id: b.id, act: b.activity, startsAt: b.starts_at, dur: b.duration_h, status: b.status, ...whenIn(b.starts_at, c.get('user').tz) })),
   });
 });

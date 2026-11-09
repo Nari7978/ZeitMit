@@ -51,6 +51,14 @@ type CallRow = {
   companion_name: string; customer_name: string | null;
 };
 
+/** Why a video date that ended before it happened has no call. */
+const CLOSED: Record<string, string> = {
+  cancelled: 'This booking was cancelled.',
+  rejected: 'This request was declined.',
+  expired: 'This request expired without an answer.',
+  conflicted: 'That time was booked by someone else, so this request was refunded.',
+};
+
 /** The video date this person may join right now, or why not. */
 async function joinable(env: Env, bookingId: string, userId: string) {
   const b = await env.DB.prepare(
@@ -61,11 +69,11 @@ async function joinable(env: Env, bookingId: string, userId: string) {
   const side: Side = b!.customer_id === userId ? 'customer' : 'companion';
   const end = b!.starts_at + b!.duration_h * 3600;
   if (b!.activity !== VIDEO_ACT) fail(409, 'This booking isn’t a video date.');
-  if (b!.status === 'cancelled') fail(409, 'This booking was cancelled.');
   if (b!.status === 'pending') fail(409, side === 'customer' ? `Your video date opens once ${b!.companion_name} accepts.` : 'Accept the request first.');
+  // Only a confirmed video date has a call (`completed`: confirmed by the call itself, which carries on until the end).
+  if (b!.status !== 'confirmed' && b!.status !== 'completed') fail(409, CLOSED[b!.status] ?? 'This booking was cancelled.');
   if (now() >= end) fail(409, 'This video date has ended.');
   if (now() < b!.starts_at - JOIN_EARLY_S) fail(409, 'You can join from 10 minutes before the start.');
-  // `completed`: confirmed by the call itself, which carries on until the booked end.
   return { b: b!, side, end };
 }
 

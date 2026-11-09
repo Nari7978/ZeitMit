@@ -1,5 +1,6 @@
-// Open times stay right, live: a booking takes its time (for its whole length), every kind of cancellation gives it
-// back at once, and open profiles get each change over a WebSocket. Runs against a LOCAL API (`npm run dev`) with the
+// Open times stay right, live: a confirmed booking takes its time (for its whole length; requests don't), every
+// cancellation of one gives it back at once, and open profiles get each change over a WebSocket. Uses the half-hour
+// times and date/time/hours requests of older app versions. Runs against a LOCAL API (`npm run dev`) with the
 // demo companions seeded; edits the local database for the cases the API can't reach on its own.
 // Usage: node scripts/slots.mjs
 import { execSync } from 'node:child_process';
@@ -85,43 +86,45 @@ const refused = await new Promise((res) => {
 });
 ok(refused, 'live slots need a signed-in user');
 
-// 1) A booking takes its whole length, live for others
+// 1) A request doesn't take the time; accepting it does, for its whole length, live for others
 r = await book(A, date, time, 2);
-ok(r.status === 201, `customer A books ${time} for 2 hours`);
+ok(r.status === 201 && r.data.status === 'pending', `customer A asks for ${time} for 2 hours`);
 let id = r.data.id;
-let e = await viewer.next((x) => gone(x, date, time));
+ok(has(await slots(), date, time), 'a request doesn’t take the time: others can still ask for it');
+let e = await noahRoom.next((x) => x.type === 'changed' && x.go === 'comp:requests');
+ok(!!e, 'the companion’s open app is told about the new request at once');
+r = await call('POST', `/companion/bookings/${id}/accept`, N);
+ok(r.status === 200, 'Noah accepts it');
+e = await viewer.next((x) => gone(x, date, time));
 ok(!!e, 'someone else on the profile sees the time go at once');
 ok(fitOf(e.slots, date, early) === 1.5, `${early} now fits 1½ hours at most (it would run into the booking)`);
 r = await book(B, date, early, 2);
-ok(r.status === 409 && /only free for 1½ hours/.test(r.data.error), 'a booking that would overlap the next one is refused');
+ok(r.status === 409 && /only free for 1 hour 30 minutes/.test(r.data.error), `a booking that would overlap the confirmed one is refused (“${r.data.error}”)`);
 r = await book(B, date, time, 1);
-ok(r.status === 409 && /just taken/.test(r.data.error), 'the same time cannot be booked twice');
-e = await noahRoom.next((x) => x.type === 'changed' && x.go === 'comp:requests');
-ok(!!e, 'the companion’s open app is told about the new request at once');
+ok(r.status === 409, 'the confirmed time can’t be booked again');
 
-// 2) Each kind of cancellation gives the time back straight away
+// 2) A confirmed booking that's cancelled gives its time back at once; requests never held it
 r = await call('POST', `/bookings/${id}/cancel`, A, { reason: 'Plans changed' });
-ok(r.status === 200, 'customer cancels the request');
+ok(r.status === 200, 'customer cancels the confirmed booking (days ahead: free)');
 e = await viewer.next((x) => showsAgain(x, date, time));
 ok(!!e && fitOf(e.slots, date, early) >= 2, 'the time shows again for everyone, live (and the earlier one is long again)');
 ok(has(await slots(), date, time), 'and it is in the open times again');
 
 id = (await book(A, date, time)).data.id;
-await viewer.next((x) => gone(x, date, time));
 r = await call('POST', `/companion/bookings/${id}/decline`, N);
-ok(r.status === 200 && !!(await viewer.next((x) => showsAgain(x, date, time))), 'declined request: the time shows again');
+ok(r.status === 200 && has(await slots(), date, time), 'a declined request never held the time: still open');
 
 id = (await book(A, date, time)).data.id;
-await viewer.next((x) => gone(x, date, time));
 await call('POST', `/companion/bookings/${id}/accept`, N);
+await viewer.next((x) => gone(x, date, time));
 r = await call('POST', `/companion/bookings/${id}/cancel`, N, { reason: 'Emergency' });
 ok(r.status === 200 && !!(await viewer.next((x) => showsAgain(x, date, time))), 'companion cancels a confirmed booking: the time shows again');
 
 id = (await book(A, date, time)).data.id;
-await viewer.next((x) => gone(x, date, time));
-sql(`UPDATE bookings SET status = 'pending', created_at = unixepoch() - 90000 WHERE id = '${id}'`);
+sql(`UPDATE bookings SET created_at = unixepoch() - 90000 WHERE id = '${id}'`);
 await fetch(`${BASE}/__scheduled?cron=*/10+*+*+*+*`);
-ok(!!(await viewer.next((x) => showsAgain(x, date, time), 6000)), 'a request left unanswered expires: the time shows again');
+await new Promise((res) => setTimeout(res, 1500));
+ok(count(`SELECT id FROM bookings WHERE id = '${id}' AND status = 'expired'`) === 1 && has(await slots(), date, time), 'a request left unanswered for 24 hours expires (and never held the time)');
 
 id = (await book(A, date, time)).data.id;
 await call('POST', `/companion/bookings/${id}/accept`, N);
@@ -138,13 +141,14 @@ sql(`UPDATE bookings SET status = 'completed', pay_status = 'released', released
 ok(!has(await slots(), date, time), 'a completed meet-up still blocks its time');
 sql(`UPDATE bookings SET status = 'cancelled', pay_status = 'refunded' WHERE id = '${id}'`);
 
-// 4) Checkouts left unpaid: they hold the time for others, never for the person who left them
+// 4) Checkouts left unpaid hold nothing; the person who left one can simply try again
 id = (await book(A, date, time)).data.id;
 sql(`UPDATE bookings SET paid = 0 WHERE id = '${id}'`);
 r = await book(B, date, time);
-ok(r.status === 409, 'an open checkout holds the time for others');
+ok(r.status === 201, 'an open checkout doesn’t hold the time: someone else can ask for it too');
+await call('POST', `/bookings/${r.data.id}/cancel`, B);
 r = await book(A, date, time, 2);
-ok(r.status === 201 && r.data.id !== id, 'the same customer can try again (e.g. a different length) without being blocked by their own checkout');
+ok(r.status === 201 && r.data.id !== id, 'the same customer can try again (e.g. a different length)');
 const retry = r.data.id;
 ok(count(`SELECT id FROM bookings WHERE id = '${id}'`) === 0, 'their earlier unpaid checkout is gone');
 r = await call('POST', `/bookings/${retry}/release`, A);
@@ -152,19 +156,20 @@ ok(r.status === 200 && r.data.paid === true && r.data.released === false, 'relea
 await call('POST', `/bookings/${retry}/cancel`, A);
 id = (await book(A, date, time)).data.id;
 sql(`UPDATE bookings SET paid = 0 WHERE id = '${id}'`);
-viewer.clear();
 r = await call('POST', `/bookings/${id}/release`, B);
 ok(r.status === 404, 'only the customer can release their checkout');
 r = await call('POST', `/bookings/${id}/release`, A);
-ok(r.status === 200 && r.data.released === true, 'leaving checkout releases the time');
-ok(!!(await viewer.next((x) => showsAgain(x, date, time))), 'and others see it free again at once');
+ok(r.status === 200 && r.data.released === true, 'leaving checkout drops the unfinished request');
 r = await call('POST', `/bookings/${id}/release`, A);
 ok(r.status === 200 && r.data.released === false, 'releasing twice is harmless');
 
-// 5) Two people tapping Pay for the same time at the same moment: exactly one gets it
+// 5) Two people asking for the same time at the same moment: both are requests; accepting decides
 const both = await Promise.all([book(A, date, time), book(B, date, time)]);
-ok(both.filter((x) => x.status === 201).length === 1 && both.filter((x) => x.status === 409).length === 1, `same time at the same moment: one booking, one “just taken” (${both.map((x) => x.status)})`);
-for (const [x, t] of [[both[0], A], [both[1], B]]) if (x.status === 201) await call('POST', `/bookings/${x.data.id}/cancel`, t);
+ok(both.every((x) => x.status === 201), `same time at the same moment: two requests (${both.map((x) => x.status)})`);
+const answers = await Promise.all(both.map((x) => call('POST', `/companion/bookings/${x.data.id}/accept`, N)));
+ok(answers.filter((x) => x.status === 200).length === 1, `accepting both at once: exactly one is confirmed (${answers.map((x) => x.status)})`);
+for (const [x, t] of [[both[0], A], [both[1], B]]) await call('POST', `/bookings/${x.data.id}/cancel`, t);
+await viewer.next((x) => showsAgain(x, date, time));
 
 // 6) Availability changes reach open profiles too
 viewer.clear();
@@ -185,10 +190,14 @@ const priced = (dur) => Math.round(rate * dur * 100 * 1.1);
 list = await slots();
 const long = list.slice().reverse().flatMap((d) => d.times.map((t, i) => ({ date: d.date, time: t, fit: d.fit[i] }))).find((x) => x.fit >= 6);
 if (!long) throw new Error('No time with room for 6 hours.');
-for (const bad of [0.5, 1.25, 8.5, 9, '2', -1]) ok((await book(A, long.date, long.time, bad)).status === 400, `a length of ${JSON.stringify(bad)} hours is refused`);
+for (const bad of [0.5, 0.7, 8.5, 9, -1]) ok((await book(A, long.date, long.time, bad)).status === 400, `a length of ${JSON.stringify(bad)} hours is refused`);
+r = await book(A, long.date, long.time, 1.25);
+ok(r.status === 201 && r.data.minutes === 75 && r.data.total === priced(1.25), `1¼ hours (any 15-minute step) is fine: €${r.data.total / 100}`);
+await call('POST', `/bookings/${r.data.id}/cancel`, A);
 r = await book(A, long.date, long.time, 6);
 ok(r.status === 201 && r.data.dur === 6 && r.data.total === priced(6), `6 hours at ${long.time} (${long.date}): €${r.data.total / 100} = 6 × €${rate} + 10%`);
 const six = r.data.id;
+await call('POST', `/companion/bookings/${six}/accept`, N);
 const after = (await slots()).find((d) => d.date === long.date);
 ok(!after.times.some((t) => { const m = Number(t.slice(0, 2)) * 60 + Number(t.slice(3)); const s0 = Number(long.time.slice(0, 2)) * 60 + Number(long.time.slice(3)); return m >= s0 && m < s0 + 360; }), 'it blocks all 6 hours');
 await call('POST', `/bookings/${six}/cancel`, A);
@@ -196,9 +205,10 @@ r = await book(A, long.date, long.time, 2.5, '');
 ok(r.status === 201 && r.data.dur === 2.5 && r.data.total === priced(2.5), `2½ hours: €${r.data.total / 100} (2.5 × €${rate} + 10%)`);
 const mine = (await call('GET', '/bookings', A)).data.find((x) => x.id === r.data.id);
 ok(mine?.place === '' && mine.dur === 2.5, 'no meeting place is fine: they can agree on it in the chat');
-ok(fitOf(await slots(), long.date, long.time) === undefined, 'the half-hour booking holds its time');
 const req = (await call('GET', '/companion/bookings', N)).data.requests.find((x) => x.id === r.data.id);
 ok(req?.dur === 2.5 && req.payout === rate * 250, `the companion sees 2½ hours and earns €${req?.payout / 100}`);
+await call('POST', `/companion/bookings/${r.data.id}/accept`, N);
+ok(fitOf(await slots(), long.date, long.time) === undefined, 'once accepted, the 2½-hour booking holds its time');
 await call('POST', `/bookings/${r.data.id}/cancel`, A);
 r = await book(A, long.date, long.time, 1, '   ');
 ok(r.status === 201 && (await call('GET', '/bookings', A)).data.find((x) => x.id === r.data.id)?.place === '', 'a blank place is saved as none');
@@ -208,7 +218,7 @@ ok(r.status === 400, 'contact details in the place are still refused');
 const late = list.flatMap((d) => d.times.map((t, i) => ({ date: d.date, time: t, fit: d.fit[i] }))).find((x) => x.time === '20:00');
 if (late) {
   ok(late.fit <= 4, `from 20:00 at most 4 hours (until midnight): ${late.fit}`);
-  ok((await book(A, late.date, '20:00', 4.5)).status === 409, 'a booking past midnight is refused');
+  ok((await book(A, late.date, '20:00', 4.5)).status === 409, 'a booking past the end of his hours (midnight here) is refused');
 }
 
 viewer.ws.close();

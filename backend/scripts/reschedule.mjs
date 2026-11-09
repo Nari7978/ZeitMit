@@ -1,5 +1,6 @@
 // Moving bookings and the customer profile companions see. Runs against a LOCAL API (`npm run dev`) with the demo
-// companions seeded; edits the local database for the time-dependent cases.
+// companions seeded; edits the local database for the time-dependent cases. Requests and suggestions don't hold time:
+// only a confirmed booking does, so a time is taken once Noah accepts.
 // Usage: node scripts/reschedule.mjs
 import { execSync } from 'node:child_process';
 
@@ -38,6 +39,7 @@ const book = (token, [date, time], dur = 1) => call('POST', '/bookings', token, 
 const mine = async (id) => (await call('GET', '/bookings', A)).data.find((x) => x.id === id);
 const theirs = async (id) => { const r = (await call('GET', '/companion/bookings', N)).data; return [...r.requests, ...r.upcoming].find((x) => x.id === id); };
 const openAt = async (date, time) => !!(await call('GET', `/companions/${CID}/slots`)).data.find((d) => d.date === date)?.times.includes(time);
+const accept = (bid) => call('POST', `/companion/bookings/${bid}/accept`, N);
 
 // Free 1-hour times far enough ahead (> 24 h), each with room to spare.
 // Two hours apart, so a 1-hour booking at one never touches the next (starts are every half hour).
@@ -78,13 +80,18 @@ ok(r.data.slots.find((d) => d.date === t1[0])?.times.includes(t1[1]), 'its own c
 ok((await call('GET', `/bookings/${id}/reschedule`, B)).status === 404, 'nobody else can open it');
 ok((await call('POST', `/bookings/${id}/reschedule`, A, { date: t1[0], time: t1[1] })).status === 400, 'moving to the same time is refused');
 const other = (await book(B, t7)).data;
-ok((await call('POST', `/bookings/${id}/reschedule`, A, { date: t7[0], time: t7[1] })).status === 409, 'moving onto someone else’s booking is refused');
+ok((await accept(other.id)).status === 200, 'Noah accepts Ben’s booking');
+ok((await call('POST', `/bookings/${id}/reschedule`, A, { date: t7[0], time: t7[1] })).status === 409, 'moving onto someone else’s confirmed booking is refused');
 await call('POST', `/bookings/${other.id}/cancel`, B);
+ok(await openAt(...t7), 'once Ben cancels, that time is open again');
+ok((await call('POST', `/bookings/${id}/reschedule`, A, { startsAt: (await mine(id)).startsAt + 600 })).status === 400, 'a start off the 15-minute steps is refused');
+ok((await call('POST', `/bookings/${id}/reschedule`, A, { startsAt: Math.ceil((Date.now() / 1000 + 3600) / 900) * 900 })).status === 400, 'a start under 3½ hours away is refused');
 r = await call('POST', `/bookings/${id}/reschedule`, A, { date: t2[0], time: t2[1] });
 ok(r.status === 200 && r.data.moved === true, `request moved straight away to ${t2.join(' ')}`);
 let x = await mine(id);
 ok(x.status === 'pending' && x.time === t2[1] && !x.resched && x.reschedLeft === 2, 'booking shows the new time');
-ok(await openAt(...t1) && !(await openAt(...t2)), 'old time is free again, the new one is taken');
+ok(x.expiresAt <= x.startsAt - 3 * 3600 && x.expiresAt <= Date.now() / 1000 + 86400, 'Noah still has to accept within 24 hours and 3 hours before the new start');
+ok(await openAt(...t1) && await openAt(...t2), 'a request holds no time: both stay open until Noah accepts');
 ok(await notified(N, 'Mira moved their request'), 'Noah is told');
 
 // 3) Noah suggests another time instead (counter-offer): accepting it also confirms the request
@@ -94,26 +101,33 @@ x = await mine(id);
 ok(x.status === 'pending' && x.time === t2[1] && x.resched?.by === 'companion' && x.resched.time === t3[1], 'customer sees the suggestion, booking keeps its time meanwhile');
 ok((await theirs(id))?.resched?.by === 'companion', 'companion sees it too');
 ok(await notified(A, 'Noah suggests another time'), 'customer is told');
-ok((await book(B, t3)).status === 409, 'the suggested time is held for others');
+const rival = (await book(B, t3)).data;
+ok(rival?.id && rival.status === 'pending', 'a suggestion holds no time either: Ben can still request it');
 ok((await call('POST', `/bookings/${id}/reschedule`, A, { date: t4[0], time: t4[1] })).status === 409, 'customer must answer the suggestion before moving it');
 ok((await call('POST', `/bookings/${id}/reschedule/accept`, N)).status === 409, 'the one who suggested can’t accept it');
 r = await call('POST', `/bookings/${id}/reschedule/accept`, A);
 ok(r.status === 200 && r.data.confirmed === true, 'customer accepts');
 x = await mine(id);
 ok(x.status === 'confirmed' && x.time === t3[1] && !x.resched && /^\d{4}$/.test(x.otp), 'booking is confirmed at the new time (with a meet code)');
-ok(await openAt(...t2) && !(await openAt(...t3)), 'the old time is free again');
+ok(await openAt(...t2) && !(await openAt(...t3)), 'the new time is taken now, the old one stays open');
+x = (await call('GET', '/bookings', B, undefined)).data.find((y) => y.id === rival.id);
+ok(x?.status === 'cancelled', 'Ben’s request for that time ends (older apps see it as cancelled)');
+r = await fetch(`${BASE}/bookings`, { headers: { Authorization: `Bearer ${B}`, 'X-ZeitMit-Api': '3' } }).then((res) => res.json());
+x = r.find((y) => y.id === rival.id);
+ok(x?.status === 'conflicted' && x.pay === 'refunded', 'it shows as conflicted in the new app, refunded in full');
+ok(await notified(B, 'Noah isn’t free then any more'), 'Ben is told');
 ok(await notified(N, 'Mira accepted the new time'), 'Noah is told');
 
 // 4) Confirmed: the customer suggests, changes their mind, Noah declines
 r = await call('POST', `/bookings/${id}/reschedule`, A, { date: t4[0], time: t4[1] });
 ok(r.status === 200 && r.data.moved === false && (await mine(id)).resched?.by === 'customer', 'customer suggests a new time for the confirmed booking');
 r = await call('POST', `/bookings/${id}/reschedule`, A, { date: t5[0], time: t5[1] });
-ok(r.status === 200 && (await mine(id)).resched?.time === t5[1] && (await openAt(...t4)), 'they can replace their own suggestion (the first one is free again)');
+ok(r.status === 200 && (await mine(id)).resched?.time === t5[1], 'they can replace their own suggestion');
 ok((await call('POST', `/bookings/${id}/reschedule/accept`, A)).status === 409, 'and can’t accept it themselves');
 r = await call('DELETE', `/bookings/${id}/reschedule`, N);
 ok(r.status === 200 && r.data.withdrawn === false, 'Noah declines');
 x = await mine(id);
-ok(!x.resched && x.time === t3[1] && await openAt(...t5), 'booking keeps its time, the suggested time is free again');
+ok(!x.resched && x.time === t3[1] && !(await openAt(...t3)), 'booking keeps its time, which stays taken');
 ok(await notified(A, 'Noah can’t make the new time'), 'customer is told');
 
 // 5) Noah suggests, then withdraws
@@ -123,8 +137,9 @@ ok(r.status === 200 && r.data.withdrawn === true && !(await mine(id)).resched, '
 ok(await notified(A, 'Noah kept the original time'), 'customer is told');
 
 // 6) Limits
-sql(`UPDATE bookings SET resched_at = unixepoch() + 1800, resched_by = 'companion' WHERE id = '${id}'`);
-ok((await call('POST', `/bookings/${id}/reschedule/accept`, A)).status === 409, 'a suggestion less than an hour away can’t be accepted');
+sql(`UPDATE bookings SET resched_at = unixepoch() + 2 * 3600 + 1800, resched_by = 'companion' WHERE id = '${id}'`);
+r = await call('POST', `/bookings/${id}/reschedule/accept`, A);
+ok(r.status === 409 && /3 hours/.test(r.data.error), 'a suggestion less than 3 hours away can’t be accepted');
 await fetch(`${BASE}/__scheduled?cron=*/10+*+*+*+*`);
 ok(!(await mine(id)).resched, 'and the cron drops it');
 const real = x.startsAt;
@@ -140,11 +155,11 @@ sql(`UPDATE bookings SET resched_count = 1 WHERE id = '${id}'`);
 
 // 7) Cancelling drops an open suggestion and frees both times
 await call('POST', `/bookings/${id}/reschedule`, N, { date: t6[0], time: t6[1] });
-ok(!(await openAt(...t6)), 'suggested time held');
+ok(await openAt(...t6) && !(await openAt(...t3)), 'a suggestion leaves its time open; the booked time stays taken');
 r = await call('POST', `/bookings/${id}/cancel`, A, { reason: 'Plans changed' });
 x = await mine(id);
 ok(r.status === 200 && x.status === 'cancelled' && !x.resched, 'cancelling clears the suggestion');
-ok(await openAt(...t6) && await openAt(...t3), 'both the booked and the suggested time are free again');
+ok(await openAt(...t6) && await openAt(...t3), 'the booked time is free again');
 ok((await call('POST', `/bookings/${id}/reschedule`, A, { date: t4[0], time: t4[1] })).status === 409, 'a cancelled booking can’t be moved');
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll reschedule checks passed');

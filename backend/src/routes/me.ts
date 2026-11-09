@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { LANGUAGES } from '../types';
 import { CONTACT_MSG, euros, fail, hasContactDetails, parseJson } from '../lib/util';
+import { validTz } from '../lib/time';
 import { owesPayout } from './payouts';
 
 export type Prefs = {
@@ -18,7 +19,7 @@ export const me = new Hono<AppEnv>();
 me.get('/', async (c) => {
   const u = c.get('user');
   const row = await c.env.DB.prepare(
-    `SELECT u.id, u.email, u.name, u.bio, u.role, u.age_confirmed, u.created_at, u.avatar_id, u.credit, u.prefs, u.language, u.ui_lang AS uiLang, u.id_status, u.id_note,
+    `SELECT u.id, u.email, u.name, u.bio, u.role, u.age_confirmed, u.created_at, u.avatar_id, u.credit, u.prefs, u.language, u.ui_lang AS uiLang, u.timezone, u.id_status, u.id_note,
             u.gender, u.age, u.languages, u.interests, c.status AS companion_status
      FROM users u LEFT JOIN companions c ON c.user_id = u.id WHERE u.id = ?`,
   ).bind(u.id).first<Record<string, unknown> & { avatar_id: string | null; prefs: string; companion_status: string | null; languages: string; interests: string }>();
@@ -64,11 +65,12 @@ me.post('/verification', async (c) => {
 me.patch('/', async (c) => {
   const u = c.get('user');
   const b = await c.req.json<{
-    name?: string; bio?: string; ageConfirmed?: boolean; pushToken?: string | null; prefs?: Partial<Prefs>; language?: 'auto' | 'en' | 'de'; uiLanguage?: 'en' | 'de';
+    name?: string; bio?: string; ageConfirmed?: boolean; pushToken?: string | null; prefs?: Partial<Prefs>; language?: 'auto' | 'en' | 'de'; uiLanguage?: 'en' | 'de'; timezone?: string;
     gender?: 'w' | 'm' | 'nb' | null; age?: number | null; languages?: string[]; interests?: string[];
   }>();
   if (b.language !== undefined && !['auto', 'en', 'de'].includes(b.language)) fail(400, 'Unknown language.');
   if (b.uiLanguage !== undefined && !['en', 'de'].includes(b.uiLanguage)) fail(400, 'Unknown language.');
+  if (b.timezone !== undefined && !validTz(b.timezone)) fail(400, 'Unknown time zone.');
   if (b.prefs) {
     const cur = await c.env.DB.prepare('SELECT prefs FROM users WHERE id = ?').bind(u.id).first<{ prefs: string }>();
     const merged = { ...DEFAULT_PREFS, ...parseJson<Partial<Prefs>>(cur?.prefs, {}) } as Record<string, unknown>;
@@ -82,6 +84,8 @@ me.patch('/', async (c) => {
   if (b.language) await c.env.DB.prepare('UPDATE users SET language = ? WHERE id = ?').bind(b.language, u.id).run();
   // The language the app shows (for emails when the setting follows the phone).
   if (b.uiLanguage) await c.env.DB.prepare('UPDATE users SET ui_lang = ? WHERE id = ?').bind(b.uiLanguage, u.id).run();
+  // The phone's time zone: times in this person's notifications and emails are shown in it.
+  if (b.timezone) await c.env.DB.prepare('UPDATE users SET timezone = ? WHERE id = ?').bind(b.timezone, u.id).run();
   if (b.name !== undefined && !b.name.trim()) fail(400, 'Name can’t be empty.');
   if (b.name && b.name.length > 60) fail(400, 'Name is too long.');
   if (b.bio && b.bio.length > 400) fail(400, 'About is too long.');

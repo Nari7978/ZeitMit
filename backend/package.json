@@ -9,7 +9,8 @@
     "db:migrate:local": "wrangler d1 migrations apply zeitmit --local",
     "db:migrate:remote": "wrangler d1 migrations apply zeitmit --remote",
     "seed:gen": "node scripts/gen-seed.mjs",
-    "seed:demo:local": "wrangler d1 execute DB --local --file migrations/0002_seed_demo.sql"
+    "seed:demo:local": "wrangler d1 execute DB --local --file scripts/demo-seed.sql",
+    "test:engine": "esbuild scripts/engine-check.ts --bundle --platform=node --format=esm --outfile=.wrangler/engine-check.mjs --log-level=warning && node .wrangler/engine-check.mjs"
   },
   "dependencies": {
     "hono": "^4.13.14"

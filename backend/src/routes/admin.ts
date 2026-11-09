@@ -91,13 +91,67 @@ admin.post('/verifications/:id/:decision', async (c) => {
   return c.json({ ok: true });
 });
 
+const BOOKING_STATUSES = ['pending', 'confirmed', 'rejected', 'expired', 'conflicted', 'cancelled', 'completed'];
+
+/**
+ * Booking records, newest first: start, end, kind of date, status, acceptance expiry, when it was decided, the booking
+ * that took a conflicted one's time, and the payment. `?status=` filters (one of the seven), `?q=` finds a booking
+ * id, a customer's email or a companion's name. `counts`: bookings per status.
+ */
 admin.get('/bookings', async (c) => {
-  const r = await c.env.DB.prepare(
-    `SELECT b.id, b.status, b.pay_status, b.activity, b.starts_at, b.total, b.cancel_note, b.cancelled_by, b.cancel_reason, u.email AS customer, cp.display_name AS companion
-     FROM bookings b JOIN users u ON u.id = b.customer_id JOIN companions cp ON cp.user_id = b.companion_id
-     ORDER BY b.created_at DESC LIMIT 200`,
-  ).all();
-  return c.json(r.results);
+  const status = c.req.query('status') ?? '';
+  const q = (c.req.query('q') ?? '').trim().toLowerCase();
+  const where: string[] = ['b.paid = 1'];
+  const args: unknown[] = [];
+  if (BOOKING_STATUSES.includes(status)) { where.push('b.status = ?'); args.push(status); }
+  if (q) { where.push('(lower(b.id) = ? OR lower(u.email) LIKE ? OR lower(cp.display_name) LIKE ?)'); args.push(q, `%${q}%`, `%${q}%`); }
+  const [r, counts] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT b.id, b.status, b.kind, b.pay_status, b.activity, b.starts_at, b.ends_at, b.created_at, b.expires_at, b.decided_at, b.conflict_with,
+         b.total, b.cancel_note, b.cancelled_by, b.cancel_reason, u.email AS customer, cp.display_name AS companion, cp.timezone AS companion_tz
+       FROM bookings b JOIN users u ON u.id = b.customer_id JOIN companions cp ON cp.user_id = b.companion_id
+       WHERE ${where.join(' AND ')} ORDER BY b.created_at DESC LIMIT 200`,
+    ).bind(...args).all(),
+    c.env.DB.prepare('SELECT status, COUNT(*) AS n FROM bookings WHERE paid = 1 GROUP BY status').all<{ status: string; n: number }>(),
+  ]);
+  return c.json({ bookings: r.results, counts: Object.fromEntries(counts.results.map((x) => [x.status, x.n])) });
+});
+
+/**
+ * Conflict checks: confirmed bookings of one companion whose times overlap (there should never be any: accepting is
+ * atomic), requests that lost their time to another booking (latest 50, with the one that won), and requests past
+ * their expiry the cron hasn't closed yet.
+ */
+admin.get('/bookings/conflicts', async (c) => {
+  const [overlaps, conflicted, stale] = await c.env.DB.batch([
+    c.env.DB.prepare(
+      `SELECT a.id AS a, b.id AS b, a.companion_id, cp.display_name AS companion, a.starts_at AS a_start, a.ends_at AS a_end, b.starts_at AS b_start, b.ends_at AS b_end,
+         a.kind AS a_kind, b.kind AS b_kind
+       FROM bookings a JOIN bookings b ON b.companion_id = a.companion_id AND a.id < b.id
+         AND a.status IN ('confirmed', 'completed') AND b.status IN ('confirmed', 'completed') AND a.starts_at < b.ends_at AND a.ends_at > b.starts_at
+       JOIN companions cp ON cp.user_id = a.companion_id LIMIT 100`,
+    ),
+    c.env.DB.prepare(
+      `SELECT x.id, x.starts_at, x.ends_at, x.kind, x.decided_at, x.conflict_with, w.starts_at AS won_start, w.ends_at AS won_end, w.kind AS won_kind, w.status AS won_status,
+         cp.display_name AS companion, u.email AS customer
+       FROM bookings x LEFT JOIN bookings w ON w.id = x.conflict_with JOIN companions cp ON cp.user_id = x.companion_id JOIN users u ON u.id = x.customer_id
+       WHERE x.status = 'conflicted' ORDER BY x.decided_at DESC LIMIT 50`,
+    ),
+    c.env.DB.prepare("SELECT id, starts_at, expires_at FROM bookings WHERE status = 'pending' AND paid = 1 AND expires_at < unixepoch() LIMIT 50"),
+  ]);
+  return c.json({ overlaps: overlaps.results, conflicted: conflicted.results, stale: stale.results });
+});
+
+/** Support cancels a request or a confirmed booking with a full refund (both sides are told). */
+admin.post('/bookings/:id/cancel', async (c) => {
+  const b = await c.env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(c.req.param('id')).first<Parameters<typeof refundBooking>[1]>();
+  if (!b) fail(404, 'Booking not found.');
+  if (b!.status !== 'pending' && b!.status !== 'confirmed') fail(409, `This booking is ${b!.status} already.`);
+  if (!(await refundBooking(c.env, b!, (amt) => `Cancelled by ZeitMit support · ${amt} refunded in full`, false, 'support'))) fail(409, 'This booking was just updated. Reload and try again.');
+  const when = `${ACT_LABEL[b!.activity]} on ${berlinWhen(b!.starts_at).day}`;
+  await notify(c.env, b!.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Booking cancelled by ZeitMit', body: `${when} was cancelled by our support team. ${euros(b!.total)} is refunded in full.`, go: 'tab:cancelled' }, c.executionCtx);
+  await notify(c.env, b!.companion_id, { icon: 'calendar-x', tone: 'neutral', title: 'Booking cancelled by ZeitMit', body: `${when} was cancelled by our support team.`, go: 'comp:calendar' }, c.executionCtx);
+  return c.json({ ok: true });
 });
 
 /**
@@ -259,8 +313,9 @@ admin.delete('/companions/:id', async (c) => {
   const refunded = await refundOpen(c.env, 'companion_id', id);
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE companions SET status = 'rejected', id_verified = 0, id_photo_id = NULL WHERE user_id = ?").bind(id),
-    c.env.DB.prepare('DELETE FROM availability WHERE companion_id = ?').bind(id),
-    c.env.DB.prepare('DELETE FROM availability_dates WHERE companion_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM hours_week WHERE companion_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM hours_days WHERE companion_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM hours_blocks WHERE companion_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM saved WHERE companion_id = ?').bind(id),
     c.env.DB.prepare('DELETE FROM photos WHERE id = ?').bind(cp!.id_photo_id ?? ''),
   ]);

@@ -83,20 +83,29 @@ ok(r.status === 200 && (await intent(d.id)).status === 'canceled', 'companion ca
 r = await call('POST', `/admin/bookings/${b.id}/refund`, A);
 ok(r.status === 200 && (await intent(b.id)).status === 'refunded', 'support refunds a completed booking');
 
-// 6) Leaving checkout gives the time back at once, and that checkout can't be paid afterwards
+// 6) An open checkout holds no time; leaving it closes the checkout page, so it can't be paid afterwards
 const other = await login(`other+${Date.now()}@example.com`);
 await call('PATCH', '/me', other.token, { name: 'Other', ageConfirmed: true });
 sql(`UPDATE users SET id_status = 'approved' WHERE id = '${other.user.id}'`);
 const at = (token, dur = 1) => call('POST', '/bookings', token, { companionId: 'demo_lena', act: 'coffee', date: lena[0][0], time: lena[0][1], dur, place: 'Café' });
 const e = (await at(T)).data;
 r = await at(other.token);
-ok(r.status === 409, 'an open checkout holds the time for others');
+ok(r.status === 201 && !!r.data.checkoutUrl, 'an open checkout holds no time: someone else can start one for the same time');
+const o = r.data;
 r = await call('POST', `/bookings/${e.id}/release`, T);
-ok(r.status === 200 && r.data.released === true, 'leaving checkout releases the time at once');
+ok(r.status === 200 && r.data.released === true, 'leaving checkout drops it at once');
 ok(!!(await pay(e.checkoutUrl)).error, 'that checkout page is closed, so it can’t be paid later');
-r = await at(other.token);
-ok(r.status === 201, 'someone else can book the time straight away');
-await call('POST', `/bookings/${r.data.id}/release`, other.token);
+
+// 6b) Paid after someone else was confirmed for that time: the request can't happen, so the card hold is released
+const p2 = (await at(T)).data;
+await pay(o.checkoutUrl);
+await call('POST', `/bookings/${o.id}/confirm-payment`, other.token);
+ok((await call('POST', `/companion/bookings/${o.id}/accept`, L)).status === 200, 'Lena accepts the other request');
+await pay(p2.checkoutUrl);
+r = await call('POST', `/bookings/${p2.id}/confirm-payment`, T);
+const lost = (await fetch(`${BASE}/bookings`, { headers: { Authorization: `Bearer ${T}`, 'X-ZeitMit-Api': '3' } }).then((x) => x.json())).find((x) => x.id === p2.id);
+ok(lost?.status === 'conflicted' && lost.pay === 'refunded' && (await intent(p2.id)).status === 'canceled', `paid for a time just taken: conflicted, card hold released (${lost?.status}, ${(await intent(p2.id))?.status})`);
+await call('POST', `/bookings/${o.id}/cancel`, other.token);
 
 // 7) Paid just before closing the page: release keeps the booking and sends the request
 const f = (await at(T)).data;

@@ -50,7 +50,12 @@ const noahEmail = 'noah@demo.zeitmit.app';
 const left = (await call('GET', '/companion/bookings', N.token)).data;
 for (const x of [...left.requests, ...left.upcoming]) await call('POST', `/companion/bookings/${x.id}/cancel`, N.token, { reason: 'Something else' });
 const rate = (await call('GET', `/companions/${CID}`)).data.rate;
-const times = (await call('GET', `/companions/${CID}/slots`)).data.slice(2).flatMap((d) => d.times.filter((t, i) => d.fit[i] >= 3).map((t) => [d.date, t])).reverse();
+// Times with 3 hours free, at least 3 hours apart: one customer can't have two requests for overlapping times.
+const times = [];
+for (const [d, t] of (await call('GET', `/companions/${CID}/slots`)).data.slice(2).flatMap((x) => x.times.filter((_, i) => x.fit[i] >= 3).map((tm) => [x.date, tm])).reverse()) {
+  const m = +t.slice(0, 2) * 60 + +t.slice(3);
+  if (!times.some(([d2, t2]) => d2 === d && Math.abs(+t2.slice(0, 2) * 60 + +t2.slice(3) - m) < 180)) times.push([d, t]);
+}
 if (times.length < 6) throw new Error('Not enough open times: seed the demo companions again.');
 const book = (token, [date, time], dur, place = '') => call('POST', '/bookings', token, { companionId: CID, act: 'movies', date, time, dur, place });
 const eur = (cents) => '€' + (cents / 100).toFixed(2);
