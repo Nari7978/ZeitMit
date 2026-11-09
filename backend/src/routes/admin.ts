@@ -118,9 +118,9 @@ admin.get('/bookings', async (c) => {
 });
 
 /**
- * Conflict checks: confirmed bookings of one companion whose times overlap (there should never be any: accepting is
- * atomic), requests that lost their time to another booking (latest 50, with the one that won), and requests past
- * their expiry the cron hasn't closed yet.
+ * Conflict checks: confirmed bookings of one companion that haven't ended yet and whose times overlap (there should
+ * never be any: accepting is atomic), requests that lost their time to another booking (latest 50, with the one that
+ * won), and requests past their expiry the cron hasn't closed yet.
  */
 admin.get('/bookings/conflicts', async (c) => {
   const [overlaps, conflicted, stale] = await c.env.DB.batch([
@@ -129,6 +129,7 @@ admin.get('/bookings/conflicts', async (c) => {
          a.kind AS a_kind, b.kind AS b_kind
        FROM bookings a JOIN bookings b ON b.companion_id = a.companion_id AND a.id < b.id
          AND a.status IN ('confirmed', 'completed') AND b.status IN ('confirmed', 'completed') AND a.starts_at < b.ends_at AND a.ends_at > b.starts_at
+         AND a.ends_at > unixepoch() AND b.ends_at > unixepoch()
        JOIN companions cp ON cp.user_id = a.companion_id LIMIT 100`,
     ),
     c.env.DB.prepare(

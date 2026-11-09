@@ -276,14 +276,40 @@ function Companions({ say, refresh }: Ctx) {
 }
 
 type BookingRow = {
-  id: string; status: string; pay_status: string; activity: string; starts_at: number; total: number; customer: string; companion: string;
+  id: string; status: string; kind: 'meet' | 'video'; pay_status: string; activity: string; starts_at: number; ends_at: number; created_at: number;
+  expires_at: number; decided_at: number | null; conflict_with: string | null; total: number; customer: string; companion: string; companion_tz: string | null;
   cancel_note: string | null; cancelled_by: string | null; cancel_reason: string | null;
+};
+type Conflicts = {
+  /** Confirmed bookings of one companion that overlap: there should never be any (accepting is one atomic statement). */
+  overlaps: { a: string; b: string; companion: string; a_start: number; a_end: number; b_start: number; b_end: number; a_kind: string; b_kind: string }[];
+  /** Requests that lost their time to another booking, with the one that won. */
+  conflicted: { id: string; starts_at: number; ends_at: number; kind: string; decided_at: number | null; conflict_with: string | null; won_start: number | null; won_end: number | null; won_kind: string | null; won_status: string | null; companion: string; customer: string }[];
+  /** Requests past their deadline the cron hasn't closed yet (it runs every 10 minutes). */
+  stale: { id: string; starts_at: number; expires_at: number }[];
+};
+const STATUSES = ['pending', 'confirmed', 'completed', 'rejected', 'expired', 'conflicted', 'cancelled'] as const;
+const STATUS_LABEL: Record<string, string> = { pending: 'Pending', confirmed: 'Confirmed', completed: 'Completed', rejected: 'Declined', expired: 'Expired', conflicted: 'Conflicted', cancelled: 'Cancelled' };
+/** "Tue 10 Nov, 18:00–20:15" in Berlin (the companion's zone added when it's another). */
+const span = (s: number, e: number, tz?: string | null) => {
+  const zone = tz || 'Europe/Berlin';
+  const d = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(s * 1000));
+  const t = (u: number) => new Intl.DateTimeFormat('en-GB', { timeZone: zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(u * 1000));
+  return `${d}, ${t(s)}–${t(e)}${zone !== 'Europe/Berlin' ? ` (${zone})` : ''}`;
 };
 
 function Bookings({ say, refresh }: Ctx) {
-  const [list, setList] = useState<BookingRow[] | null>(null);
-  const load = useCallback(() => { api<BookingRow[]>('GET', '/admin/bookings').then(setList).catch((e) => say(e.message)); }, [say]);
+  const [status, setStatus] = useState<string>('');
+  const [q, setQ] = useState('');
+  const [list, setList] = useState<{ bookings: BookingRow[]; counts: Record<string, number> } | null>(null);
+  const [conf, setConf] = useState<Conflicts | null>(null);
+  const load = useCallback(() => {
+    const qs = new URLSearchParams({ ...(status ? { status } : {}), ...(q.trim() ? { q: q.trim() } : {}) }).toString();
+    api<{ bookings: BookingRow[]; counts: Record<string, number> }>('GET', `/admin/bookings${qs ? `?${qs}` : ''}`).then(setList).catch((e) => say(e.message));
+    api<Conflicts>('GET', '/admin/bookings/conflicts').then(setConf).catch((e) => say(e.message));
+  }, [say, status, q]);
   useEffect(load, [load]);
+  const total = list ? Object.values(list.counts).reduce((n, x) => n + x, 0) : 0;
   const refund = async (b: BookingRow) => {
     const msg = b.pay_status === 'held'
       ? `Refund ${eur(b.total)} to ${b.customer} and cancel the booking?`
@@ -292,21 +318,74 @@ function Bookings({ say, refresh }: Ctx) {
     try { await api('POST', `/admin/bookings/${b.id}/refund`); say('Refunded.'); } catch (e) { say((e as Error).message); }
     load(); refresh();
   };
+  const cancel = async (b: BookingRow) => {
+    if (!confirm(`Cancel this ${b.status === 'pending' ? 'request' : 'booking'} (${span(b.starts_at, b.ends_at, b.companion_tz)}) and refund ${eur(b.total)} to ${b.customer}? Both sides are told.`)) return;
+    try { await api('POST', `/admin/bookings/${b.id}/cancel`); say('Cancelled and refunded.'); } catch (e) { say((e as Error).message); }
+    load(); refresh();
+  };
   return (
     <>
       <h1>Bookings & payments</h1>
+      {conf ? (
+        <div className="card" style={{ marginBottom: 16, display: 'grid', gap: 8 }}>
+          <b>Conflict checks</b>
+          <div className="small">
+            {conf.overlaps.length
+              ? <span className="status s-cancelled">{conf.overlaps.length} overlapping upcoming confirmed booking{conf.overlaps.length === 1 ? '' : 's'}</span>
+              : <span className="status s-confirmed">No overlapping upcoming confirmed bookings</span>}
+            {' '}
+            {conf.stale.length
+              ? <span className="status s-pending">{conf.stale.length} request{conf.stale.length === 1 ? '' : 's'} past the deadline, closed by the next cron run</span>
+              : <span className="status s-confirmed">No requests past their deadline</span>}
+          </div>
+          {conf.overlaps.map((o) => (
+            <div key={o.a + o.b} className="small"><b>{o.companion}</b>: {o.a} ({o.a_kind}, {span(o.a_start, o.a_end)}) overlaps {o.b} ({o.b_kind}, {span(o.b_start, o.b_end)})</div>
+          ))}
+          {conf.conflicted.length ? (
+            <details>
+              <summary className="small">Latest requests that lost their time ({conf.conflicted.length})</summary>
+              <table style={{ marginTop: 8 }}>
+                <thead><tr><th>Request</th><th>Customer</th><th>Companion</th><th>Wanted</th><th>Taken by</th><th>When</th></tr></thead>
+                <tbody>{conf.conflicted.map((x) => (
+                  <tr key={x.id}>
+                    <td className="small">{x.id}</td><td>{x.customer}</td><td>{x.companion}</td><td>{x.kind} · {span(x.starts_at, x.ends_at)}</td>
+                    <td className="small">{x.conflict_with ? `${x.conflict_with} (${x.won_kind} · ${x.won_start && x.won_end ? span(x.won_start, x.won_end) : '?'}, ${x.won_status})` : '—'}</td>
+                    <td>{x.decided_at ? when(x.decided_at) : '—'}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="tabs" style={{ flexWrap: 'wrap' }}>
+        <button className={!status ? 'on' : ''} onClick={() => setStatus('')}>All {total ? `(${total})` : ''}</button>
+        {STATUSES.map((s) => <button key={s} className={status === s ? 'on' : ''} onClick={() => setStatus(s)}>{STATUS_LABEL[s]} {list?.counts[s] ? `(${list.counts[s]})` : ''}</button>)}
+      </div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Booking id, customer email or companion name" style={{ width: '100%', maxWidth: 420, marginBottom: 12, padding: '8px 12px', border: '2px solid var(--ink)', borderRadius: 12 }} />
       <div className="card" style={{ overflowX: 'auto' }}>
-        {!list ? <p className="muted">Loading…</p> : (
+        {!list ? <p className="muted">Loading…</p> : !list.bookings.length ? <p className="muted">No bookings here.</p> : (
           <table>
-            <thead><tr><th>When</th><th>Customer</th><th>Companion</th><th>Activity</th><th>Status</th><th>Payment</th><th>Total</th><th>Cancelled</th><th /></tr></thead>
+            <thead><tr><th>When</th><th>Kind</th><th>Customer</th><th>Companion</th><th>Activity</th><th>Status</th><th>Payment</th><th>Total</th><th>Notes</th><th /></tr></thead>
             <tbody>
-              {list.map((b) => (
+              {list.bookings.map((b) => (
                 <tr key={b.id}>
-                  <td>{when(b.starts_at)}</td><td>{b.customer}</td><td>{b.companion}</td><td>{b.activity}</td>
-                  <td><span className={`status s-${b.status}`}>{b.status}</span></td>
+                  <td>{span(b.starts_at, b.ends_at, b.companion_tz)}<div className="small muted">booked {when(b.created_at)}</div></td>
+                  <td>{b.kind === 'video' ? 'Video' : 'In person'}</td>
+                  <td>{b.customer}</td><td>{b.companion}</td><td>{b.activity}</td>
+                  <td><span className={`status s-${b.status}`}>{STATUS_LABEL[b.status] ?? b.status}</span>{b.status === 'pending' ? <div className="small muted">accept by {when(b.expires_at)}</div> : null}</td>
                   <td>{b.pay_status}</td><td>{eur(b.total)}</td>
-                  <td className="small">{b.cancelled_by ? <><b>by {b.cancelled_by}</b>{b.cancel_reason ? ` · ${b.cancel_reason}` : ''}</> : <span className="muted">—</span>}</td>
-                  <td>{b.pay_status !== 'refunded' ? <button className={`btn ${b.pay_status === 'released' ? '' : 'red'}`} onClick={() => void refund(b)}>Refund</button> : null}</td>
+                  <td className="small">
+                    {b.cancelled_by ? <><b>by {b.cancelled_by}</b>{b.cancel_reason ? ` · ${b.cancel_reason}` : ''}</> : null}
+                    {b.conflict_with ? <div>time taken by {b.conflict_with}</div> : null}
+                    {b.decided_at && b.status !== 'pending' ? <div className="muted">decided {when(b.decided_at)}</div> : null}
+                    {!b.cancelled_by && !b.conflict_with && !b.decided_at ? <span className="muted">—</span> : null}
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {b.status === 'pending' || b.status === 'confirmed' ? <button className="btn" onClick={() => void cancel(b)}>Cancel</button> : null}
+                    {' '}
+                    {b.pay_status !== 'refunded' ? <button className={`btn ${b.pay_status === 'released' ? '' : 'red'}`} onClick={() => void refund(b)}>Refund</button> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

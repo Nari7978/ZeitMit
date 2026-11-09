@@ -67,6 +67,8 @@ td { padding: 10px; border-bottom: 1px solid var(--hair); vertical-align: top; }
 .s-confirmed { background: var(--mint-soft); }
 .s-completed { background: var(--butter); }
 .s-cancelled { background: var(--red-soft); }
+.s-rejected { background: var(--red-soft); }
+.s-expired, .s-conflicted { background: var(--cream); }
 
 .login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .login .card { width: 100%; max-width: 380px; display: grid; gap: 12px; }
