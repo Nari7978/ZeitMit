@@ -60,13 +60,13 @@ companionProfile.get('/', async (c) => {
   });
   return c.json({
     ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []),
-    // One calendar, in her zone: weekly hours, dates with their own hours, blocked time (unix).
+    // One calendar, in the companion's zone: weekly hours, dates with their own hours, blocked time (unix).
     timezone: tz, week, days, blocks,
     avail: windows(1), dates: datesOf(1), availVideo: windows(2), datesVideo: datesOf(2),
   });
 });
 
-/** Her stored hours, tidied: the week per day, dates from today on (in her zone), blocks that haven't ended. */
+/** The companion's stored hours, tidied: the week per day, dates from today on (in their zone), blocks that haven't ended. */
 async function hoursRows(env: AppEnv['Bindings'], id: string, tz: string) {
   const today = dateIn(now(), tz);
   const [w, d, bl] = await env.DB.batch([
@@ -218,20 +218,20 @@ companionProfile.patch('/', async (c) => {
     b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, b.timezone ?? null, u.id,
   ).run();
   if (!res.meta.changes) fail(404, 'You don’t have a companion profile yet.');
-  // The kinds of date offered (or the zone her hours are in) may have changed: open profiles update at once.
+  // The kinds of date offered (or the zone their hours are in) may have changed: open profiles update at once.
   if (b.acts || b.timezone) void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });
 
 // ---------- Hours: one calendar for in-person and video dates ----------
 
-/** A date from today to PLAN_DAYS ahead in her zone, as YYYY-MM-DD. */
+/** A date from today to PLAN_DAYS ahead in the companion's zone, as YYYY-MM-DD. */
 function checkDate(date: string, tz: string) {
   const today = dateIn(now(), tz);
   if (!realDate(date) || date < today || date > addDays(today, PLAN_DAYS)) fail(400, `Pick a date in the next ${PLAN_DAYS} days.`);
 }
 
-/** Bookings (requests and confirmed) that start on a date in her zone: they stay when the hours change. */
+/** Bookings (requests and confirmed) that start on a date in the companion's zone: they stay when the hours change. */
 async function bookingsOn(env: AppEnv['Bindings'], id: string, date: string, tz: string) {
   const from = localToUnix(date, 0, tz)!, to = localToUnix(addDays(date, 1), 0, tz)!;
   const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at >= ? AND starts_at < ?").bind(id, from, to).first<{ n: number }>();
@@ -271,7 +271,7 @@ companionProfile.put('/hours/week', async (c) => {
 });
 
 /**
- * Hours for one date (in her zone), replacing that weekday's weekly hours. Body: { ranges: [{ from, to, kind }] };
+ * Hours for one date (in the companion's zone), replacing that weekday's weekly hours. Body: { ranges: [{ from, to, kind }] };
  * an empty list is a day off. A range can run past midnight into the next day. Bookings already made that day stay
  * (`kept` says how many).
  */
@@ -310,12 +310,12 @@ function checkBlock(startsAt: unknown, endsAt: unknown) {
   return [s, e] as const;
 }
 
-/** Requests and confirmed bookings inside a period: they stay when it's blocked (she can still answer or cancel them). */
+/** Requests and confirmed bookings inside a period: they stay when it's blocked (the companion can still answer or cancel them). */
 const bookingsIn = async (env: AppEnv['Bindings'], id: string, s: number, e: number) =>
   (await env.DB.prepare("SELECT COUNT(*) AS n FROM bookings WHERE companion_id = ? AND status IN ('pending', 'confirmed') AND starts_at < ? AND ends_at > ?").bind(id, e, s).first<{ n: number }>())?.n ?? 0;
 
 /**
- * Blocks time (a break, time off): closed whatever the hours say, until she removes it. Body: { startsAt, endsAt,
+ * Blocks time (a break, time off): closed whatever the hours say, until the companion removes it. Body: { startsAt, endsAt,
  * note? } (unix). `kept`: bookings already in that time, which stay.
  */
 companionProfile.post('/hours/blocks', async (c) => {
@@ -344,7 +344,7 @@ companionProfile.patch('/hours/blocks/:id', async (c) => {
   return c.json({ ok: true, block: { id: c.req.param('id'), startsAt: s, endsAt: e, note: cur!.note }, kept: await bookingsIn(c.env, u.id, s, e) });
 });
 
-/** Opens blocked time again (it becomes bookable if it's inside her hours). */
+/** Opens blocked time again (it becomes bookable if it's inside the companion's hours). */
 companionProfile.delete('/hours/blocks/:id', async (c) => {
   const u = c.get('user');
   await c.env.DB.prepare('DELETE FROM hours_blocks WHERE id = ? AND companion_id = ?').bind(c.req.param('id'), u.id).run();

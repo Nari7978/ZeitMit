@@ -110,16 +110,16 @@ r = await book(B, 'call', day, '20:15', 30);
 const vid = r.data?.id;
 ok(r.status === 201 && r.data.status === 'pending' && r.data.kind === 'video' && r.data.time === '20:15' && r.data.end === '20:45', `Ben requests a 30-minute video date, 20:15–20:45 (${r.data?.status ?? r.data?.error})`);
 let yb = (await call('GET', '/companion/bookings', Y.token)).data;
-ok(yb.requests.some((x) => x.id === vid && x.kind === 'video' && x.minutes === 30), 'Yuki finds it among her requests, marked as a video date');
+ok(yb.requests.some((x) => x.id === vid && x.kind === 'video' && x.minutes === 30), 'Yuki finds it among the requests, marked as a video date');
 ok((await notes(B)).some((n) => n.title === 'Request sent to Yuki' && /has until .+ to accept\.$/.test(n.body)), 'Ben is told until when Yuki can accept');
 ok((await notes(Y.token)).some((n) => n.title === 'New booking request' && /Video date/.test(n.body) && /Accept by /.test(n.body)), 'Yuki is told to accept by then');
 ok((await book(B, 'call', day, '22:00', 20)).status === 400 && (await book(B, 'coffee', day, '18:00', 30)).status === 400, 'under 30 minutes for video, or under an hour in person, is refused');
 ok((await call('POST', `/calls/${vid}`, B)).status === 409, 'no call before Yuki accepts');
 ok((await accept(vid)).status === 200, 'Yuki accepts');
 a = await avail();
-ok(same(openOn(a, 'meet', day), ['18:00–20:15', '20:45–22:00']), `and the video date takes her in-person time too (${openOn(a, 'meet', day)})`);
+ok(same(openOn(a, 'meet', day), ['18:00–20:15', '20:45–22:00']), `and the video date takes Yuki’s in-person time too (${openOn(a, 'meet', day)})`);
 r = await call('GET', `/bookings/${vid}/reschedule`, B);
-ok(r.data.availability.kinds.meet === null && same(openOn(r.data.availability, 'video', day), ['20:00–00:00']), 'moving it offers her video time (its own time included)');
+ok(r.data.availability.kinds.meet === null && same(openOn(r.data.availability, 'video', day), ['20:00–00:00']), 'moving it offers Yuki’s video time (its own time included)');
 
 // 4) Cancelling: free until 24 hours before, for both kinds (no special case for video)
 let mine = (await call('GET', '/bookings', B)).data.find((x) => x.id === vid);
@@ -206,15 +206,15 @@ const n0 = (await call('GET', '/companion', N.token)).data;
 await call('PATCH', '/companion', N.token, { acts: [...n0.acts, 'call'] });
 const n1 = (await call('GET', '/companion', N.token)).data;
 const na = await avail(NID);
-ok(n1.availVideo.length > 0 && same([...n1.availVideo].sort(), [...n1.avail].sort()) && same(na.kinds.video.open, na.kinds.meet.open), `Noah adds video dates: his hours are open for them too (${n1.availVideo.length} windows)`);
+ok(n1.availVideo.length > 0 && same([...n1.availVideo].sort(), [...n1.avail].sort()) && same(na.kinds.video.open, na.kinds.meet.open), `Noah adds video dates: the same hours are open for them too (${n1.availVideo.length} windows)`);
 await call('PATCH', '/companion', N.token, { acts: n0.acts });
 ok((await avail(NID)).kinds.video === null && (await times(NID)).video === null, 'without video dates again: no video times');
 
-// Clean up: Yuki back to her weekly hours
+// Clean up: Yuki back to the weekly hours
 for (const x of (await call('GET', '/companion/bookings', Y.token)).data.upcoming) await call('POST', `/companion/bookings/${x.id}/cancel`, Y.token, { reason: 'Something else' });
 for (let i = 0; i <= 7; i++) await call('DELETE', `/companion/hours/days/${berlin(i)}`, Y.token);
 L = await listed();
-ok(L.free.meet.next !== null && L.free.video.next !== null, 'own hours removed: Yuki is free again on her weekly hours, both kinds');
+ok(L.free.meet.next !== null && L.free.video.next !== null, 'own hours removed: Yuki is free again on the weekly hours, both kinds');
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

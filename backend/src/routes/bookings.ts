@@ -157,7 +157,7 @@ async function closeBooking(env: Env, b: BookingRow, to: Closing, o: { note: (am
   }
   await endCheckins(env, b.id);
   await endThread(env, b.id);
-  // A confirmed booking held its time: it's free again for everyone (if it's in her hours). Requests held nothing.
+  // A confirmed booking held its time: it's free again for everyone (if it's in the companion's hours). Requests held nothing.
   if (b.status === 'confirmed') await slotsChanged(env, b.companion_id);
   return true;
 }
@@ -261,13 +261,13 @@ async function releaseHold(env: Env, b: BookingRow, ctx?: Ctx): Promise<'release
 
 /**
  * Once a request is paid it reaches the companion, who has until its expiry to accept: 24 hours, or until 3 hours
- * before the start if that's sooner. Video dates and in-person dates both wait for her answer. Tells both sides.
+ * before the start if that's sooner. Video dates and in-person dates both wait for the companion's answer. Tells both sides.
  */
 async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
   const b = await env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(id).first<BookingRow>();
   if (!b) return;
   const p = await peopleOf(env, b);
-  // She confirmed someone else for this time while this one was paying: it can't be accepted any more.
+  // The companion confirmed someone else for this time while this one was paying: it can't be accepted any more.
   const winner = await takenBy(env, b);
   if (winner) {
     await conflictRequest(env, b, winner);
@@ -362,7 +362,7 @@ bookings.post('/', async (c) => {
   const left = await c.env.DB.prepare('SELECT * FROM bookings WHERE customer_id = ? AND companion_id = ? AND paid = 0').bind(u.id, comp!.user_id).all<BookingRow>();
   for (const old of left.results) await releaseHold(c.env, old, c.executionCtx).catch((e) => console.error('Release failed', old.id, e));
 
-  // The whole interval has to be free for that kind: inside her open hours, outside her blocks and confirmed bookings.
+  // The whole interval has to be free for that kind: inside the companion's open hours, outside their blocks and confirmed bookings.
   const a = await availabilityOf(c.env, comp!.user_id);
   const free = a?.kinds[kind]?.open ?? [];
   const end = start + length * 60;
@@ -479,7 +479,7 @@ bookings.get('/:id/reschedule', async (c) => {
     id: b.id, side, cid: b.companion_id, act: b.activity, kind: b.kind, status: shown(b.status, modern(c)), ...timeOf(b, u.tz),
     other: side === 'customer' ? p.companion : p.customer, resched: reschedOf(b, u.tz), left: MAX_RESCHEDULES - b.resched_count,
     availability: a ? { ...a, kinds: { meet: b.kind === 'meet' ? free : null, video: b.kind === 'video' ? free : null } } : null,
-    // App versions before flexible times: half-hour start times in her zone.
+    // App versions before flexible times: half-hour start times in the companion's zone.
     slots: a && free ? legacyDays(free.open, a.tz, a.earliest, a.latest) : [],
   });
 });
@@ -487,7 +487,7 @@ bookings.get('/:id/reschedule', async (c) => {
 /**
  * Suggests a new time (same length; any 15-minute start that's free for this kind of date, at least 3½ hours ahead);
  * the other side accepts or declines, and until then the booking keeps its time. A request the companion hasn't
- * answered yet is simply moved by the customer. Body: { startsAt } (older apps: { date, time } in her zone).
+ * answered yet is simply moved by the customer. Body: { startsAt } (older apps: { date, time } in the companion's zone).
  */
 bookings.post('/:id/reschedule', async (c) => {
   const u = c.get('user');

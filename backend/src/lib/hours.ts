@@ -1,12 +1,12 @@
 // A companion's hours: ONE calendar for in-person dates and video dates.
 //
-// - Weekly hours and hours for specific dates are ranges of her local clock time. "18:00"–"02:00" runs past midnight
+// - Weekly hours and hours for specific dates are ranges of the companion's local clock time. "18:00"–"02:00" runs past midnight
 //   into the next day: a range belongs to the day it starts on. Each range is open for both kinds of date (the
 //   default), for in-person dates only, or for video dates only.
 // - On a date with its own hours, those replace that weekday's weekly hours (none at all: a day off).
-// - Blocked periods (breaks, time off) close time whatever the hours say, until she removes them.
+// - Blocked periods (breaks, time off) close time whatever the hours say, until the companion removes them.
 // - Only CONFIRMED bookings (and ones under way or done) take time: requests don't, so several people can ask for
-//   overlapping times and she picks. A booking of either kind blocks the time for both.
+//   overlapping times and the companion picks. A booking of either kind blocks the time for both.
 //
 // So the free time for a kind = its open hours − blocks − confirmed bookings, as UTC intervals. Start times and lengths
 // go in 15-minute steps; there are no fixed slots. Time zones and daylight saving: see ./time.
@@ -197,7 +197,7 @@ export const dayJson = (d: Range[]) => JSON.stringify(d.map((r) => [r.from, r.to
 export const rangesOn = (h: Hours, date: string) => h.days.get(date) ?? h.week.filter((r) => r.day === weekdayOf(date));
 
 /**
- * Open hours of one kind between `from` and `to` (unix), as moments in her zone. A range that starts in a clock
+ * Open hours of one kind between `from` and `to` (unix), as moments in the companion's zone. A range that starts in a clock
  * time that doesn't exist (spring forward) starts when the clock jumps; one that ends in a repeated hour (the clocks go
  * back) ends at its later occurrence.
  */
@@ -288,7 +288,7 @@ export function ruleProblem(kind: Kind, start: number, min: number, t = now()) {
 
 export type Free = { next: number | null; today: boolean; days: number[] };
 
-/** When someone is next free for a kind, whether that's today (her date) and the weekdays with a start, from free time. */
+/** When someone is next free for a kind, whether that's today (the companion's date) and the weekdays with a start, from free time. */
 function freeSummary(free: Interval[], min: number, earliest: number, latest: number, tz: string, today: string): Free {
   const next = firstStart(free, min, earliest, latest);
   const dates = new Set<string>();
@@ -355,7 +355,7 @@ export async function nextFreeAll(env: Env) {
 /** A day of start times every half hour with the longest booking (hours) from each: how older apps show times. */
 export type DaySlots = { date: string; times: string[]; fit: number[]; custom?: boolean };
 
-/** Half-hour start times with room for an hour, per date (7 dates from today in her zone), from free time. */
+/** Half-hour start times with room for an hour, per date (7 dates from today in the companion's zone), from free time. */
 export function legacyDays(free: Interval[], tz: string, earliest: number, latest: number, own?: Set<string>): DaySlots[] {
   const today = dateIn(now(), tz);
   const dates = Array.from({ length: 7 }, (_, i) => addDays(today, i));

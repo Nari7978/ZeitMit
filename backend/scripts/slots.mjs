@@ -218,7 +218,7 @@ ok(r.status === 400, 'contact details in the place are still refused');
 const late = list.flatMap((d) => d.times.map((t, i) => ({ date: d.date, time: t, fit: d.fit[i] }))).find((x) => x.time === '20:00');
 if (late) {
   ok(late.fit <= 4, `from 20:00 at most 4 hours (until midnight): ${late.fit}`);
-  ok((await book(A, late.date, '20:00', 4.5)).status === 409, 'a booking past the end of his hours (midnight here) is refused');
+  ok((await book(A, late.date, '20:00', 4.5)).status === 409, 'a booking past the end of Noah’s hours (midnight here) is refused');
 }
 
 viewer.ws.close();

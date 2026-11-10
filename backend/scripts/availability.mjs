@@ -98,7 +98,7 @@ ok(r.status === 200, '   and 13:00–14:00 after that');
 // ---- 4) An in-person request overlapping an accepted video date
 r = await book(C, 'call', at(D1, '15:00'), 60);
 const v4 = r.data?.id;
-ok(r.status === 201 && r.data.kind === 'video' && r.data.status === 'pending', '4  Cleo asks for a video date 15:00–16:00: a request too (video dates need her OK)');
+ok(r.status === 201 && r.data.kind === 'video' && r.data.status === 'pending', '4  Cleo asks for a video date 15:00–16:00: a request too (video dates need the companion’s OK)');
 ok((await accept(v4)).status === 200, '   Yuki accepts it');
 r = await book(D, 'coffee', at(D1, '15:30'), 60);
 ok(r.status === 409, `   coffee 15:30–16:30 overlapping it is blocked (${r.status})`);
@@ -184,16 +184,16 @@ ok(r.status === 409, '   so is one running into it (17:00–19:00)');
 r = await book(E, 'coffee', at(D2, '19:30'), 60);
 ok(r.status === 201, '   19:30, when it ends, is fine');
 r = await call('PATCH', `/companion/hours/blocks/${block.id}`, Y.token, { endsAt: at(D2, '21:00') });
-ok(r.status === 200 && !isFree(await free('meet'), at(D2, '20:00'), at(D2, '20:15')), '   she extends it to 21:00: 20:00 is closed now too');
+ok(r.status === 200 && !isFree(await free('meet'), at(D2, '20:00'), at(D2, '20:15')), '   the companion extends it to 21:00: 20:00 is closed now too');
 r = await call('DELETE', `/companion/hours/blocks/${block.id}`, Y.token);
-ok(r.status === 200 && isFree(await free('meet'), at(D2, '18:30'), at(D2, '19:30')), '12 she removes the block: 18:30 is free again');
+ok(r.status === 200 && isFree(await free('meet'), at(D2, '18:30'), at(D2, '19:30')), '12 the companion removes the block: 18:30 is free again');
 r = await book(A, 'coffee', at(D2, '18:30'), 60);
 ok(r.status === 201, '   and can be requested');
 await setDay(D2, []);
 ok(!isFree(await free('meet'), at(D2, '09:00'), at(D2, '10:00')), '   a day off closes the whole day');
 await call('DELETE', `/companion/hours/days/${D2}`, Y.token);
 const week = (await call('GET', '/companion', Y.token)).data.week.filter((x) => x.day === (new Date(D2 + 'T12:00:00Z').getUTCDay() + 6) % 7);
-ok(week.length > 0 && isFree(await free('meet'), at(D2, week[0].from), at(D2, week[0].from) + 3600), `   back to her weekly hours that day: free from ${week[0]?.from} again`);
+ok(week.length > 0 && isFree(await free('meet'), at(D2, week[0].from), at(D2, week[0].from) + 3600), `   back to the weekly hours that day: free from ${week[0]?.from} again`);
 
 // ---- 15) Cancelling frees the time
 await setDay(D3, [{ from: '10:00', to: '14:00', kind: 'both' }, { from: '22:00', to: '02:00', kind: 'both' }]);
@@ -207,14 +207,14 @@ ok(isFree(await free('meet'), at(D3, '11:00'), at(D3, '12:00')), '   11:00–12:
 r = await book(C, 'coffee', at(D3, '11:00'), 60);
 ok(r.status === 201 && (await accept(r.data.id)).status === 200, '   and someone else books it');
 await call('POST', `/companion/bookings/${r.data.id}/cancel`, Y.token, { reason: 'Something else' });
-// Time she closed stays closed when a booking in it is cancelled: nothing reopens by itself.
+// Time the companion closed stays closed when a booking in it is cancelled: nothing reopens by itself.
 r = await book(A, 'coffee', at(D3, '12:00'), 60);
 const c15b = r.data.id;
 await accept(c15b);
 const bl = (await call('POST', '/companion/hours/blocks', Y.token, { startsAt: at(D3, '12:00'), endsAt: at(D3, '13:00') })).data;
-ok(bl.kept === 1, '   she blocks 12:00–13:00 while a booking is in it: the booking stays');
+ok(bl.kept === 1, '   the companion blocks 12:00–13:00 while a booking is in it: the booking stays');
 await call('POST', `/bookings/${c15b}/cancel`, A, { reason: 'Plans changed' });
-ok(!isFree(await free('meet'), at(D3, '12:00'), at(D3, '13:00')), '   when it’s cancelled, 12:00–13:00 stays closed: her block wins, nothing reopens by itself');
+ok(!isFree(await free('meet'), at(D3, '12:00'), at(D3, '13:00')), '   when it’s cancelled, 12:00–13:00 stays closed: the block wins, nothing reopens by itself');
 await call('DELETE', `/companion/hours/blocks/${bl.block.id}`, Y.token);
 
 // ---- Rules for start times and lengths
@@ -233,7 +233,7 @@ ok(r.status === 201 && r.data.total === Math.round(34 * 100 * 75 / 60 * 1.1), `R
 r = await book(D, 'coffee', at(D3, '12:30'), 60);
 ok(r.status === 409 && /already asked/.test(r.data?.error), 'R  the same customer can’t ask twice for overlapping times');
 r = await call('POST', '/bookings', E, { companionId: YID, act: 'coffee', date: D3, time: '15:00', dur: 1.5, place: '' });
-ok(r.status === 201 && r.data.time === '15:00' && r.data.minutes === 90, 'R  older apps (date, time, hours in her zone) still book');
+ok(r.status === 201 && r.data.time === '15:00' && r.data.minutes === 90, 'R  older apps (date, time, hours in the companion’s zone) still book');
 
 // ---- Statuses: declined, older apps
 r = await book(A, 'coffee', at(D3, '17:00'), 60);

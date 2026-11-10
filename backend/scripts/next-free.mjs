@@ -66,7 +66,7 @@ ok((await accept(anna)).status === 200, 'Noah accepts Anna’s request');
 L = await listed();
 ok(clock(L.next) === '19:00' && dateOf(L.next) === day, `the list says Noah is next free at 19:00, where Anna’s booking ends (${clock(L.next)})`);
 let d = (await slots()).find((x) => x.date === day);
-ok(d.times[0] === '19:00' && !d.times.includes('18:00') && !d.times.includes('18:30'), `on his profile too: ${d.times.join(', ')}`);
+ok(d.times[0] === '19:00' && !d.times.includes('18:00') && !d.times.includes('18:30'), `on the profile too: ${d.times.join(', ')}`);
 const benGone = (await call('GET', '/bookings', B)).data.find((x) => x.id === benEarly);
 ok(benGone?.status === 'conflicted' && benGone.pay === 'refunded', 'Ben’s overlapping request ends as conflicted, refunded in full');
 r = await book(B, day, '18:30', 1);
@@ -99,7 +99,7 @@ for (const x of mineNow.requests) await call('POST', `/companion/bookings/${x.id
 for (const x of mineNow.upcoming) await call('POST', `/companion/bookings/${x.id}/cancel`, N.token, { reason: 'Something else' });
 for (let i = 0; i <= 7; i++) await call('DELETE', `/companion/hours/days/${berlin(i)}`, N.token);
 L = await listed();
-ok(L.next !== null, 'own hours removed: Noah is free again on his weekly hours');
+ok(L.next !== null, 'own hours removed: Noah is free again on the weekly hours');
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

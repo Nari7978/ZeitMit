@@ -1,4 +1,4 @@
-// Companions' hours for specific dates (they replace the weekly hours that day, in her time zone), days off, hours
+// Companions' hours for specific dates (they replace the weekly hours that day, in the companion’s time zone), days off, hours
 // past midnight and blocked time, plus the routes older app versions use. Runs against a LOCAL API with the demo
 // companions seeded. Usage: node scripts/custom-dates.mjs [api]
 import { execSync } from 'node:child_process';
@@ -95,7 +95,7 @@ ok(same(dayOf(s, berlin(2)), dayOf(before, berlin(2))), 'other days are unchange
 
 // 3) Own hours, any 15-minute start
 r = await put(dCustom, [R('18:15', '21:00')]);
-ok(r.status === 200 && same(r.data.ranges, [R('18:15', '21:00', 'both')]), 'own hours 18:15–21:00 are saved, for both kinds of date unless she picks one');
+ok(r.status === 200 && same(r.data.ranges, [R('18:15', '21:00', 'both')]), 'own hours 18:15–21:00 are saved, for both kinds of date unless the companion picks one');
 ok(same(await openOn(dCustom), ['18:15–21:00']), `open that day: ${(await openOn(dCustom)).join(', ')}`);
 s = await slots();
 const dc = dayOf(s, dCustom);
@@ -160,7 +160,7 @@ r = await block(at(dLate, '23:00'), at(next(dLate), '01:00'), 'Night off');
 ok(r.status === 201 && r.data.kept === 1, `blocking 23:00–01:00 leaves the request already there (kept ${r.data?.kept})`);
 ok(same(await openOn(dLate), ['10:00–10:30', '11:30–12:00', '22:00–23:00']) && (await openOn(next(dLate)))[0] === '01:00–02:00', 'only 22:00–23:00 and 01:00–02:00 stay open that night');
 me = (await call('GET', '/companion', N.token)).data;
-ok(me.blocks.length === 2 && me.blocks[0].note === 'Lunch' && me.blocks[1].endsAt === at(next(dLate), '01:00'), 'her profile lists the blocked times');
+ok(me.blocks.length === 2 && me.blocks[0].note === 'Lunch' && me.blocks[1].endsAt === at(next(dLate), '01:00'), 'the profile lists the blocked times');
 for (const x of me.blocks) await call('DELETE', `/companion/hours/blocks/${x.id}`, N.token);
 ok(same(await openOn(dLate), ['10:00–12:00', '22:00–02:00']), 'removing the blocks opens that time again');
 await call('POST', `/bookings/${late}/cancel`, C.token);
@@ -195,7 +195,7 @@ ok((await listed()).days.includes(wd), 'own hours on that date make it free');
 await call('DELETE', `/companion/hours/days/${dLate}`, N.token);
 r = await call('PUT', '/companion/hours/week', N.token, { ranges: week });
 ok(r.status === 200 && (await listed()).days.includes(wd), 'weekly hours restored');
-// "Free today": a start today (her date) at least 3½ hours from now, in 15-minute steps, with an hour to spare
+// "Free today": a start today (the companion’s date) at least 3½ hours from now, in 15-minute steps, with an hour to spare
 const today = berlin(0);
 const earliest = () => Math.ceil((Date.now() / 1000 + 3.5 * 3600) / 900) * 900;
 await put(today, [R('06:00', '07:00')]);

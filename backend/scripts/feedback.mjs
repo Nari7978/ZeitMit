@@ -133,7 +133,7 @@ ok(red?.act === 'Movies' && /\d/.test(red.when) && red.duration_h === 1, `with t
 ok(red?.about_count === 2 && red.about_stars === 1.5 && red.about_unsafe === 1, `and what everyone said about Mira: ${red?.about_count} answers, ${red?.about_stars}★, ${red?.about_unsafe} not safe`);
 const mira = all.find((x) => x.booking_id === m1.id && x.role === 'customer');
 ok(mira?.safe === 'yes' && mira.stars === 5 && JSON.stringify(mira.tags) === '["Respectful","On time"]' && mira.note === 'Lovely film night.', 'known tags only, no repeats, trimmed note');
-ok(mira?.about_count >= 4 && mira.about_unsafe >= 0, `Noah’s line counts everything said about him (${mira?.about_count} answers, ${mira?.about_stars}★)`);
+ok(mira?.about_count >= 4 && mira.about_unsafe >= 0, `Noah’s line counts everything said about Noah (${mira?.about_count} answers, ${mira?.about_stars}★)`);
 const firstOpen = concerns.findIndex((x) => x.status !== 'open');
 ok(firstOpen === -1 || concerns.slice(firstOpen).every((x) => x.status !== 'open'), 'open concerns come first');
 

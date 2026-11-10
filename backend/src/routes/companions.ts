@@ -39,8 +39,8 @@ companions.get('/:id', async (c) => {
 });
 
 /**
- * When a companion can be booked: her time zone, the earliest and latest start, the 15-minute step and, for each kind
- * of date she offers, the shortest and longest booking and the free intervals (unix). Everything else is unavailable.
+ * When a companion can be booked: their time zone, the earliest and latest start, the 15-minute step and, for each kind
+ * of date they offer, the shortest and longest booking and the free intervals (unix). Everything else is unavailable.
  */
 companions.get('/:id/availability', async (c) => {
   const a = await availabilityOf(c.env, c.req.param('id'));

@@ -1,5 +1,5 @@
 // Time zones. Every moment is stored as UTC unix seconds; dates and clock times belong to a time zone (an IANA name
-// such as "Europe/Berlin"): the companion's for her hours, each person's own for what they read. Daylight-saving
+// such as "Europe/Berlin"): the companion's for their hours, each person's own for what they read. Daylight-saving
 // changes are exact: a clock time that doesn't exist (the clocks jump forward) has no moment, one that happens twice
 // (the clocks go back) has two.
 

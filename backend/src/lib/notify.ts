@@ -55,7 +55,8 @@ export async function ring(env: Env, userId: string, r: Ring) {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
       to: row.push_token, title, body, data: { go, kind: 'ring', ...event },
-      // The channel every app version creates: a push for a channel the installed app never made wouldn't show.
+      // No channelId: the default channel, which every app version creates (a push for a channel the installed app
+      // never made wouldn't show at all).
       sound: 'default', priority: 'high',
       // A ring that can't be delivered within a few minutes is of no use (and never after the call has ended).
       ttl: Math.max(30, Math.min(r.endsAt - now(), 300)),
