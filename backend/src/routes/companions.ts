@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { NEVER_OFFERED } from '../types';
+import { NEVER_OFFERED, VIDEO_NEVER_OFFERED } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
 import { availabilityOf, legacyViews, nextFreeAll } from '../lib/hours';
 import { fail } from '../lib/util';
@@ -32,7 +32,7 @@ companions.get('/:id', async (c) => {
   c.header('Cache-Control', 'no-store'); // free times change with every booking
   const old = a ? legacyViews(a) : { slots: [], meet: null, video: null };
   return c.json({
-    ...toCompanion(row!), no: NEVER_OFFERED, reviewList: reviews.results, availability: a,
+    ...toCompanion(row!), no: NEVER_OFFERED, noVideo: VIDEO_NEVER_OFFERED, reviewList: reviews.results, availability: a,
     // Older app versions: half-hour start times, one list and per kind.
     slots: old.slots, times: { meet: old.meet, video: old.video }, today: old.slots.length ? old.slots[0].times.length > 0 : false,
   });

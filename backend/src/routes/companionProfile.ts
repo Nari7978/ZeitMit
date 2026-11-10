@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, WINDOWS } from '../types';
+import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_BOUNDARY_OPTIONS, WINDOWS } from '../types';
 import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
 import {
   changeCoverage, cleanRanges, dayJson, normalize, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson, type Range, type WeekRange,
@@ -15,7 +15,7 @@ const WIN_MIN: Record<string, [number, number]> = { am: [540, 720], pm: [720, 10
 const MASKS = { meet: 1, video: 2, both: 3 } as const;
 
 type Listing = {
-  name?: string; showAge?: boolean; age?: number; about?: string; interests?: string[]; acts?: string[]; ok?: string[];
+  name?: string; showAge?: boolean; age?: number; about?: string; interests?: string[]; acts?: string[]; ok?: string[]; okVideo?: string[];
   langs?: string[]; rate?: number; days?: string[]; wins?: string[]; area?: string; gender?: 'w' | 'm' | 'nb'; pronouns?: string; lgbtq?: boolean;
   tagline?: string; levels?: Record<string, string>; photoId?: string; idPhotoId?: string; galleryIds?: string[]; timezone?: string;
 };
@@ -29,7 +29,8 @@ function validate(b: Listing, full: boolean) {
   if (b.about && b.about.length > 400) fail(400, 'About is limited to 400 characters.');
   if (full || b.acts !== undefined) if (!b.acts?.length || !b.acts.every((a) => (ACTIVITIES as readonly string[]).includes(a))) fail(400, 'Pick at least one activity.');
   if (full || b.langs !== undefined) if (!b.langs?.length || !b.langs.every((l) => LANGUAGES.includes(l))) fail(400, 'Pick at least one language.');
-  if (b.ok && !b.ok.every((o) => BOUNDARY_OPTIONS.includes(o))) fail(400, 'Unknown boundary option.');
+  if (b.ok != null && (!Array.isArray(b.ok) || !b.ok.every((o) => BOUNDARY_OPTIONS.includes(o)))) fail(400, 'Unknown boundary option.');
+  if (b.okVideo != null && (!Array.isArray(b.okVideo) || !b.okVideo.every((o) => VIDEO_BOUNDARY_OPTIONS.includes(o)))) fail(400, 'Unknown video date boundary option.');
   if (full || b.rate !== undefined) if (!Number.isInteger(b.rate) || b.rate! < 15 || b.rate! > 80) fail(400, 'Rate must be €15–€80 per hour.');
   if (full || b.age !== undefined) if (!Number.isInteger(b.age) || b.age! < 18 || b.age! > 99) fail(400, 'Enter your age. You must be 18 or older.');
   if (full || b.gender !== undefined) if (!['w', 'm', 'nb'].includes(b.gender ?? '')) fail(400, 'Choose how you identify.');
@@ -131,17 +132,17 @@ companionProfile.post('/apply', async (c) => {
   // Upsert, not delete + insert: someone applying again may have bookings (and earnings) tied to this row.
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `INSERT INTO companions (user_id, display_name, age, show_age, pronouns, gender, area, hue, tagline, bio, rate, interests, languages, activities, boundaries, lgbtq, photo_id, id_photo_id, gallery)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO companions (user_id, display_name, age, show_age, pronouns, gender, area, hue, tagline, bio, rate, interests, languages, activities, boundaries, video_boundaries, lgbtq, photo_id, id_photo_id, gallery)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET
          display_name = excluded.display_name, age = excluded.age, show_age = excluded.show_age, pronouns = excluded.pronouns, gender = excluded.gender,
          area = excluded.area, tagline = excluded.tagline, bio = excluded.bio, rate = excluded.rate, interests = excluded.interests,
-         languages = excluded.languages, activities = excluded.activities, boundaries = excluded.boundaries, lgbtq = excluded.lgbtq,
+         languages = excluded.languages, activities = excluded.activities, boundaries = excluded.boundaries, video_boundaries = excluded.video_boundaries, lgbtq = excluded.lgbtq,
          photo_id = COALESCE(excluded.photo_id, companions.photo_id), id_photo_id = excluded.id_photo_id, gallery = excluded.gallery, status = 'pending', id_verified = 0`,
     ).bind(
       u.id, b.name!.trim(), b.age ?? null, b.showAge === false ? 0 : 1, b.pronouns?.trim() || null, b.gender!, b.area ?? 'Berlin',
       Math.floor(Math.random() * 360), b.tagline?.trim().slice(0, 60) || interests.slice(0, 2).join(' and ') || 'New in Berlin', b.about!.trim(), b.rate!,
-      JSON.stringify(interests), JSON.stringify(b.langs!.map((l) => [l, LEVELS.includes(b.levels?.[l] ?? '') ? b.levels![l] : 'Fluent'])), JSON.stringify(b.acts), JSON.stringify(b.ok ?? []), b.lgbtq ? 1 : 0,
+      JSON.stringify(interests), JSON.stringify(b.langs!.map((l) => [l, LEVELS.includes(b.levels?.[l] ?? '') ? b.levels![l] : 'Fluent'])), JSON.stringify(b.acts), JSON.stringify(b.ok ?? []), JSON.stringify(b.okVideo ?? []), b.lgbtq ? 1 : 0,
       b.photoId!, b.idPhotoId!, JSON.stringify(gallery),
     ),
     dropUnusedGallery(c.env, u.id, gallery),
@@ -206,12 +207,12 @@ companionProfile.patch('/', async (c) => {
   if (b.area !== undefined && (!b.area.trim() || b.area.length > 40)) fail(400, 'Add your area, e.g. Kreuzberg.');
   const langs = b.langs ? JSON.stringify(b.langs.map((l) => [l, LEVELS.includes(b.levels?.[l] ?? '') ? b.levels![l] : 'Fluent'])) : null;
   const res = await c.env.DB.prepare(
-    `UPDATE companions SET rate = COALESCE(?, rate), activities = COALESCE(?, activities), boundaries = COALESCE(?, boundaries),
+    `UPDATE companions SET rate = COALESCE(?, rate), activities = COALESCE(?, activities), boundaries = COALESCE(?, boundaries), video_boundaries = COALESCE(?, video_boundaries),
        bio = COALESCE(?, bio), tagline = COALESCE(?, tagline), interests = COALESCE(?, interests), languages = COALESCE(?, languages),
        area = COALESCE(?, area), show_age = COALESCE(?, show_age), lgbtq = COALESCE(?, lgbtq),
        age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END, timezone = COALESCE(?, timezone) WHERE user_id = ?`,
   ).bind(
-    b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.about?.trim() ?? null,
+    b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.okVideo ? JSON.stringify(b.okVideo) : null, b.about?.trim() ?? null,
     b.tagline?.trim() ?? null, b.interests ? JSON.stringify(b.interests) : null, langs, b.area?.trim() ?? null,
     b.showAge === undefined ? null : b.showAge ? 1 : 0, b.lgbtq === undefined ? null : b.lgbtq ? 1 : 0,
     b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, b.timezone ?? null, u.id,

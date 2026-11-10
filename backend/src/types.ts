@@ -34,6 +34,10 @@ export type Env = {
   TURN_KEY_API_TOKEN?: string;
   /** Seconds two people must be on a video date together before the payment is released (600; tests shorten it). */
   CALL_RELEASE_SECONDS?: string;
+  /** Seconds between pings from a video date (30; tests shorten it). Joining alone rings again after 4 times that. */
+  CALL_PING_GAP_SECONDS?: string;
+  /** Override for tests (mock Expo push service). */
+  EXPO_PUSH_URL?: string;
 };
 
 /** The activity that happens over video in the app (no meeting place, check-in or meet code). */
@@ -59,8 +63,12 @@ export const ACT_LABEL: Record<ActId, string> = {
   sports: 'Sports', culture: 'Culture', language: 'Language',
 };
 
+/** Boundaries for dates in person: what a companion can be comfortable with, and what's never offered. */
 export const NEVER_OFFERED = ['Kissing or intimacy', 'Private or home locations', 'Overnight or hotel plans', 'Meeting or paying off ZeitMit'];
 export const BOUNDARY_OPTIONS = ['Holding hands', 'Arm in arm', 'Hug hello', 'Couple photos', 'Introduced as a partner', 'Friendly hug hello'];
+/** Video dates have their own: nothing physical happens on a call, so the lists are about the call itself. */
+export const VIDEO_NEVER_OFFERED = ['Nudity or sexual content', 'Recording the call', 'Swapping contact details or socials', 'Calling or paying off ZeitMit'];
+export const VIDEO_BOUNDARY_OPTIONS = ['Flirting', 'Pet names', 'Compliments on looks', 'Screenshots together', 'Saying hi to friends or family', 'Watching or playing together'];
 export const LANGUAGES = ['German', 'English', 'French', 'Spanish', 'Italian', 'Turkish', 'Japanese'];
 export const WINDOWS = ['am', 'pm', 'eve'] as const;
 export const SERVICE_FEE = 0.1;

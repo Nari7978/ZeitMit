@@ -29,12 +29,14 @@ node scripts/reschedule.mjs    # moving bookings and the customer profile compan
 node scripts/feedback.mjs      # private safety feedback after meet-ups and the admin list; edits the local DB
 node scripts/custom-dates.mjs  # own hours for dates, days off, hours past midnight, blocked time; edits the local DB
 node scripts/meet-code.mjs     # meet codes can't be sent in chat (also checks the app's copy of the check); edits the local DB
-node scripts/video.mjs         # video dates: joining, the call room, payment release, no-shows (API with --var CALL_RELEASE_SECONDS:3)
+node scripts/video.mjs         # video dates: joining, ringing and pings, the call room, payment release, no-shows (API: see below)
 node scripts/next-free.mjs     # 15-minute starts; an accepted booking moves everyone's next free time to where it ends; edits the local DB
 node scripts/kinds.mjs         # in person and video on one calendar: kinds per range, one clock, the same deadlines; edits the local DB
 node scripts/availability.mjs  # the booking rules end to end: simultaneous accepts, deadlines, expiry, statuses, admin; edits the local DB
 npm run test:engine            # the time engine without an API: daylight saving, exact deadlines, past midnight, other zones
 ```
+`scripts/video.mjs` needs short timings and gets the pushes itself: run the API with
+`npx wrangler dev --var CALL_RELEASE_SECONDS:3 --var CALL_PING_GAP_SECONDS:2 --var EXPO_PUSH_URL:http://localhost:8798/push`.
 `scripts/stripe-flow.mjs` checks every payment path against a mock Stripe: run the API with
 `npx wrangler dev --var STRIPE_SECRET_KEY:sk_test_mock --var STRIPE_API_BASE:http://localhost:9999`.
 `scripts/emails.mjs` checks the invoice and confirmation emails against a mock Brevo (it records what it's asked to send): run the API with
@@ -70,7 +72,9 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 ## Video dates
 - A video date (activity `call`) happens in the app. The video goes straight between the two phones (WebRTC); nothing is recorded and no video passes through the server. One `CallRoom` Durable Object per booking passes the call setup between them (offer, answer, network candidates), sees who is there and counts the seconds both have video connected.
 - `POST /calls/:bookingId` returns who the call is with, when it ends and the ICE servers; `GET /calls/:bookingId/ws?token=` is the room's socket. Only the two people booked, on a confirmed paid video date (a request has no call until it's accepted), from 10 minutes before the start until the booked end, when the room ends the call.
-- Video dates have no meet code, meeting place or check-in. Once both have been on the call together for `CALL_RELEASE_SECONDS` (600), the payment is released and the booking completed; the call carries on until the booked end, and either side can rejoin. When someone joins alone, the other gets a notification that opens the call (`go: "call:<booking id>"`).
+- Video dates have their own boundaries, since nothing physical happens on a call: companions pick what they're comfortable with from `VIDEO_BOUNDARY_OPTIONS` (flirting, pet names, …; `companions.video_boundaries`, `okVideo` in the API) and the profile shows `VIDEO_NEVER_OFFERED` (`noVideo`) beside them. Dates in person keep `BOUNDARY_OPTIONS` (`ok`) and `NEVER_OFFERED` (`no`). Customers agree to the ones for the kind of date they book.
+- Video dates have no meet code, meeting place or check-in. Once both have been on the call together for `CALL_RELEASE_SECONDS` (600), the payment is released and the booking completed; the call carries on until the booked end, and either side can rejoin.
+- **Ringing:** whenever someone is in the call alone, the other person's phone rings: when they join (but not again for a reconnect within 2 minutes) and when they press Ping (`POST /calls/:id/ping`: from the booked start, only while you're in the call and the other person isn't, every `CALL_PING_GAP_SECONDS` (30), at most 10 times per video date; the room's `hello` says when the next ping can go out, `pingIn` and `pingsLeft`). A ring is one notification per call that each ring replaces (`go: "call:<booking id>"` opens the call), a live `ring` event that makes the open app show the call with vibration, and a high-priority push with sound. Rings are sent whatever the booking-update push setting says, since they're the call itself and only happen while it's on. When the one who rang hangs up before the other came, a live `ring-off` stops the ringing.
 - After the end the cron settles unconfirmed video dates once (`call_closed`): the companion never joined → full refund; only the companion joined → they keep their pay (like a late cancellation); both joined but not long enough → the payment stays held and admins get an alert.
 - Connecting: free public STUN servers by default, which is enough for most networks. For networks that block direct connections, add a free Cloudflare TURN relay (1,000 GB a month free): create a TURN key in the Cloudflare dashboard (Realtime → TURN) and add the repository secrets `TURN_KEY_ID` and `TURN_KEY_API_TOKEN`. The deploy stores them as Worker secrets and the server hands out short-lived relay credentials.
 
@@ -101,7 +105,7 @@ Add `--var ADMIN_EMAILS:safety@example.com` and run `node scripts/feedback.mjs h
 | Browse | `GET /companions`, `GET /companions/:id`, `GET /companions/:id/availability` (older apps: `/slots`, `/times`) |
 | Customer bookings | `GET/POST /bookings` (`{ companionId, act, startsAt, minutes, place }`), `POST /bookings/:id/confirm-payment·release·cancel·review` |
 | After a meet-up (either side) | `POST /bookings/:id/feedback` (private, for the safety team) |
-| Video dates (either side) | `POST /calls/:id`, `GET /calls/:id/ws` |
+| Video dates (either side) | `POST /calls/:id`, `GET /calls/:id/ws`, `POST /calls/:id/ping` |
 | Moving a booking (either side) | `GET/POST/DELETE /bookings/:id/reschedule`, `POST /bookings/:id/reschedule/accept` |
 | Companion | `GET/PATCH /companion` (incl. `timezone`, `week`, `days`, `blocks`), `POST /companion/apply`, `PUT /companion/gallery`, `PUT /companion/hours/week`, `PUT/DELETE /companion/hours/days/:date`, `POST /companion/hours/blocks`, `PATCH/DELETE /companion/hours/blocks/:id` (older apps: `PUT /companion/availability`, `PUT/DELETE /companion/dates/:date`), `GET /companion/customers/:id`, `GET /companion/bookings` (requests with their deadline and overlapping requests, upcoming, the latest 100 meet-ups as `done`, and `history`: those plus the latest 60 that didn't happen, newest first), `POST /companion/bookings/:id/accept·decline·cancel·verify-code` |
 | Payouts | `GET/POST /companion/payouts`, `PUT /companion/payouts/account` |

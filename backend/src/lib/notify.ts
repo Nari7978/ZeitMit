@@ -1,6 +1,6 @@
 import type { Env } from '../types';
-import { userChanged } from './live';
-import { newId } from './util';
+import { broadcast, userChanged } from './live';
+import { newId, now } from './util';
 
 type Note = { icon: string; tone: 'violet' | 'success' | 'warning' | 'error' | 'neutral'; title: string; body: string; go?: string };
 
@@ -18,13 +18,49 @@ export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUnti
   const isMessage = (n.go ?? '').startsWith('chat:');
   const isSafety = n.go === 'checkin';
   if (!isSafety && (isMessage ? prefs.pushMessages === false : prefs.pushBookings === false)) return;
-  const send = fetch('https://exp.host/--/api/v2/push/send', {
+  const send = fetch(env.EXPO_PUSH_URL ?? 'https://exp.host/--/api/v2/push/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ to: row.push_token, title: n.title, body: n.body, data: { go: n.go ?? '' }, sound: 'default' }),
   }).catch(() => undefined);
   if (ctx) ctx.waitUntil(send);
   else await send;
+}
+
+/** Why someone's phone rings for a video date: the other person joined the call alone, or pinged them from it. */
+export type Ring = { bookingId: string; who: string; why: 'join' | 'ping'; endsAt: number };
+
+/**
+ * Rings someone for a video date the other person is waiting in: a notification (one per call, each ring replaces the
+ * last and puts it on top, unread), a live `ring` event (the open app shows the call, with vibration) and a
+ * high-priority push with sound. Rings go out whatever the booking-update setting says: they are the call itself, like
+ * a phone ringing, and only happen while it's on.
+ */
+export async function ring(env: Env, userId: string, r: Ring) {
+  const go = `call:${r.bookingId}`, at = now();
+  const title = r.why === 'ping' ? `${r.who} is pinging you` : `${r.who} is waiting in your video date`;
+  const body = r.why === 'ping' ? 'They’re waiting in your video date. Tap to join.' : 'Tap to join the call.';
+  await env.DB.prepare(
+    `INSERT INTO notifications (id, user_id, icon, tone, title, body, go, read, created_at) VALUES (?, ?, 'video', 'violet', ?, ?, ?, 0, ?)
+     ON CONFLICT (id) DO UPDATE SET title = excluded.title, body = excluded.body, read = 0, created_at = excluded.created_at`,
+  ).bind(`n_ring_${r.bookingId}_${userId}`, userId, title, body, go, at).run();
+  // `changed` refreshes the notifications (older app versions only know that one); `ring` shows the call. The live
+  // event and the push carry the same `at`, so a ring answered or dismissed on one doesn't show again from the other.
+  const event = { bookingId: r.bookingId, who: r.who, why: r.why, at, endsAt: r.endsAt };
+  await Promise.all([userChanged(env, userId, go), broadcast(env, `user:${userId}`, { type: 'ring', ...event })]);
+  const row = await env.DB.prepare('SELECT push_token FROM users WHERE id = ?').bind(userId).first<{ push_token: string | null }>();
+  if (!row?.push_token) return;
+  await fetch(env.EXPO_PUSH_URL ?? 'https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      to: row.push_token, title, body, data: { go, kind: 'ring', ...event },
+      // The channel every app version creates: a push for a channel the installed app never made wouldn't show.
+      sound: 'default', priority: 'high',
+      // A ring that can't be delivered within a few minutes is of no use (and never after the call has ended).
+      ttl: Math.max(30, Math.min(r.endsAt - now(), 300)),
+    }),
+  }).catch(() => undefined);
 }
 
 /** An HTML version and files (content in base64) to send along with the plain text. */

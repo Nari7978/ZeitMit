@@ -1,9 +1,11 @@
-// Video dates: who can join and when, the call room passing the setup between the two phones, the payment released
-// after enough time on the call together, the call ending at the booked end, and the no-show rules.
-// Runs against a LOCAL API started with a short release time, e.g.
-//   npx wrangler dev --local --test-scheduled --var CALL_RELEASE_SECONDS:3
+// Video dates: who can join and when, ringing and pinging the other person, the call room passing the setup between
+// the two phones, the payment released after enough time on the call together, the call ending at the booked end,
+// and the no-show rules.
+// Runs against a LOCAL API started with a short release time and ping gap, with pushes sent to this script, e.g.
+//   npx wrangler dev --local --test-scheduled --var CALL_RELEASE_SECONDS:3 --var CALL_PING_GAP_SECONDS:2 --var EXPO_PUSH_URL:http://localhost:8798/push
 // with the demo companions seeded (it moves booking times in the local database). Usage: node scripts/video.mjs [api]
 import { execSync } from 'node:child_process';
+import { createServer } from 'node:http';
 
 const [BASE = 'http://localhost:8787'] = process.argv.slice(2);
 const CID = 'demo_yuki'; // offers video dates
@@ -23,14 +25,27 @@ const row = (id) => JSON.parse(execSync(`npx wrangler d1 execute DB --local --js
 const cron = () => fetch(`${BASE}/__scheduled?cron=*/10+*+*+*+*`);
 const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(150); } return false; };
 
-/** A call room socket that keeps what it receives. */
-const join = (id, token) => new Promise((resolve, reject) => {
-  const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/calls/${id}/ws?token=${encodeURIComponent(token)}`);
+// The push service (EXPO_PUSH_URL points here): keeps every push the API sends.
+const pushes = [];
+const pushMock = createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => (body += c));
+  req.on('end', () => {
+    try { pushes.push(JSON.parse(body)); } catch { /* not JSON */ }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"data":{"status":"ok"}}');
+  });
+}).listen(8798);
+
+/** A socket (a call room, or someone's live updates) that keeps what it receives. */
+const socket = (path, token) => new Promise((resolve, reject) => {
+  const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}${path}?token=${encodeURIComponent(token)}`);
   const got = [];
   ws.onmessage = (e) => got.push(JSON.parse(e.data));
   ws.onopen = () => resolve({ ws, got, send: (m) => ws.send(JSON.stringify(m)), has: (type) => got.some((m) => m.type === type), closed: () => ws.readyState >= 2 });
   ws.onerror = () => reject(new Error('socket failed'));
 });
+const join = (id, token) => socket(`/calls/${id}/ws`, token);
 
 const Y = await login('yuki@demo.zeitmit.app');
 const C = await login(`video+${Date.now()}@example.com`);
@@ -81,6 +96,11 @@ ok(row(soonId).status === 'confirmed', 'once accepted it’s confirmed');
 startedAgo(soonId, -300);
 r = await call('POST', `/calls/${soonId}`, C.token);
 ok(r.status === 200, 'and opens 10 minutes before the start');
+const early = await join(soonId, C.token);
+await until(() => early.has('hello'));
+r = await call('POST', `/calls/${soonId}/ping`, C.token);
+ok(r.status === 409 && r.data?.error === 'You can ping Yuki once the video date starts.', 'joining early rings once, but pings start at the booked time');
+early.ws.close();
 await call('POST', `/bookings/${soonId}/cancel`, C.token);
 r = await call('POST', `/calls/${soonId}`, C.token);
 ok(r.status === 409 && r.data?.error === 'This booking was cancelled.', 'a cancelled one doesn’t');
@@ -93,6 +113,65 @@ const coffee = (await call('GET', '/companions/demo_noah/slots')).data.find((d) 
 const cof = (await call('POST', '/bookings', C.token, { companionId: 'demo_noah', act: 'movies', date: coffee.date, time: coffee.times[0], dur: 1, place: '' })).data.id;
 ok((await call('POST', `/calls/${cof}`, C.token)).data?.error === 'This booking isn’t a video date.', 'only video dates have a call');
 await call('POST', `/bookings/${cof}/cancel`, C.token);
+
+// 2b) Ringing the other person: each time someone is in the call alone (not again for a quick reconnect), and when
+// they ping; live in the open app, by push whatever the push settings say, one notification per call
+await call('PATCH', '/me', Y.token, { pushToken: 'ExponentPushToken[video-test]', prefs: { pushBookings: false } });
+const rid = await book();
+startedAgo(rid, 60);
+const yl = await socket('/live', Y.token);
+const rings = (why) => yl.got.filter((m) => m.type === 'ring' && m.bookingId === rid && (!why || m.why === why));
+const ringPushes = () => pushes.filter((p) => p.data?.kind === 'ring' && p.data.bookingId === rid);
+const c1 = await join(rid, C.token);
+ok(await until(() => c1.has('hello')), 'Cora joins the video date before Yuki');
+r = await call('POST', `/calls/${rid}/ping`, C.token);
+ok(r.status === 429 && /^You can ping Yuki again in [12] seconds?\.$/.test(r.data?.error), `pinging straight away: too soon (“${r.data?.error}”)`);
+const hi = c1.got.find((m) => m.type === 'hello');
+ok(hi.peer === false && hi.pingsLeft === 10 && hi.pingIn >= 1 && hi.pingIn <= 2, `alone: Yuki’s phone rings, and Cora can ping again in ${hi.pingIn}s (10 pings left)`);
+ok(await until(() => rings('join').length === 1), 'Yuki’s open app rings at once (live)');
+const ring1 = rings('join')[0];
+ok(ring1.who === 'Cora' && ring1.endsAt === row(rid).starts_at + 3600 && typeof ring1.at === 'number', `saying who's waiting and until when (${ring1.who})`);
+ok(await until(() => ringPushes().length === 1), 'a push goes out too, though Yuki turned off booking pushes');
+const p1 = ringPushes()[0];
+ok(p1.to === 'ExponentPushToken[video-test]' && p1.title === 'Cora is waiting in your video date' && p1.body === 'Tap to join the call.' && p1.data.go === `call:${rid}`
+  && p1.priority === 'high' && p1.channelId === undefined && p1.sound === 'default' && p1.ttl > 0 && p1.ttl <= 300 && p1.data.at === ring1.at,
+  `high priority with sound, on the channel every app version has, opening the call (ttl ${p1.ttl}s)`);
+await sleep(2100);
+r = await call('POST', `/calls/${rid}/ping`, C.token);
+ok(r.status === 200 && r.data.pingsLeft === 9 && r.data.pingIn === 2, `after the gap Cora pings Yuki (${JSON.stringify(r.data)})`);
+ok(await until(() => rings('ping').length === 1 && ringPushes().length === 2), 'Yuki’s phone rings again, live and by push');
+ok(ringPushes()[1].title === 'Cora is pinging you' && ringPushes()[1].body === 'They’re waiting in your video date. Tap to join.', 'as a ping');
+const ringNotes = (await call('GET', '/me/notifications', Y.token)).data.filter((n) => n.go === `call:${rid}`);
+ok(ringNotes.length === 1 && ringNotes[0].title === 'Cora is pinging you' && !ringNotes[0].read, 'one notification for the call: the newest ring replaces the last, unread');
+r = await call('POST', `/calls/${rid}/ping`, Y.token);
+ok(r.status === 409 && r.data?.error === 'Join the call first, then ping.', 'only someone in the call can ping');
+ok((await call('POST', `/calls/${rid}/ping`, S.token)).status === 404, 'nobody else can (404)');
+const c2 = await join(rid, C.token); // a reconnect: replaces the first connection
+ok(await until(() => c2.has('hello')) && c2.got.find((m) => m.type === 'hello').pingsLeft === 9, 'Cora reconnects');
+await sleep(1000);
+ok(rings().length === 2, 'a reconnect a moment later doesn’t ring again');
+for (let i = 0; i < 9; i++) { await sleep(2050); r = await call('POST', `/calls/${rid}/ping`, C.token); }
+ok(r.status === 200 && r.data.pingsLeft === 0, `ten pings in all (${r.status}, ${r.data?.pingsLeft} left)`);
+await sleep(2050);
+r = await call('POST', `/calls/${rid}/ping`, C.token);
+ok(r.status === 429 && r.data?.error === 'You’ve pinged Yuki 10 times. They know you’re waiting.', 'then no more for this video date');
+c2.send({ type: 'bye' });
+ok(await until(() => yl.got.some((m) => m.type === 'ring-off' && m.bookingId === rid && typeof m.at === 'number')), 'Cora hangs up before Yuki came: Yuki’s phone stops ringing');
+await sleep(8100); // 4 times the ping gap since the last ring
+const c3 = await join(rid, C.token);
+ok(await until(() => rings('join').length === 2), `joining alone again later rings again (${rings().map((m) => m.why).join(', ')})`);
+const y3 = await join(rid, Y.token);
+ok(await until(() => y3.has('hello') && c3.has('peer-joined')), 'Yuki answers: both in the call');
+r = await call('POST', `/calls/${rid}/ping`, C.token);
+ok(r.status === 409 && r.data?.error === 'Yuki is already in the call.', 'nothing to ping while both are there');
+const ringsBefore = rings().length;
+const y4 = await join(rid, Y.token); // Yuki rejoins with Cora there: nobody is alone, nothing rings
+await until(() => y4.has('hello'));
+await sleep(800);
+ok(rings().length === ringsBefore && !c3.got.some((m) => m.type === 'ring'), 'joining while the other is there rings nobody');
+for (const w of [c3, y3, y4, yl]) w.ws.close();
+await call('PATCH', '/me', Y.token, { pushToken: null, prefs: { pushBookings: true } });
+await call('POST', `/companion/bookings/${rid}/cancel`, Y.token, { reason: 'Something else' });
 
 // 3) The call room
 const a = await join(id, C.token);
@@ -154,5 +233,6 @@ ok(yn.some((n) => n.title === 'You missed a video date') && yn.some((n) => n.tit
 await cron(); await sleep(1500);
 ok(row(both).status === 'confirmed' && (await call('GET', '/me/notifications', C.token)).data.length === cn.length, 'each one is settled only once');
 
+pushMock.close();
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

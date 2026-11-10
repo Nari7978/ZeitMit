@@ -4,7 +4,7 @@ import { DEFAULT_TZ } from './time';
 export type CompanionRow = {
   user_id: string; display_name: string; age: number | null; show_age: number; pronouns: string | null; gender: string;
   area: string; dist: string; hue: number; photo_note: string; tagline: string; bio: string; rate: number;
-  interests: string; languages: string; activities: string; boundaries: string; lgbtq: number; status: string;
+  interests: string; languages: string; activities: string; boundaries: string; video_boundaries: string; lgbtq: number; status: string;
   id_verified: number; rating: number | null; review_count: number; photo_id: string | null; id_photo_id: string | null;
   gallery: string; timezone: string | null;
 };
@@ -34,13 +34,15 @@ export function toCompanion(r: CompanionRow) {
     interests: parseJson<string[]>(r.interests, []),
     langs: parseJson<[string, string][]>(r.languages, []),
     acts: parseJson<string[]>(r.activities, []),
+    /** Boundaries: for dates in person, and for video dates. */
     ok: parseJson<string[]>(r.boundaries, []),
+    okVideo: parseJson<string[]>(r.video_boundaries, []),
     bio: r.bio,
     status: r.status,
     photoUrl: r.photo_id ? `/photos/${r.photo_id}` : null,
     gallery: parseJson<string[]>(r.gallery, []).map((id) => `/photos/${id}`),
     showAge: !!r.show_age,
-    /** Her hours are in this zone (times are shown in each viewer's own zone). */
+    /** The companion's hours are in this zone (times are shown in each viewer's own zone). */
     tz: r.timezone || DEFAULT_TZ,
   };
 }

@@ -5,16 +5,28 @@ import { DurableObject } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
 import { VIDEO_ACT } from './types';
-import { notify } from './lib/notify';
+import { broadcast } from './lib/live';
+import { ring } from './lib/notify';
 import { fail, now } from './lib/util';
 import { completeVideoDate } from './routes/bookings';
 
 type Side = 'customer' | 'companion';
 type Attachment = { uid: string; side: Side; media: boolean; gone?: boolean };
-type Meta = { booking: string; end: number; release: number };
+/** The video date, and who's on each side (rooms from before pings didn't keep that). */
+type Meta = { booking: string; end: number; release: number; customer?: string; companion?: string };
+/** One side's rings of the other: when the last went out and how many of them were pings. */
+type Rang = { at: number; pings: number };
+/** Why a ping didn't go out: not in the call yourself, the other person is there, too soon, or too many. */
+type PingResult = { ok: true; pingIn: number; pingsLeft: number } | { ok: false; why: 'not-in' | 'here' | 'max' | 'wait'; wait?: number };
 
 /** The call opens this long before the start. */
 export const JOIN_EARLY_S = 10 * 60;
+/**
+ * Pings: the waiting person can ring the other every 30 seconds (`CALL_PING_GAP_SECONDS`), at most PING_MAX times per
+ * video date. Joining alone rings them too, but not again for a reconnect within 4 times that (2 minutes).
+ */
+export const pingGap = (env: Env) => Math.max(1, Number(env.CALL_PING_GAP_SECONDS) || 30);
+export const PING_MAX = 10;
 /** Seconds on the call together before the payment is released. */
 export const releaseSeconds = (env: Env) => Math.max(1, Number(env.CALL_RELEASE_SECONDS) || 600);
 const otherSide = (s: Side): Side => (s === 'customer' ? 'companion' : 'customer');
@@ -96,21 +108,44 @@ calls.get('/:id/ws', async (c) => {
   if (c.req.header('Upgrade') !== 'websocket') fail(400, 'Expected a WebSocket upgrade.');
   const { b, side, end } = await joinable(c.env, c.req.param('id'), c.get('user').id);
   const url = new URL('https://call/ws');
-  for (const [k, v] of Object.entries({ uid: c.get('user').id, side, booking: b.id, end: String(end), release: String(releaseSeconds(c.env)) })) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries({
+    uid: c.get('user').id, side, booking: b.id, end: String(end), release: String(releaseSeconds(c.env)), customer: b.customer_id, companion: b.companion_id,
+  })) url.searchParams.set(k, v);
   return c.env.CALLS.get(c.env.CALLS.idFromName(b.id)).fetch(url.toString(), c.req.raw);
 });
 
-/** Tells the other person that someone is waiting for them in the call (once per side). */
-async function tellWaiting(env: Env, bookingId: string, joined: Side) {
+/**
+ * Pings the other person from the call: their phone rings again. From the booked start, only while you're in the call
+ * and they aren't, at most every `pingGap` seconds and PING_MAX times per video date. Returns in how many seconds the
+ * next one can go out.
+ */
+calls.post('/:id/ping', async (c) => {
+  const { b, side } = await joinable(c.env, c.req.param('id'), c.get('user').id);
+  const peer = side === 'customer' ? b.companion_name : firstName(b.customer_name) || 'your customer';
+  // Joining early rings them once; pinging again and again is for when they're late.
+  if (now() < b.starts_at) fail(409, `You can ping ${peer} once the video date starts.`);
+  const res = await c.env.CALLS.get(c.env.CALLS.idFromName(b.id)).fetch(`https://call/ping?side=${side}`, { method: 'POST' });
+  const r = await res.json<PingResult>();
+  if (!r.ok) {
+    if (r.why === 'not-in') fail(409, 'Join the call first, then ping.');
+    if (r.why === 'here') fail(409, `${peer} is already in the call.`);
+    if (r.why === 'max') fail(429, `You’ve pinged ${peer} ${PING_MAX} times. They know you’re waiting.`);
+    fail(429, `You can ping ${peer} again in ${r.wait} second${r.wait === 1 ? '' : 's'}.`);
+  }
+  return c.json(r);
+});
+
+const firstName = (name: string | null) => (name || '').trim().split(/\s+/)[0];
+
+/** Rings the other person of a video date (see `ring`): the one who's waiting joined alone or pinged. */
+async function sendRing(env: Env, bookingId: string, from: Side, why: 'join' | 'ping') {
   const b = await env.DB.prepare(
-    `SELECT b.customer_id, b.companion_id, c.display_name AS companion_name, u.name AS customer_name FROM bookings b
+    `SELECT b.customer_id, b.companion_id, b.starts_at, b.duration_h, c.display_name AS companion_name, u.name AS customer_name FROM bookings b
      JOIN companions c ON c.user_id = b.companion_id JOIN users u ON u.id = b.customer_id WHERE b.id = ?`,
-  ).bind(bookingId).first<{ customer_id: string; companion_id: string; companion_name: string; customer_name: string | null }>();
+  ).bind(bookingId).first<{ customer_id: string; companion_id: string; starts_at: number; duration_h: number; companion_name: string; customer_name: string | null }>();
   if (!b) return;
-  const who = joined === 'customer' ? (b.customer_name || '').trim().split(/\s+/)[0] || 'Your customer' : b.companion_name;
-  await notify(env, joined === 'customer' ? b.companion_id : b.customer_id, {
-    icon: 'video', tone: 'violet', title: `${who} is waiting in your video date`, body: 'Join the call from your booking.', go: `call:${bookingId}`,
-  });
+  const who = from === 'customer' ? firstName(b.customer_name) || 'Your customer' : b.companion_name;
+  await ring(env, from === 'customer' ? b.companion_id : b.customer_id, { bookingId, who, why, endsAt: b.starts_at + Math.round(b.duration_h * 3600) });
 }
 
 /**
@@ -132,10 +167,15 @@ export class CallRoom extends DurableObject<Env> {
   }
 
   async fetch(req: Request) {
+    const url = new URL(req.url);
+    if (url.pathname === '/ping') return Response.json(await this.ping(url.searchParams.get('side') === 'companion' ? 'companion' : 'customer'));
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
-    const q = new URL(req.url).searchParams;
+    const q = url.searchParams;
     const uid = q.get('uid') ?? '', side = q.get('side') === 'companion' ? 'companion' : 'customer';
-    const meta: Meta = { booking: q.get('booking') ?? '', end: Number(q.get('end')), release: Number(q.get('release')) || 600 };
+    const meta: Meta = {
+      booking: q.get('booking') ?? '', end: Number(q.get('end')), release: Number(q.get('release')) || 600,
+      customer: q.get('customer') ?? undefined, companion: q.get('companion') ?? undefined,
+    };
     await this.ctx.storage.put('meta', meta);
     // One connection per person: rejoining (or a second phone) replaces the old one.
     const old = this.live(side);
@@ -145,15 +185,17 @@ export class CallRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(pair[1], [side, uid]);
     pair[1].serializeAttachment({ uid, side, media: false } satisfies Attachment);
     const peer = this.live(otherSide(side));
-    this.send([pair[1]], { type: 'hello', peer: peer.length > 0, confirmed: !!(await this.ctx.storage.get('released')), together: await this.together(), release: meta.release, endsAt: meta.end });
+    // In alone: the other person's phone rings (each time, not just the first; a reconnect a moment later doesn't).
+    let rang = await this.rang(side);
+    if (!peer.length && now() - rang.at >= 4 * pingGap(this.env)) rang = await this.ringOther(side, 'join', rang);
+    this.send([pair[1]], {
+      type: 'hello', peer: peer.length > 0, confirmed: !!(await this.ctx.storage.get('released')), together: await this.together(), release: meta.release, endsAt: meta.end,
+      ...this.pingInfo(rang),
+    });
     this.send(peer, { type: 'peer-joined' });
-    // The first time in: noted for the no-show rules, and the other person hears they're being waited for.
+    // The first time in is noted for the no-show rules.
     const col = side === 'customer' ? 'call_customer_at' : 'call_companion_at';
     await this.env.DB.prepare(`UPDATE bookings SET ${col} = COALESCE(${col}, ?) WHERE id = ?`).bind(now(), meta.booking).run();
-    if (!peer.length && !(await this.ctx.storage.get(`told:${side}`))) {
-      await this.ctx.storage.put(`told:${side}`, true);
-      this.ctx.waitUntil(tellWaiting(this.env, meta.booking, side).catch((e) => console.error('Waiting note failed', e)));
-    }
     await this.recount();
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
@@ -170,7 +212,10 @@ export class CallRoom extends DurableObject<Env> {
     else if (m.type === 'bye') {
       // Hung up on purpose: the other phone can end its side of the call straight away.
       ws.serializeAttachment({ ...me, media: false, gone: true });
-      if (!this.live(me.side, ws).length) this.send(peer, { type: 'peer-left', bye: true });
+      if (!this.live(me.side, ws).length) {
+        this.send(peer, { type: 'peer-left', bye: true });
+        if (!peer.length) await this.ringOff(me.side);
+      }
       try { ws.close(1000, 'bye'); } catch { /* closed */ }
       await this.recount(ws);
     }
@@ -192,9 +237,48 @@ export class CallRoom extends DurableObject<Env> {
     if (!me.gone) {
       ws.serializeAttachment({ ...me, media: false });
       // Replaced by a newer connection of the same person: nothing changed for the other side.
+      // (The ringing goes on: they may be back in a moment. It stops by itself, or when they hang up.)
       if (!this.live(me.side, ws).length) this.send(this.live(otherSide(me.side)), { type: 'peer-left', bye: false });
     }
     await this.recount(ws);
+  }
+
+  // ---------- Ringing the other person ----------
+
+  private async rang(side: Side) {
+    return (await this.ctx.storage.get<Rang>(`rang:${side}`)) ?? { at: 0, pings: 0 };
+  }
+  /** In how many seconds this side can ping next and how many pings are left, for the app's Ping button. */
+  private pingInfo(r: Rang) {
+    return { pingIn: Math.max(0, r.at + pingGap(this.env) - now()), pingsLeft: Math.max(0, PING_MAX - r.pings) };
+  }
+
+  /** Notes the ring at once (so two can't go out together), then rings in the background. */
+  private async ringOther(side: Side, why: 'join' | 'ping', last: Rang): Promise<Rang> {
+    const meta = await this.ctx.storage.get<Meta>('meta');
+    const next = { at: now(), pings: last.pings + (why === 'ping' ? 1 : 0) };
+    await this.ctx.storage.put(`rang:${side}`, next);
+    if (meta) this.ctx.waitUntil(sendRing(this.env, meta.booking, side, why).catch((e) => console.error('Ring failed', e)));
+    return next;
+  }
+
+  /** A ping from the call (POST /calls/:id/ping): you have to be in it, the other person not. */
+  private async ping(side: Side): Promise<PingResult> {
+    if (!this.live(side).length) return { ok: false, why: 'not-in' };
+    if (this.live(otherSide(side)).length) return { ok: false, why: 'here' };
+    const last = await this.rang(side);
+    if (last.pings >= PING_MAX) return { ok: false, why: 'max' };
+    const wait = last.at + pingGap(this.env) - now();
+    if (wait > 0) return { ok: false, why: 'wait', wait };
+    return { ok: true, ...this.pingInfo(await this.ringOther(side, 'ping', last)) };
+  }
+
+  /** The one who rang hung up before the other came: the other's phone can stop ringing. */
+  private async ringOff(side: Side) {
+    const meta = await this.ctx.storage.get<Meta>('meta');
+    const to = meta?.[otherSide(side)];
+    if (!meta || !to || !(await this.rang(side)).at) return;
+    this.ctx.waitUntil(broadcast(this.env, `user:${to}`, { type: 'ring-off', bookingId: meta.booking, at: now() }));
   }
 
   /** Seconds both have been on the call together so far. */
