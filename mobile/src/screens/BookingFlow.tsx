@@ -3,7 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInp
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { AM, BSTEPS, eur, isVideo, kindOf, kindsOf, lengthLabel, MAX_MINUTES, MIN_MINUTES, NO, placeFor, placeOr, ROM, slotDay, type ActId, type Kind } from '../data';
+import { AM, boundariesOf, BSTEPS, eur, isVideo, kindOf, kindsOf, lengthLabel, MAX_MINUTES, MIN_MINUTES, placeFor, placeOr, ROM, slotDay, type ActId, type Kind } from '../data';
 import { daysOf, deadlineFor, earliestNow, firstStart, freeFrom, otherZone, timeOf, useAvailability } from '../lib/avail';
 import { cityOf } from '../lib/tz';
 import { localAt, untilLabel, whenAt } from '../lib/dates';
@@ -43,8 +43,9 @@ export default function BookingFlow() {
   const free = a?.kinds[kind] ?? null;
   const minLen = free?.min ?? MIN_MINUTES[kind];
   const maxLen = free?.max ?? MAX_MINUTES;
-  // Another kind of activity can have other free time: the picked start goes (quietly), the day stays.
-  const pickAct = (x: ActId) => upd(kindOf(x) === kind ? { act: x } : { act: x, start: null, minutes: null });
+  // Another kind of activity can have other free time: the picked start goes (quietly), the day stays. It also has
+  // other boundaries, so agreeing to them starts over.
+  const pickAct = (x: ActId) => upd(kindOf(x) === kind ? { act: x } : { act: x, start: null, minutes: null, agree: false });
   const [booked, setBooked] = useState<{ expiresAt?: number } | null>(null);
   const days = a ? daysOf(a, kind, minLen) : [];
   const day = days.find((d) => d.date === b.date);
@@ -265,7 +266,7 @@ export default function BookingFlow() {
                 <Txt size={13} color={colors.gray600} style={{ flex: 1 }}>Agree on a public place in the chat.</Txt>
               </Row>
             )}
-            {isDateAct ? <Boundaries c={c} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
+            {isDateAct ? <Boundaries c={c} kind={kind} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
             <TextButton label="Pick another time" icon="calendar" size={14} weight={700} onPress={() => { setQuick(false); setStep(b.act ? 2 : 1); }} style={{ alignSelf: 'center', marginTop: 18 }} />
           </>
         )}
@@ -408,7 +409,7 @@ export default function BookingFlow() {
                 <Txt size={16} weight={700}>{total}</Txt>
               </Row>
             </Box>
-            {isDateAct ? <Boundaries c={c} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
+            {isDateAct ? <Boundaries c={c} kind={kind} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
             <View style={{ marginTop: 14, gap: 8, padding: 16, borderRadius: 16, backgroundColor: colors.lilac }}>
               <Txt size={14} weight={700}>How payment works</Txt>
               <Row style={{ gap: 4, alignItems: 'flex-start' }}>
@@ -463,17 +464,21 @@ function EndsAt({ start, minutes, dst }: { start: number; minutes: number; dst?:
 const inputReset = { paddingVertical: 0, color: colors.ink, outlineStyle: 'none' } as object;
 const pill = { height: 34, paddingHorizontal: 12, borderRadius: 999, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white, justifyContent: 'center' as const };
 
-/** The companion's boundaries for a date, and "I'll respect these boundaries" (needed to book one). */
-function Boundaries({ c, agree, onToggle }: { c: { name: string; ok: string[] }; agree: boolean; onToggle: () => void }) {
+/**
+ * The companion's boundaries for a date, and "I'll respect these boundaries" (needed to book one). A video date has
+ * its own (nothing physical happens on a call).
+ */
+function Boundaries({ c, kind, agree, onToggle }: { c: { name: string; ok: string[]; okVideo?: string[] }; kind: Kind; agree: boolean; onToggle: () => void }) {
+  const bd = boundariesOf(c, kind);
   return (
     <View style={{ marginTop: 14, padding: 16, borderRadius: 18, backgroundColor: colors.blush, gap: 10 }}>
       <Row style={{ gap: 6 }}>
-        <Icon name="heart" size={15} />
-        <Txt size={14} weight={700}>{c.name}’s boundaries</Txt>
+        <Icon name={kind === 'video' ? 'video' : 'heart'} size={15} />
+        <Txt size={14} weight={700} style={{ flex: 1 }}>{kind === 'video' ? `${c.name}’s video date boundaries` : `${c.name}’s boundaries`}</Txt>
       </Row>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-        {c.ok.map((o) => <BoundaryChip key={o} label={o} icon="check" color={colors.greenDeep} />)}
-        {NO.map((o) => <BoundaryChip key={o} label={o} icon="x" color={colors.redDeep} />)}
+        {(bd.ok.length ? bd.ok : [bd.none]).map((o) => <BoundaryChip key={o} label={o} icon="check" color={colors.greenDeep} />)}
+        {bd.no.map((o) => <BoundaryChip key={o} label={o} icon="x" color={colors.redDeep} />)}
       </View>
       <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: agree }} onPress={onToggle} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 4 }}>
         <View style={{ width: 22, height: 22, borderRadius: 7, borderWidth: 1.5, borderColor: agree ? colors.roseDeep : colors.ink, backgroundColor: agree ? colors.roseDeep : colors.white, alignItems: 'center', justifyContent: 'center' }}>
@@ -515,10 +520,11 @@ const PriceRow = ({ l, r }: { l: string; r: string }) => (
   </Row>
 );
 
+// Long labels (German, small phones) wrap inside the chip instead of running past the card.
 const BoundaryChip = ({ label, icon, color }: { label: string; icon: string; color: string }) => (
-  <Row style={{ height: 26, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.white, gap: 4 }}>
+  <Row style={{ minHeight: 26, maxWidth: '100%', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 13, backgroundColor: colors.white, gap: 4 }}>
     <Icon name={icon} size={12} color={color} />
-    <Txt size={12} color={color}>{label}</Txt>
+    <Txt size={12} color={color} style={{ flexShrink: 1 }}>{label}</Txt>
   </Row>
 );
 

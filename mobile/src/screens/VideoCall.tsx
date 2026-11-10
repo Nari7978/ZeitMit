@@ -14,17 +14,25 @@ import { Icon } from '../ui/Icon';
 import { Txt } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton } from '../ui/common';
 import { canFlipCamera, flipCamera, VideoView } from '../lib/rtc';
-import { useVideoCall, type Phase } from '../lib/videoCall';
-import { locale, t } from '../i18n';
+import { useVideoCall, type Phase, type PingState } from '../lib/videoCall';
+import { localAt } from '../lib/dates';
+import { setInCall } from '../lib/ring';
+import { t } from '../i18n';
 
 const NIGHT = '#101012';
-const clock = (unix: number) => new Intl.DateTimeFormat(locale(), { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(unix * 1000));
+/** "21:00", in this phone's time zone like every other time in the app. */
+const clock = (unix: number) => localAt(unix).time;
 
 export default function VideoCall() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const call = useVideoCall(id);
   const { info, phase } = call;
+  // While this call is open, rings for it (the other person joining alone, or pinging) are left out.
+  useEffect(() => {
+    setInCall(id);
+    return () => setInCall(null);
+  }, [id]);
   // Phones: the screen stays on, and screenshots and screen recording are blocked. (Browsers keep the screen on while
   // a video plays, and can't block capture.)
   useEffect(() => {
@@ -85,6 +93,8 @@ export default function VideoCall() {
             </View>
           ) : null}
           <Centre phase={phase} peer={peer} endsAt={info?.endsAt} camOff={call.peerCamOff} />
+          {/* Waiting for them, or they left: ring their phone again. */}
+          {info && (phase === 'waiting' || phase === 'left') ? <PingButton peer={peer} startsAt={info.startsAt} ping={call.ping} onPing={call.sendPing} /> : null}
         </View>
       )}
       {/* In a browser their sound plays through the video element, so it stays while the picture is hidden. */}
@@ -147,6 +157,54 @@ function Centre({ phase, peer, endsAt, camOff }: { phase: Phase; peer: string; e
       {sub ? <Txt size={14} lh={1.45} color="rgba(255,255,255,.75)" align="center" style={{ maxWidth: 300 }}>{sub}</Txt> : null}
       {phase === 'connecting' || phase === 'reconnecting' ? <ActivityIndicator color={colors.white} /> : null}
     </>
+  );
+}
+
+/**
+ * "Ping Noah": rings their phone again while you wait, from the booked start (joining early rings them once). After a
+ * ping (or joining, which rings them too) it counts down to the next one; there's a limit per video date.
+ */
+function PingButton({ peer, startsAt, ping, onPing }: { peer: string; startsAt: number; ping: PingState; onPing: () => Promise<void> }) {
+  const [, tick] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  // Redraws every second for the countdown, which is worked out from the clock now (right after a ping, too).
+  useEffect(() => {
+    const iv = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  const now = Date.now() / 1000;
+  const wait = Math.ceil(ping.at - now);
+  const early = now < startsAt;
+  const ready = ping.left > 0 && wait <= 0 && !early && !busy;
+  const label = ping.left <= 0 ? 'No pings left' : early ? `Ping from ${clock(startsAt)}` : wait > 0 ? `Ping again in ${wait} s` : `Ping ${peer}`;
+  const press = async () => {
+    if (!ready) return;
+    setBusy(true);
+    try {
+      await onPing();
+      setSent(true);
+    } catch (e) {
+      useStore.getState().showToast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={{ alignItems: 'center', gap: 8, marginTop: 6 }}>
+      <Pressable
+        testID="ping" accessibilityRole="button" accessibilityLabel={t(label)} accessibilityState={{ disabled: !ready }} disabled={!ready} onPress={() => void press()}
+        style={({ pressed }) => ({
+          minHeight: 46, maxWidth: '100%', paddingHorizontal: 20, paddingVertical: 8, borderRadius: 23, flexDirection: 'row', alignItems: 'center', gap: 8,
+          opacity: pressed ? 0.85 : 1, backgroundColor: ready ? colors.mint : 'rgba(255,255,255,.14)',
+        })}
+      >
+        {busy ? <ActivityIndicator color={colors.ink} /> : <Icon name="bell-ring" size={17} color={ready ? colors.ink : colors.white} />}
+        {/* A long name or German may need two lines on a small phone. */}
+        <Txt size={14} weight={700} color={ready ? colors.ink : colors.white} numberOfLines={2} align="center" style={{ flexShrink: 1 }}>{label}</Txt>
+      </Pressable>
+      {sent ? <Txt size={12.5} color="rgba(255,255,255,.7)" align="center">{`We pinged ${peer}. Their phone rings now.`}</Txt> : null}
+    </View>
   );
 }
 

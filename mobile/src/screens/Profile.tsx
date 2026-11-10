@@ -5,7 +5,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { AM, ageStr, eur, kindsOf, LEVEL, NO, ratingStr, reviewsStr, slotDay, type Companion, type Kind } from '../data';
+import { AM, ageStr, boundariesOf, eur, kindsOf, LEVEL, ratingStr, reviewsStr, slotDay, type Companion, type Kind } from '../data';
 import { api, ApiError } from '../api';
 import { useStore } from '../store';
 import { canMessage, goBack, messageCompanion, openBooking, openQuickBook } from '../nav';
@@ -193,12 +193,28 @@ export default function Profile() {
             ))}
           </View>
 
+          {/* Dates in person and video dates each have their own boundaries: the ones for each kind they offer. */}
           <Txt size={17} weight={700} style={{ marginTop: 26, marginBottom: 4 }}>Boundaries</Txt>
-          <Txt size={13} color={colors.gray600} style={{ marginBottom: 12 }}>Set by {c.name}. They apply to every booking.</Txt>
-          <Row style={{ gap: 10, alignItems: 'stretch' }}>
-            <BoundaryList title="Comfortable with" titleColor={colors.greenDeep} bg={colors.greenSoft} items={c.ok} icon="check" iconColor={colors.green} />
-            <BoundaryList title="Never offered" titleColor={colors.gray800} bg={colors.butter} items={NO} icon="x" iconColor={colors.red} />
-          </Row>
+          <Txt size={13} color={colors.gray600} style={{ marginBottom: 12 }}>
+            {kinds.length > 1 ? `Set by ${c.name}. Dates in person and video dates each have their own.` : kinds[0] === 'video' ? `Set by ${c.name}. They apply to every video date.` : `Set by ${c.name}. They apply to every booking.`}
+          </Txt>
+          {(kinds.length ? kinds : (['meet'] as Kind[])).map((k, i) => {
+            const bd = boundariesOf(c, k);
+            return (
+              <View key={k} style={{ gap: 8, marginTop: i ? 14 : 0 }}>
+                {kinds.length > 1 ? (
+                  <Row style={{ gap: 6 }}>
+                    <Icon name={k === 'video' ? 'video' : 'users-round'} size={15} />
+                    <Txt size={14} weight={700}>{k === 'video' ? 'On video dates' : 'In person'}</Txt>
+                  </Row>
+                ) : null}
+                <Row style={{ gap: 10, alignItems: 'stretch' }}>
+                  <BoundaryList title="Comfortable with" titleColor={colors.greenDeep} bg={colors.greenSoft} items={bd.ok.length ? bd.ok : [bd.none]} icon="check" iconColor={colors.green} />
+                  <BoundaryList title="Never offered" titleColor={colors.gray800} bg={colors.butter} items={bd.no} icon="x" iconColor={colors.red} />
+                </Row>
+              </View>
+            );
+          })}
 
           <Txt size={17} weight={700} style={{ marginTop: 26, marginBottom: 8 }}>Languages</Txt>
           {c.langs.map(([l, lv]) => (

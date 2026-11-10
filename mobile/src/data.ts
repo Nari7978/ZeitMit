@@ -33,7 +33,9 @@ export type Companion = {
   interests: string[];
   langs: [string, string][];
   acts: ActId[];
+  /** Boundaries on dates in person, and on video dates (their own; older servers don't send them). */
   ok: string[];
+  okVideo?: string[];
   bio: string;
   /** Weekdays with availability, 0 = Mon (either kind). */
   days: number[];
@@ -67,8 +69,17 @@ export const A: Activity[] = [
 export const AM = Object.fromEntries(A.map((a) => [a.id, a])) as Record<ActId, Activity>;
 
 export const ROM: ActId[] = ['date', 'plusone', 'family', 'call'];
+/** Boundaries on dates in person: never offered, and what a companion can be comfortable with. */
 export const NO = ['Kissing or intimacy','Private or home locations','Overnight or hotel plans','Meeting or paying off ZeitMit'];
 export const OKOPTS = ['Holding hands','Arm in arm','Hug hello','Couple photos','Introduced as a partner'];
+/** Video dates have their own: nothing physical happens on a call, so these are about the call itself (as on the server). */
+export const VIDEO_NO = ['Nudity or sexual content','Recording the call','Swapping contact details or socials','Calling or paying off ZeitMit'];
+export const VIDEO_OKOPTS = ['Flirting','Pet names','Compliments on looks','Screenshots together','Saying hi to friends or family','Watching or playing together'];
+/** A kind of date's boundaries: what the companion picked (or "just …" when nothing) and what's never offered. */
+export const boundariesOf = (c: { ok: string[]; okVideo?: string[] }, kind: Kind) =>
+  kind === 'video'
+    ? { ok: c.okVideo ?? [], none: 'Just a friendly chat', no: VIDEO_NO }
+    : { ok: c.ok, none: 'Just friendly company', no: NO };
 
 export const LANGS = ['German','English','French','Spanish','Italian','Turkish','Japanese'];
 export const INTERESTS = ['Coffee','Art','Travel','Food','Music','Gaming','Language Exchange','Film','Books','Sports','Design','History'];

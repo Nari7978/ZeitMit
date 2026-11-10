@@ -4,10 +4,21 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useStore } from '../store';
+import { showRing, useRing } from './ring';
 
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }),
+    handleNotification: async (n) => {
+      const d = (n.request.content.data ?? {}) as Record<string, unknown>;
+      // A video date ringing while the app is open: the app shows the call itself (RingBanner), with the sound. Not
+      // at all while you're in that call already.
+      if (d.kind === 'ring') {
+        const inCall = useRing.getState().inCall === d.bookingId;
+        if (!inCall) showRing(d);
+        return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: !inCall, shouldSetBadge: false };
+      }
+      return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
+    },
   });
 }
 
@@ -16,6 +27,8 @@ export async function registerForPush() {
   if (Platform.OS === 'web' || !Device.isDevice) return;
   try {
     if (Platform.OS === 'android') {
+      // Every push uses this channel, video date rings too (high priority): a push sent to a channel an installed app
+      // version never created wouldn't show at all.
       await Notifications.setNotificationChannelAsync('default', { name: 'ZeitMit', importance: Notifications.AndroidImportance.HIGH, lightColor: '#FF4F8B' });
     }
     let { status } = await Notifications.getPermissionsAsync();

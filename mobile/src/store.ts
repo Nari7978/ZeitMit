@@ -106,7 +106,7 @@ export type CompanionStatus = 'none' | 'pending' | 'approved' | 'rejected';
 /** A request: start (unix) and length in minutes. */
 export type NewBooking = { cid: string; act: ActId; startsAt: number; minutes: number; place: string; note: string; boundariesAgreed: boolean };
 export type CompanionApplication = {
-  name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; langs: string[];
+  name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; okVideo?: string[]; langs: string[];
   rate: number; days: string[]; wins: string[]; adult: boolean; rules: boolean; idPhotoId?: string; photoId?: string; tagline?: string;
   levels?: Record<string, string>; area?: string; age: number; gender: 'w' | 'm' | 'nb'; pronouns?: string; galleryIds: string[];
 };

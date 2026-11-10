@@ -13,6 +13,8 @@ import { APP_MAX_WIDTH, useAppFrame } from '../ui/layout';
 import { SheetHost } from '../sheets/SheetHost';
 import { onNotificationTap, registerForPush } from '../lib/push';
 import { useLive } from '../lib/live';
+import { endRing, showRing } from '../lib/ring';
+import { RingBanner } from '../ui/RingBanner';
 import { followGo } from '../nav';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
@@ -65,9 +67,12 @@ export default function RootLayout() {
   }, [ready]);
 
   // Live: the API says the moment something changes for you (a request, a cancellation, a message), so screens update
-  // at once. After a reconnect, reload what may have been missed meanwhile.
+  // at once; a video date rings when the other person is waiting in it. After a reconnect, reload what may have been
+  // missed meanwhile.
   const live = useLive(session === 'in' ? '/live' : null, (e) => {
     if (e.type === 'changed') useStore.getState().onLive(String(e.go ?? ''));
+    else if (e.type === 'ring') showRing(e);
+    else if (e.type === 'ring-off' && typeof e.bookingId === 'string' && e.bookingId) endRing(e.bookingId, typeof e.at === 'number' ? e.at : undefined);
   }, () => {
     if (msSinceRefresh() > 5000) void useStore.getState().refresh();
   });
@@ -140,6 +145,7 @@ export default function RootLayout() {
         </Stack.Protected>
       </Stack>
       {signedIn ? <SheetHost /> : null}
+      {signedIn ? <RingBanner /> : null}
       <Toast bottom={toastBottom} />
       </View>
     </View>

@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, AM, CSTEPS, eur, INTERESTS, LANGS, OKOPTS, WEEK, WIN, type ActId } from '../data';
+import { A, AM, CSTEPS, eur, INTERESTS, LANGS, OKOPTS, VIDEO_OKOPTS, WEEK, WIN, type ActId } from '../data';
 import { GALLERY_MAX, GALLERY_MIN, toggleIn, useStore } from '../store';
 import { goBack, toCompanionMode } from '../nav';
 import { Icon } from '../ui/Icon';
@@ -18,7 +18,7 @@ import { t } from '../i18n';
 
 type Draft = {
   name: string; showAge: boolean; about: string; aboutErr: boolean; interests: string[]; acts: ActId[]; langs: string[];
-  rate: number; days: string[]; wins: string[]; ok: string[]; adult: boolean; idv: boolean; rules: boolean;
+  rate: number; days: string[]; wins: string[]; ok: string[]; okVideo: string[]; adult: boolean; idv: boolean; rules: boolean;
   photoId?: string; photoUrl?: string; idPhotoId?: string; tagline: string; gallery: GalleryPhoto[];
   age: string; gender?: Gender; pronouns: string;
 };
@@ -44,7 +44,7 @@ export default function Become() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(false);
-  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], adult: false, idv: false, rules: false, tagline: '', age: '', pronouns: '', gallery: [] });
+  const [b, setB] = useState<Draft>({ name: first, showAge: true, about: '', aboutErr: false, interests: [], acts: [], langs: [], rate: 25, days: [], wins: [], ok: [], okVideo: [], adult: false, idv: false, rules: false, tagline: '', age: '', pronouns: '', gallery: [] });
   const [uploading, setUploading] = useState<'photo' | 'gallery' | 'id' | null>(null);
   const scroller = useRef<ScrollViewInstance>(null);
   const upload = async (kind: 'companion' | 'gallery' | 'id', source: 'library' | 'camera') => {
@@ -81,7 +81,7 @@ export default function Become() {
     if (busy) return;
     setBusy(true);
     void useStore.getState()
-      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline, age: +b.age, gender: b.gender!, pronouns: b.pronouns.trim() || undefined, galleryIds: b.gallery.map((p) => p.id) })
+      .submitCompanion({ name: b.name, showAge: b.showAge, about: b.about, interests: b.interests, acts: b.acts, ok: b.ok, okVideo: b.acts.includes('call') ? b.okVideo : [], langs: b.langs, rate: b.rate, days: b.days, wins: b.wins, adult: b.adult, rules: b.rules, idPhotoId: b.idPhotoId, photoId: b.photoId, tagline: b.tagline, age: +b.age, gender: b.gender!, pronouns: b.pronouns.trim() || undefined, galleryIds: b.gallery.map((p) => p.id) })
       .then((ok) => { setBusy(false); if (ok) setDone(true); });
   };
 
@@ -242,9 +242,17 @@ export default function Become() {
           <>
             <StepTitle title="What will you offer?" sub="Everything stays non-sexual and in public. Pick at least one." />
             <Wrap>{A.map((a) => <Chip key={a.id} label={a.label} icon={a.icon} iconSize={16} height={40} size={14} padL={12} padR={15} on={b.acts.includes(a.id)} onPress={() => upd({ acts: toggleIn(b.acts, a.id) })} />)}</Wrap>
-            <Txt size={15} weight={700} style={{ marginTop: 26, marginBottom: 4 }}>Your boundaries</Txt>
+            <Txt size={15} weight={700} style={{ marginTop: 26, marginBottom: 4 }}>{b.acts.includes('call') ? 'Your boundaries in person' : 'Your boundaries'}</Txt>
             <Txt size={13} color={colors.gray600} style={{ marginBottom: 10 }}>What you’re comfortable with on date-style bookings. Kissing, intimacy and private locations are never allowed.</Txt>
             <Wrap>{OKOPTS.map((o) => <Chip key={o} label={o} height={38} size={14} padL={15} padR={15} on={b.ok.includes(o)} onPress={() => upd({ ok: toggleIn(b.ok, o) })} />)}</Wrap>
+            {/* Video dates have their own boundaries: nothing physical happens on a call. */}
+            {b.acts.includes('call') ? (
+              <>
+                <Txt size={15} weight={700} style={{ marginTop: 26, marginBottom: 4 }}>Your video date boundaries</Txt>
+                <Txt size={13} color={colors.gray600} style={{ marginBottom: 10 }}>What you’re comfortable with on video dates. Nudity, sexual content and recording the call are never allowed.</Txt>
+                <Wrap>{VIDEO_OKOPTS.map((o) => <Chip key={o} label={o} height={38} size={14} padL={15} padR={15} on={b.okVideo.includes(o)} onPress={() => upd({ okVideo: toggleIn(b.okVideo, o) })} />)}</Wrap>
+              </>
+            ) : null}
             <Txt size={15} weight={700} style={{ marginTop: 26, marginBottom: 10 }}>Languages you speak</Txt>
             <Wrap>{LANGS.map((l) => <Chip key={l} label={l} height={38} size={14} padL={15} padR={15} on={b.langs.includes(l)} onPress={() => upd({ langs: toggleIn(b.langs, l) })} />)}</Wrap>
           </>

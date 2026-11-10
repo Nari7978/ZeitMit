@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 import { colors, font } from '../../theme';
-import { A, INTERESTS, LANGS, OKOPTS, type Companion } from '../../data';
+import { A, INTERESTS, LANGS, OKOPTS, VIDEO_OKOPTS, type Companion } from '../../data';
 import { api } from '../../api';
 import { pickAndUpload } from '../../lib/photos';
 import { GALLERY_MAX, GALLERY_MIN, toggleIn, useStore } from '../../store';
@@ -17,7 +17,7 @@ import { t } from '../../i18n';
 const LEVELS = ['Native', 'Fluent', 'Conversational', 'Basic'];
 
 type Draft = {
-  photoUrl: string | null; tagline: string; about: string; interests: string[]; langs: Record<string, string>; ok: string[];
+  photoUrl: string | null; tagline: string; about: string; interests: string[]; langs: Record<string, string>; ok: string[]; okVideo: string[];
   area: string; showAge: boolean; lgbtq: boolean; age: string; gender: 'w' | 'm' | 'nb'; pronouns: string;
 };
 
@@ -37,7 +37,7 @@ export default function Listing() {
     api<Companion & { bio: string; showAge: boolean; ageValue: number | null; galleryIds: string[]; gallery: string[] }>('GET', '/companion')
       .then((c) => {
         setD({
-          photoUrl: c.photoUrl ?? null, tagline: c.tagline, about: c.bio, interests: c.interests, ok: c.ok, area: c.area,
+          photoUrl: c.photoUrl ?? null, tagline: c.tagline, about: c.bio, interests: c.interests, ok: c.ok, okVideo: c.okVideo ?? [], area: c.area,
           langs: Object.fromEntries(c.langs), showAge: c.showAge, lgbtq: c.lgbtq,
           age: c.ageValue ? String(c.ageValue) : '', gender: c.g, pronouns: c.pron ?? '',
         });
@@ -98,7 +98,7 @@ export default function Listing() {
     setBusy('save');
     try {
       await api('PATCH', '/companion', {
-        tagline: d.tagline, about: d.about, interests: d.interests, ok: d.ok, area: d.area, showAge: d.showAge, lgbtq: d.lgbtq,
+        tagline: d.tagline, about: d.about, interests: d.interests, ok: d.ok, okVideo: d.okVideo, area: d.area, showAge: d.showAge, lgbtq: d.lgbtq,
         age: +d.age, gender: d.gender, pronouns: d.pronouns,
         langs: Object.keys(d.langs), levels: d.langs,
       });
@@ -212,12 +212,26 @@ export default function Listing() {
           </Box>
 
           <Box shadow={4} style={card}>
-            <Txt size={15} weight={700}>Your boundaries</Txt>
+            <Txt size={15} weight={700}>{cActs.includes('call') ? 'Your boundaries in person' : 'Your boundaries'}</Txt>
             <Txt size={12} lh={1.45} color={colors.gray600}>What you’re comfortable with on date-style bookings. Kissing, intimacy and private locations are never allowed.</Txt>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {OKOPTS.map((o) => <Chip key={o} label={o} on={d.ok.includes(o)} onPress={() => upd({ ok: toggleIn(d.ok, o) })} />)}
             </View>
           </Box>
+
+          {/* Video dates have their own boundaries (nothing physical happens on a call), shown once video dates are offered. */}
+          {cActs.includes('call') ? (
+            <Box shadow={4} style={card}>
+              <Row style={{ gap: 6 }}>
+                <Icon name="video" size={16} />
+                <Txt size={15} weight={700} style={{ flex: 1 }}>Your video date boundaries</Txt>
+              </Row>
+              <Txt size={12} lh={1.45} color={colors.gray600}>What you’re comfortable with on video dates. Nudity, sexual content and recording the call are never allowed.</Txt>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {VIDEO_OKOPTS.map((o) => <Chip key={o} label={o} on={d.okVideo.includes(o)} onPress={() => upd({ okVideo: toggleIn(d.okVideo, o) })} />)}
+              </View>
+            </Box>
+          ) : null}
 
           <Box shadow={4} style={[card, { gap: 0, paddingVertical: 4 }]}>
             <Row style={{ gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.hairline }}>

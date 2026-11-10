@@ -17,7 +17,9 @@ export type Phase = 'starting' | 'waiting' | 'connecting' | 'live' | 'reconnecti
 const listen = <E>(pc: Peer, type: string, fn: (e: E) => void) =>
   (pc as unknown as { addEventListener(t: string, f: (e: E) => void): void }).addEventListener(type, fn);
 type Signal = { description?: { type: string; sdp?: string }; candidate?: object; session?: string; cam?: boolean; mic?: boolean };
-type Msg = { type: string; peer?: boolean; confirmed?: boolean; bye?: boolean; data?: Signal };
+type Msg = { type: string; peer?: boolean; confirmed?: boolean; bye?: boolean; data?: Signal; pingIn?: number; pingsLeft?: number };
+/** Pinging the other person while you wait: from when it can go out (this phone's clock, unix) and how many are left. */
+export type PingState = { at: number; left: number };
 
 export function useVideoCall(bookingId: string) {
   const [info, setInfo] = useState<CallInfo | null>(null);
@@ -30,6 +32,7 @@ export function useVideoCall(bookingId: string) {
   const [peerCamOff, setPeerCamOff] = useState(false);
   const [peerMuted, setPeerMuted] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [ping, setPing] = useState<PingState>({ at: 0, left: 1 });
   const r = useRef({
     pc: null as Peer | null, ws: null as WebSocket | null, stream: null as Stream | null, info: null as CallInfo | null,
     /** Our offer's id (offerer) or the one we answered: setup for any other session is old. */
@@ -115,6 +118,8 @@ export function useVideoCall(bookingId: string) {
     const onMessage = async (m: Msg) => {
       if (m.type === 'hello') {
         if (m.confirmed) setConfirmed(true);
+        // Joining alone has just rung them: the next ping can go out a little later.
+        if (typeof m.pingIn === 'number') setPing({ at: Date.now() / 1000 + m.pingIn, left: m.pingsLeft ?? 1 });
         if (connected()) { send({ type: 'media', on: true }); return; } // back on the server; the video never stopped
         if (m.peer) await offer(); else setPhase('waiting');
       } else if (m.type === 'peer-joined') {
@@ -188,7 +193,12 @@ export function useVideoCall(bookingId: string) {
   const tell = () => { if (r.current.ws?.readyState === 1) r.current.ws.send(JSON.stringify({ type: 'signal', data: { cam: !r.current.camOff, mic: !r.current.muted } })); };
 
   return {
-    info, phase, error, local, remote, muted, camOff, peerCamOff, peerMuted, confirmed,
+    info, phase, error, local, remote, muted, camOff, peerCamOff, peerMuted, confirmed, ping,
+    /** Rings the other person's phone again (they aren't in the call); throws with the reason when it can't. */
+    async sendPing() {
+      const res = await api<{ pingIn: number; pingsLeft: number }>('POST', `/calls/${bookingId}/ping`);
+      setPing({ at: Date.now() / 1000 + res.pingIn, left: res.pingsLeft });
+    },
     toggleMute() { r.current.muted = !r.current.muted; setTracks('audio', !r.current.muted); setMuted(r.current.muted); tell(); },
     toggleCamera() { r.current.camOff = !r.current.camOff; setTracks('video', !r.current.camOff); setCamOff(r.current.camOff); tell(); },
     /** Leaves the call; the other side is told at once. */
