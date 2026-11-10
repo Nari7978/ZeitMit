@@ -118,10 +118,20 @@ jobs:
               # The booking engine answers for a listed companion: their free time, and the older apps' start times.
               FIRST=$(curl -sf "$URL/companions" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s)[0]?.id??''))")
               if [ -n "$FIRST" ]; then
-                A=$(curl -sf "$URL/companions/$FIRST/availability" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const a=JSON.parse(s);console.log(a.tz+' · '+Object.entries(a.kinds).map(([k,v])=>k+': '+(v?v.open.length+' free stretches':'not offered')).join(' · '))})" || echo "failed")
-                SLOTS=$(curl -sf "$URL/companions/$FIRST/slots" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).reduce((n,d)=>n+d.times.length,0)))" || echo "failed")
-                echo "::notice::Availability of $FIRST: $A — older apps' start times this week: $SLOTS"
-                case "$A$SLOTS" in *failed*) echo "::warning::The availability check didn't answer as expected.";; esac
+                # Each check: up to 3 tries; a failure says what came back (HTTP status and the start of the body).
+                check() {
+                  local out=""
+                  for t in 1 2 3; do
+                    out=$(curl -s -m 20 -w '\n%{http_code}' "$URL$1" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=s.lastIndexOf('\n'),body=s.slice(0,i),code=s.slice(i+1);try{if(code!=='200')throw 0;console.log(($2)(JSON.parse(body)))}catch{console.log('failed (HTTP '+code+': '+body.slice(0,120).replace(/\s+/g,' ')+')')}})")
+                    case "$out" in failed*) sleep 3;; *) break;; esac
+                  done
+                  echo "$out"
+                }
+                A=$(check "/companions/$FIRST/availability" "(a)=>a.tz+' · '+Object.entries(a.kinds).map(([k,v])=>k+': '+(v?v.open.length+' free stretches':'not offered')).join(' · ')")
+                SLOTS=$(check "/companions/$FIRST/slots" "(l)=>l.reduce((n,d)=>n+d.times.length,0)")
+                B=$(check "/companions/$FIRST" "(c)=>{if(!Array.isArray(c.okVideo)||c.noVideo?.length!==4)throw 0;return c.ok.length+' in person, '+c.okVideo.length+' for video dates'}")
+                echo "::notice::Availability of $FIRST: $A — older apps' start times this week: $SLOTS — boundaries picked: $B"
+                case "$A$SLOTS$B" in *failed*) echo "::warning::A companion check didn't answer as expected: $A / $SLOTS / $B";; esac
               fi
               exit 0
             fi
