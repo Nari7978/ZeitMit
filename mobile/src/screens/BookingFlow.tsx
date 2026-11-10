@@ -441,11 +441,12 @@ export default function BookingFlow() {
       </ScrollView>
 
       <Row style={{ paddingTop: 14, paddingHorizontal: 20, paddingBottom: keyboard ? 12 : Math.max(30, insets.bottom + 8), backgroundColor: colors.white, borderTopWidth: 2, borderTopColor: colors.ink, gap: 14 }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
+        {/* The total keeps room for itself; on small phones a long button label (German) wraps instead. */}
+        <View style={{ flex: 1, minWidth: 84 }}>
           <Txt size={12} color={colors.gray600}>{b.minutes ? 'Total incl. fees' : 'Select a duration'}</Txt>
           <H size={21} ls={-0.02}>{total}</H>
         </View>
-        <PrimaryButton label={quick || step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={go} style={{ paddingHorizontal: 24 }} />
+        <PrimaryButton label={quick || step === 6 ? (busy ? 'Sending…' : 'Pay & send request') : step === 4 && !b.place.trim() ? 'Skip for now' : 'Continue'} dim={!valid || busy} onPress={go} style={{ paddingHorizontal: 16, flexShrink: 1 }} />
       </Row>
     </KeyboardAvoidingView>
   );

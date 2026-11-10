@@ -109,7 +109,8 @@ export function PrimaryButton({ label, children, onPress, icon, iconSize = 16, h
       style={[{ height, borderRadius: radius, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 20, opacity: dim ? 0.4 : 1 }, style]}
     >
       {icon ? <Icon name={icon} size={iconSize} color={fg} /> : null}
-      {label ? <Txt size={size} weight={weight} color={fg}>{label}</Txt> : children}
+      {/* A button squeezed by its neighbours (German on small phones) wraps its label instead of crushing them. */}
+      {label ? <Txt size={size} weight={weight} color={fg} align="center" style={{ flexShrink: 1 }}>{label}</Txt> : children}
     </PressBox>
   );
 }
