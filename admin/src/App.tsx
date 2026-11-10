@@ -200,7 +200,7 @@ function IdChecks({ say, refresh }: Ctx) {
 
 type Applicant = {
   id: string; name: string; email: string; ageValue: number | null; area: string; tagline: string; bio: string; rate: number;
-  interests: string[]; langs: [string, string][]; acts: string[]; ok: string[]; photoUrl: string | null; idPhotoUrl: string | null; status: string;
+  interests: string[]; langs: [string, string][]; acts: string[]; ok: string[]; okVideo?: string[]; photoUrl: string | null; idPhotoUrl: string | null; status: string;
   g: 'w' | 'm' | 'nb'; pron?: string; gallery?: string[];
 };
 
@@ -246,7 +246,7 @@ function Companions({ say, refresh }: Ctx) {
                 <div className="small"><b>{eur(a.rate * 100)}/h</b> · {({ w: 'Woman', m: 'Man', nb: 'Non-binary' } as const)[a.g]}{a.pron ? ` (${a.pron})` : ''} · {a.area} · “{a.tagline}”</div>
                 <div className="small" style={{ lineHeight: 1.55 }}>{a.bio}</div>
                 <div>{a.acts.map((x) => <span key={x} className="pill">{x}</span>)}</div>
-                <div className="small muted">Languages: {a.langs.map(([l, lv]) => `${l} (${lv})`).join(', ') || '—'} · Interests: {a.interests.join(', ') || '—'} · Boundaries: {a.ok.join(', ') || '—'}</div>
+                <div className="small muted">Languages: {a.langs.map(([l, lv]) => `${l} (${lv})`).join(', ') || '—'} · Interests: {a.interests.join(', ') || '—'} · Boundaries: {a.ok.join(', ') || '—'}{a.acts.includes('call') ? ` · Video date boundaries: ${(a.okVideo ?? []).join(', ') || '—'}` : ''}</div>
                 <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                   {(a.gallery ?? []).map((u) => <a key={u} href={photoSrc(u)} target="_blank" rel="noreferrer"><img className="thumb" src={photoSrc(u)} alt={`${a.name}’s photo`} /></a>)}
                   <span className="small muted">{(a.gallery ?? []).length} more photo{(a.gallery ?? []).length === 1 ? '' : 's'} · check they show the same person and nothing explicit</span>
