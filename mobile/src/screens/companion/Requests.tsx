@@ -71,7 +71,7 @@ export default function Requests() {
                 <Txt raw size={14} lh={1.45} color={colors.gray800}>“{r.note}”</Txt>
               </View>
             ) : null}
-            <Txt size={12} color={colors.gray600}>{isVideo(r.act) ? `${eur(r.payout / 100)} already paid and held by ZeitMit · released after 10 minutes on the call together` : `${eur(r.payout / 100)} already paid and held by ZeitMit · released when you enter their meet code`}</Txt>
+            <Txt size={12} color={colors.gray600}>{isVideo(r.act) ? `${eur(r.payout / 100)} already paid and held by ZeitMit · yours after the call if you stay for the booked time` : `${eur(r.payout / 100)} already paid and held by ZeitMit · released when you enter their meet code`}</Txt>
             {r.resched ? <ReschedBox bookingId={r.id} resched={r.resched} mine={r.resched.by === 'companion'} other={r.who.split(' ')[0]} current={`${r.day} · ${r.time}–${r.end}`} /> : null}
             <Row style={{ gap: 8 }}>
               <SecondaryButton label="Decline" height={44} radius={12} style={{ flex: 1 }} onPress={() => void declineRequest(r.id)} />

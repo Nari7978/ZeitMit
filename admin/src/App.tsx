@@ -279,7 +279,13 @@ type BookingRow = {
   id: string; status: string; kind: 'meet' | 'video'; pay_status: string; activity: string; starts_at: number; ends_at: number; created_at: number;
   expires_at: number; decided_at: number | null; conflict_with: string | null; total: number; customer: string; companion: string; companion_tz: string | null;
   cancel_note: string | null; cancelled_by: string | null; cancel_reason: string | null;
+  /** ZeitMit's fee (kept once accepted), the companion's share (what they earned, once settled), what went back. */
+  fee: number; subtotal: number; refunded: number;
+  /** A video date: the minutes the companion was paid for, when less than booked. */
+  billed_minutes: number | null;
 };
+/** What went back to the customer (bookings refunded before the fee rule have 0 recorded: they got everything back). */
+const backOf = (b: BookingRow) => b.refunded || (b.pay_status === 'refunded' ? b.total : 0);
 type Conflicts = {
   /** Confirmed bookings of one companion that overlap: there should never be any (accepting is one atomic statement). */
   overlaps: { a: string; b: string; companion: string; a_start: number; a_end: number; b_start: number; b_end: number; a_kind: string; b_kind: string }[];
@@ -313,7 +319,7 @@ function Bookings({ say, refresh }: Ctx) {
   const refund = async (b: BookingRow) => {
     const msg = b.pay_status === 'held'
       ? `Refund ${eur(b.total)} to ${b.customer} and cancel the booking?`
-      : `${eur(b.total)} was already paid out for this booking. Refund it to ${b.customer} through Stripe anyway (e.g. a no-show or a complaint)?`;
+      : `${eur(b.total - backOf(b))} was already paid out for this booking. Refund it to ${b.customer} through Stripe anyway (e.g. a no-show or a complaint)?`;
     if (!confirm(msg)) return;
     try { await api('POST', `/admin/bookings/${b.id}/refund`); say('Refunded.'); } catch (e) { say((e as Error).message); }
     load(); refresh();
@@ -374,12 +380,20 @@ function Bookings({ say, refresh }: Ctx) {
                   <td>{b.kind === 'video' ? 'Video' : 'In person'}</td>
                   <td>{b.customer}</td><td>{b.companion}</td><td>{b.activity}</td>
                   <td><span className={`status s-${b.status}`}>{STATUS_LABEL[b.status] ?? b.status}</span>{b.status === 'pending' ? <div className="small muted">accept by {when(b.expires_at)}</div> : null}</td>
-                  <td>{b.pay_status}</td><td>{eur(b.total)}</td>
+                  <td>{b.pay_status}</td>
+                  <td>
+                    {eur(b.total)}
+                    {/* Settled: what came back, and what the companion earned (a video date paid in part: for how long). */}
+                    {backOf(b) > 0 && backOf(b) < b.total ? <div className="small muted">{eur(backOf(b))} back · fee {eur(b.fee)} kept</div> : null}
+                    {backOf(b) >= b.total && b.pay_status === 'refunded' ? <div className="small muted">all refunded</div> : null}
+                    {b.pay_status === 'released' && backOf(b) < b.total ? <div className="small muted">companion {eur(b.subtotal)}{b.billed_minutes !== null ? ` for ${b.billed_minutes} min` : ''}</div> : null}
+                  </td>
                   <td className="small">
                     {b.cancelled_by ? <><b>by {b.cancelled_by}</b>{b.cancel_reason ? ` · ${b.cancel_reason}` : ''}</> : null}
+                    {b.cancel_note ? <div className="muted">{b.cancel_note}</div> : null}
                     {b.conflict_with ? <div>time taken by {b.conflict_with}</div> : null}
                     {b.decided_at && b.status !== 'pending' ? <div className="muted">decided {when(b.decided_at)}</div> : null}
-                    {!b.cancelled_by && !b.conflict_with && !b.decided_at ? <span className="muted">—</span> : null}
+                    {!b.cancelled_by && !b.cancel_note && !b.conflict_with && !b.decided_at ? <span className="muted">—</span> : null}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {b.status === 'pending' || b.status === 'confirmed' ? <button className="btn" onClick={() => void cancel(b)}>Cancel</button> : null}

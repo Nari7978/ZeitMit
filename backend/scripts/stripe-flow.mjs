@@ -54,7 +54,9 @@ r = await call('POST', `/bookings/${a.id}/confirm-payment`, T);
 ok(r.status === 200 && r.data.paid && r.data.booking.status === 'pending', 'confirm after paying → request sent');
 await call('POST', `/companion/bookings/${a.id}/accept`, L);
 r = await call('POST', `/bookings/${a.id}/cancel`, T, { reason: 'Plans changed' });
-ok(r.status === 200 && r.data.late === false && (await intent(a.id)).status === 'canceled', 'free cancellation releases the card hold');
+let pi = await intent(a.id);
+ok(r.status === 200 && r.data.late === false && r.data.refunded === a.total - a.fee && pi.status === 'succeeded' && pi.amount === a.total && pi.amount_received === a.fee,
+  `cancelling 24 h+ ahead once accepted: only the service fee is taken, the rest of the hold released (${pi.amount_received} of ${pi.amount} cents)`);
 
 // 2) Meet code captures the payment
 const b = await paidBooking('demo_jonas', jonas[0], 'walks');
@@ -77,7 +79,10 @@ ok(r.status === 200 && (await intent(c.id)).status === 'refunded', 'support refu
 const d = await paidBooking('demo_lena', lena[2], 'coffee');
 await call('POST', `/companion/bookings/${d.id}/accept`, L);
 r = await call('POST', `/companion/bookings/${d.id}/cancel`, L, { reason: 'Emergency' });
-ok(r.status === 200 && (await intent(d.id)).status === 'canceled', 'companion cancellation releases the card hold');
+pi = await intent(d.id);
+ok(r.status === 200 && r.data.refunded === d.total - d.fee && pi.status === 'succeeded' && pi.amount_received === d.fee, 'companion cancels: the customer pays only the service fee, the rest of the hold released');
+r = await call('POST', `/admin/bookings/${d.id}/refund`, A);
+ok(r.status === 409 && r.data?.error === 'Everything but the service fee was already refunded.', 'support sees that only the fee was kept');
 
 // 5) Support refund of a completed booking
 r = await call('POST', `/admin/bookings/${b.id}/refund`, A);
@@ -113,7 +118,8 @@ await pay(f.checkoutUrl);
 r = await call('POST', `/bookings/${f.id}/release`, T);
 ok(r.status === 200 && r.data.paid === true && r.data.released === false, 'paid just before leaving: release keeps the booking');
 ok((await call('GET', '/companion/bookings', L)).data.requests.some((x) => x.id === f.id), 'and the request reaches the companion');
-await call('POST', `/bookings/${f.id}/cancel`, T);
+r = await call('POST', `/bookings/${f.id}/cancel`, T);
+ok(r.status === 200 && r.data.refunded === f.total && (await intent(f.id)).status === 'canceled', 'cancelling a request before it’s accepted releases the whole hold, fee too');
 
 // 8) Starting again (another length) replaces your own open checkout
 const g = (await at(T)).data;

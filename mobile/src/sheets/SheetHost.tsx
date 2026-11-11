@@ -912,11 +912,15 @@ function CancelSheet() {
   const other = companion ? (theirs?.who ?? 'Your customer') : (mine?.companionName ?? 'your companion');
   const late = !companion && b.status === 'confirmed' && Date.now() / 1000 > (mine?.freeUntil ?? b.startsAt - FREE_CANCEL_HOURS * 3600);
 
+  // Once accepted, ZeitMit's fee isn't refundable; a request is refunded in full.
+  const fee = pending ? 0 : mine?.fee ?? 0;
   const policy = companion
-    ? { icon: 'rotate-ccw', bg: colors.lilac, text: `${other} gets everything back. You won’t receive the ${eur((theirs?.payout ?? 0) / 100)}.` }
+    ? { icon: 'rotate-ccw', bg: colors.lilac, text: pending ? `${other} gets everything back. You won’t receive the ${eur((theirs?.payout ?? 0) / 100)}.` : `You won’t receive the ${eur((theirs?.payout ?? 0) / 100)}: ${other} gets it back. ZeitMit’s service fee isn’t refundable.` }
     : late
       ? { icon: 'circle-alert', bg: '#FDF3E2', text: `It’s less than ${FREE_CANCEL_HOURS} hours before, so there’s no refund. ${other} is paid for the time they reserved.` }
-      : { icon: 'circle-check', bg: colors.mintSoft, text: `Free cancellation: you get ${eur((mine?.total ?? 0) / 100)} back in full.` };
+      : fee > 0
+        ? { icon: 'circle-check', bg: colors.mintSoft, text: `You get ${eur(((mine?.total ?? 0) - fee) / 100)} back. The ${eur(fee / 100)} service fee isn’t refundable once ${other} has accepted.` }
+        : { icon: 'circle-check', bg: colors.mintSoft, text: `Free cancellation: you get ${eur((mine?.total ?? 0) / 100)} back in full.` };
 
   const confirm = () => {
     if (draft.busy) return;

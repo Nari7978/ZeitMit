@@ -6,6 +6,7 @@ import {
   type Hours, type Range,
 } from '../src/lib/hours';
 import { localMoments, localToUnix, offsetAt, whenIn, zoneName } from '../src/lib/time';
+import { earned, unpaidTime, type Presence } from '../src/lib/videoDate';
 
 let failures = 0;
 const ok = (cond: boolean, label: string) => { console.log(`${cond ? '✓' : '✗'} ${label}`); if (!cond) failures++; };
@@ -76,6 +77,41 @@ const t = utc('2026-11-09T12:00:00Z');
 ok(ruleProblem('meet', t + 4 * 3600, 60, t) === null && ruleProblem('video', t + 4 * 3600, 30, t) === null, '   any 15-minute start 3½ hours or more ahead; video from 30 minutes');
 ok(!!ruleProblem('meet', t + 4 * 3600 + 600, 60, t) && !!ruleProblem('meet', t + 4 * 3600, 50, t) && !!ruleProblem('meet', t + 3 * 3600, 60, t) && !!ruleProblem('meet', t + 8 * 86400, 60, t), '   off-grid, odd lengths, too soon or too far are refused');
 ok(firstStart(union([[t + 3600, t + 7200], [t + 5 * 3600, t + 9 * 3600]]), 60, t + 3.5 * 3600, t + 7 * 86400) === t + 5 * 3600, '   the next free start skips what’s too soon');
+
+// ---- Video dates: who wasn't there, and what the companion earns (30-minute date from S, 5 minutes to wait)
+{
+  const S = 1_800_000_000, E = S + 1800, W = 300, m = (x: number) => S + x * 60;
+  const C = (x: number, on = true): Presence => ({ s: 'customer', t: m(x), on });
+  const P = (x: number, on = true): Presence => ({ s: 'companion', t: m(x), on });
+  const lost = (...log: Presence[]) => unpaidTime(log, S, E, W).unpaid / 60;
+  ok(lost(C(0), P(0)) === 0, 'V1 both there the whole time: paid in full');
+  ok(lost(C(-8), P(-5)) === 0, 'V2 both early: nothing lost (the time before the start doesn’t count)');
+  ok(lost(C(0), P(0), C(5, false)) === 0, 'V3 the customer leaves at minute 5: the companion is still paid in full');
+  ok(lost(P(0), C(10)) === 0, 'V4 the customer is 10 minutes late: paid in full');
+  ok(lost(C(0), P(0), P(20, false)) === 10, 'V5 the companion leaves at 20, the customer stays: 10 minutes unpaid');
+  ok(lost(C(0), P(0), P(20, false), C(20.5, false)) === 10, 'V6 the companion leaves at 20, the customer gives up half a minute later: still 10 unpaid');
+  ok(lost(C(0), P(0), C(20, false), P(20.5, false)) === 0, 'V7 the customer leaves at 20, the companion half a minute later: nothing unpaid');
+  ok(lost(C(0), P(6)) === 6, 'V8 the companion is 6 minutes late: 6 minutes unpaid');
+  ok(lost(C(0), P(3)) === 3, 'V9 3 minutes late: 3 minutes unpaid');
+  ok(lost(C(0), P(0), P(10, false), P(12)) === 2, 'V10 the companion drops for 2 minutes and comes back: 2 minutes unpaid');
+  ok(lost(C(0), P(0), C(10, false), C(12)) === 0, 'V11 the customer drops for 2 minutes and comes back: nothing unpaid');
+  ok(lost(C(0), P(0), C(10, false), P(16, false), C(18)) === 0, 'V12 the customer drops, the companion waits 6 minutes and goes; the customer is back later: nothing unpaid');
+  ok(lost(C(0), P(0), P(10, false), C(16, false), P(18)) === 20, 'V13 the companion drops, the customer waits 6 minutes and goes; the companion is back later: 20 minutes unpaid');
+  ok(lost(C(0), P(0), C(10, false), P(11, false), C(12)) === 18, 'V14 the customer drops, the companion leaves after 1 minute without waiting; the customer is back at 12: 18 unpaid');
+  ok(lost(P(0), P(1, false)) === 0, 'V15 the customer never comes (the companion leaves after a minute): paid in full');
+  ok(lost(C(0), C(2, false)) === 30, 'V16 the companion never comes: nothing earned');
+  ok(lost(C(0), C(6, false), P(10)) === 30, 'V17 the customer waits 6 minutes and goes; the companion comes at 10 and stays: nothing earned');
+  ok(lost(C(0), C(4, false), P(10)) === 10, '    the customer waited only 4 minutes: the companion loses just the 10 late minutes');
+  ok(Math.floor(lost(C(0), P(0), P(5, false), P(5.2), P(29, false))) === 1, 'V18 a 12-second blip and leaving a minute early: 1 whole minute unpaid (seconds round in the companion’s favour)');
+  const u = unpaidTime([C(0), P(0)], S, E, W);
+  ok(u.overlap === 1800 && u.customerAtEnd && u.companionAtEnd, 'V19 together the whole time, both there at the end');
+  const cov = (to: number, ...log: Presence[]) => unpaidTime(log, S, m(to), W).covered;
+  ok(cov(7, C(0), C(6, false)) === 'customer' && cov(12, C(0), C(6, false), P(10)) === 'customer' && cov(3, C(0)) === null && cov(6, C(0)) === 'customer'
+    && cov(12, P(0), P(6, false)) === 'companion' && cov(12, C(0), P(0), P(5, false)) === 'customer' && cov(4, C(0), P(0), P(2, false)) === null && cov(9, C(0), C(6, false), P(8)) === 'customer'
+    && cov(15, C(0), C(6, false), P(8), C(9)) === null && cov(3, C(-8)) === null,
+    'V21 who is covered so far (for the call screen): whoever waited 5 minutes from the start, until they’re together again');
+  ok(earned(1700, 1800, 600) === 1133 && earned(1700, 1800, 0) === 1700 && earned(1700, 1800, 1800) === 0 && earned(1700, 1800, 2400) === 0, 'V20 earnings in proportion to the time paid, never below 0 or above the share');
+}
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll engine checks passed');
 process.exit(failures ? 1 : 0);

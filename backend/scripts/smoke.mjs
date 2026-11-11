@@ -331,7 +331,8 @@ ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not pub
   r = await call('POST', `/bookings/${A.id}/cancel`, T, { reason: 'Not a reason' });
   ok(r.status === 400, 'cancel needs one of the listed reasons (or none)');
   r = await call('POST', `/bookings/${A.id}/cancel`, T, { reason: 'Plans changed' });
-  ok(r.status === 200 && r.data.refunded === A.total && r.data.late === false, 'customer cancels a confirmed booking 24 h+ ahead: full refund');
+  ok(r.status === 200 && r.data.refunded === A.total - A.fee && r.data.feeKept === A.fee && r.data.late === false && A.fee === Math.round((A.total - A.fee) * 0.1),
+    `customer cancels a confirmed booking 24 h+ ahead: everything back but the service fee (€${(r.data.refunded / 100).toFixed(2)} back, €${(A.fee / 100).toFixed(2)} kept)`);
   r = await call('GET', '/me/notifications', J);
   ok(r.data.some((n) => n.title === 'Mira cancelled' && n.body.includes('Plans changed') && n.go === 'comp:calendar'), 'companion is told, with the reason');
   r = await call('GET', '/conversations', T);
@@ -345,14 +346,15 @@ ok(!r.data.some((c) => c.id === customer.user.id), 'pending companion is not pub
   r = await call('POST', `/companion/bookings/${B.id}/cancel`, J, { reason: 'Plans changed' });
   ok(r.status === 400, 'companion reasons are their own list');
   r = await call('POST', `/companion/bookings/${B.id}/cancel`, J, { reason: 'Feeling unwell' });
-  ok(r.status === 200 && r.data.refunded === B.total, 'companion cancels a confirmed booking: customer refunded in full');
+  ok(r.status === 200 && r.data.refunded === B.total - B.fee && r.data.feeKept === B.fee, 'companion cancels a confirmed booking: the customer gets everything back but the service fee');
   r = await call('POST', `/companion/bookings/${B.id}/cancel`, J);
   ok(r.status === 409, 'a booking can only be cancelled once');
   r = await call('GET', '/me/notifications', T);
-  ok(r.data.some((n) => n.title === 'Jonas cancelled your booking' && n.body.includes('Feeling unwell') && n.go === 'tab:cancelled'), 'customer is told, with the reason');
+  ok(r.data.some((n) => n.title === 'Jonas cancelled your booking' && n.body.includes('Feeling unwell') && n.body.includes('service fee isn’t refundable') && n.go === 'tab:cancelled'), 'customer is told, with the reason and what’s refunded');
   r = await call('GET', '/bookings', T);
   const b = r.data.find((x) => x.id === B.id);
-  ok(b.status === 'cancelled' && b.pay === 'refunded' && b.cancelledBy === 'companion' && /Cancelled by Jonas/.test(b.note), 'booking shows who cancelled');
+  ok(b.status === 'cancelled' && b.pay === 'refunded' && b.cancelledBy === 'companion' && /^Cancelled by Jonas · €[\d.]+ refunded \(service fee kept\)$/.test(b.note) && b.refunded === B.total - B.fee && b.fee === B.fee,
+    `booking shows who cancelled and what came back (${b.note})`);
   r = await call('GET', '/me/notifications', T);
   ok(r.data.some((n) => n.title === 'You’re verified' && n.go === 'home'), '“You’re verified” opens Discover');
 }

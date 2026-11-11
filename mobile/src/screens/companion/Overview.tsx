@@ -61,7 +61,7 @@ export default function Overview() {
                   {video ? (b.startsAt <= nowS ? `Video date with ${first} now` : `Video date with ${first} at ${b.time}`) : b.startsAt <= nowS ? `Meeting ${first} now` : `Meeting ${first} at ${b.time}`}
                 </Txt>
                 <Txt size={13} lh={1.45} color={colors.gray800}>
-                  {video ? 'Join from 10 minutes before the start. After 10 minutes on the call together, you get paid.' : 'Ask for their 4-digit meet code and enter it to get paid.'}
+                  {video ? 'Join from 10 minutes before the start, and stay for the whole booked time to be paid in full.' : 'Ask for their 4-digit meet code and enter it to get paid.'}
                 </Txt>
               </View>
             </Row>
@@ -143,10 +143,10 @@ export default function Overview() {
           <Txt size={15} weight={700}>Earnings</Txt>
         </Row>
         <Row style={{ gap: 10, alignItems: 'stretch' }}>
-          <Money icon="lock" label="Held" value={eur(held)} sub="Paid, waiting for meet code" bg={colors.lilac} />
+          <Money icon="lock" label="Held" value={eur(held)} sub="Paid, held until you meet" bg={colors.lilac} />
           <Money icon="circle-check" label="Available" value={eur(Math.max(0, earnings.available) / 100)} sub={earnings.pending > 0 ? `+ ${eur(earnings.pending / 100)} pending` : 'Ready to withdraw'} bg={colors.mintSoft} />
         </Row>
-        <Txt size={12} lh={1.5} color={colors.gray600}>You earn a booking’s money when you enter the customer’s 4-digit code at the meet-up. It can be withdrawn 2 days later, from €20.</Txt>
+        <Txt size={12} lh={1.5} color={colors.gray600}>You earn a booking’s money when you enter the customer’s 4-digit code at the meet-up, or when a video date ends. It can be withdrawn 2 days later, from €20.</Txt>
         <PrimaryButton label="Withdraw" icon="wallet" height={44} radius={12} size={14} weight={700} onPress={() => router.push('/payouts')} />
       </Box>
     </CompShell>

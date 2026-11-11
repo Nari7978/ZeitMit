@@ -36,6 +36,11 @@ type When = { kind: Kind; startsAt: number; endsAt: number; minutes: number; day
 export type Booking = When & {
   id: string; cid: string; companionName: string; hue: number; photoUrl?: string | null; creditUsed?: number; act: ActId;
   place: string; note?: string; status: BookingStatus; pay: Pay; total: number; otp?: string; reviewed: boolean;
+  /**
+   * ZeitMit's fee (kept once the companion accepts), what went back to you (`total` stays the price), and a video
+   * date's paid minutes when the companion wasn't there for all of it.
+   */
+  fee?: number; refunded?: number; minutesPaid?: number;
   /** You already told the safety team how this meet-up went. */
   feedback?: boolean;
   cancelledBy?: 'customer' | 'companion' | 'support' | 'system';
@@ -56,6 +61,8 @@ export type Notif = { id: string; icon: string; tone: Tone; title: string; body:
 export type CompBooking = When & {
   id: string; who: string; customerId: string; avatarUrl?: string | null; act: ActId;
   place: string; note: string; status: BookingStatus; pay: Pay; payout: number; feedback?: boolean;
+  /** A video date: the minutes you were paid for, when you weren't in the call for all of it. */
+  minutesPaid?: number;
   customer?: { bio: string; verified: boolean; since: number | null };
   resched?: Resched | null; reschedLeft?: number;
   /** A request: accept it by then (within 24 hours, at least 3 hours before the start), or it expires and is refunded. */
@@ -556,11 +563,13 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     },
     cancelBooking: async (id, reason) => {
       set((s) => ({ cancel: { ...s.cancel, busy: true } }));
-      const r = await attempt(() => api<{ refunded: number; late: boolean }>('POST', `/bookings/${id}/cancel`, { reason: reason ?? undefined }));
+      const r = await attempt(() => api<{ refunded: number; late: boolean; feeKept?: number }>('POST', `/bookings/${id}/cancel`, { reason: reason ?? undefined }));
       set((s) => ({ cancel: { ...s.cancel, busy: false } }));
       if (!r) return false;
       set({ sheet: null });
-      get().showToast(r.late ? `Booking cancelled. No refund, as it was less than ${FREE_CANCEL_HOURS} hours before.` : `Cancelled. ${eur(r.refunded / 100)} refunded in full.`);
+      get().showToast(r.late ? `Booking cancelled. No refund, as it was less than ${FREE_CANCEL_HOURS} hours before.`
+        : r.feeKept ? `Cancelled. ${eur(r.refunded / 100)} refunded. The ${eur(r.feeKept / 100)} service fee isn’t refundable.`
+          : `Cancelled. ${eur(r.refunded / 100)} refunded in full.`);
       await get().refresh();
       return true;
     },

@@ -197,15 +197,15 @@ export async function sendBookingInvoice(env: Env, bookingId: string) {
         ? [de ? 'Testmodus: Es wurde keine Karte belastet.' : 'Test mode: no card was charged.']
         : isVideo(b)
           ? de
-            ? [`ZeitMit hält das Geld sicher bis zu eurem Video-Date: Es geht an ${who}, wenn ihr 10 Minuten zusammen im Anruf wart.`,
-              `Lehnt ${who} ab, antwortet nicht rechtzeitig, tritt nicht bei oder stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher, bekommst du alles zurück.`]
-            : [`ZeitMit holds the money until your video date: it goes to ${who} once you’ve been on the call together for 10 minutes.`,
-              `If ${who} declines, doesn’t answer in time or doesn’t join, or you cancel at least ${FREE_CANCEL_HOURS} hours before, you get everything back.`]
+            ? [`ZeitMit hält das Geld sicher bis zu eurem Video-Date. Es geht für die gebuchte Zeit an ${who}; ist ${who} nicht die ganze Zeit da, zahlst du nur für die Zeit, in der ${who} da war.`,
+              `Lehnt ${who} ab oder antwortet nicht rechtzeitig, bekommst du alles zurück. Nach der Annahme ist die Servicegebühr von ${money(b.fee, l)} nicht erstattbar: Stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher oder storniert ${who} oder tritt nicht bei, bekommst du den Rest zurück.`]
+            : [`ZeitMit holds the money until your video date. It goes to ${who} for the booked time; if ${who} isn’t there for all of it, you pay only for the time they were.`,
+              `If ${who} declines or doesn’t answer in time, you get everything back. Once accepted, the ${money(b.fee, l)} service fee isn’t refundable: if you cancel at least ${FREE_CANCEL_HOURS} hours before, or ${who} cancels or doesn’t join, you get the rest back.`]
           : de
             ? [`ZeitMit hält das Geld sicher, bis ihr euch trefft: Es geht erst an ${who}, wenn du beim Treffen deinen 4-stelligen Treffcode teilst.`,
-              `Lehnt ${who} ab, antwortet nicht rechtzeitig oder stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher, bekommst du alles zurück.`]
+              `Lehnt ${who} ab oder antwortet nicht rechtzeitig, bekommst du alles zurück. Nach der Annahme ist die Servicegebühr von ${money(b.fee, l)} nicht erstattbar: Stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher oder storniert ${who}, bekommst du den Rest zurück.`]
             : [`ZeitMit holds the money until you meet: it only goes to ${who} when you share your 4-digit meet code at the meet-up.`,
-              `If ${who} declines or doesn’t answer in time, or you cancel at least ${FREE_CANCEL_HOURS} hours before, you get everything back.`]),
+              `If ${who} declines or doesn’t answer in time, you get everything back. Once accepted, the ${money(b.fee, l)} service fee isn’t refundable: if you cancel at least ${FREE_CANCEL_HOURS} hours before, or ${who} cancels, you get the rest back.`]),
     ],
     footer: [...seller(env), de ? `Gesendet an ${b.customer_email} für deine Buchung bei ZeitMit.` : `Sent to ${b.customer_email} for your booking on ZeitMit.`],
   });
@@ -277,9 +277,9 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
         ]),
         note([
           ...(isVideo(b)
-            ? videoNote(l, de ? `Wenn ihr 10 Minuten zusammen im Anruf wart, geht die Zahlung an ${who}.` : `Once you’ve been on the call together for 10 minutes, the payment goes to ${who}.`).slice(0, 1)
+            ? videoNote(l, de ? `Die Zahlung geht für die gebuchte Zeit an ${who}; ist ${who} nicht die ganze Zeit da, zahlst du nur für die Zeit, in der ${who} da war.` : `The payment goes to ${who} for the booked time; if ${who} isn’t there for all of it, you pay only for the time they were.`).slice(0, 1)
             : [de ? `Zeig ${who} beim Treffen deinen 4-stelligen Treffcode aus der App, nicht vorher. Damit geht die Zahlung an ${who}.` : `Show ${who} your 4-digit meet code from the app when you meet, not before. That releases the payment.`]),
-          ...(free > now() ? [de ? `Kostenlos stornieren kannst du bis ${shortDate(free, l, ctz)} um ${clock(free, l, ctz)}.` : `You can cancel for free until ${shortDate(free, l, ctz)} at ${clock(free, l, ctz)}.`] : []),
+          ...(free > now() ? [de ? `Bis ${shortDate(free, l, ctz)} um ${clock(free, l, ctz)} kannst du stornieren und bekommst alles außer der Servicegebühr von ${money(b.fee, l)} zurück.` : `Until ${shortDate(free, l, ctz)} at ${clock(free, l, ctz)} you can cancel and get everything back except the ${money(b.fee, l)} service fee.`] : []),
           isVideo(b) ? videoNote(l, '')[1]
             : de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',
         ]),
@@ -318,7 +318,9 @@ export async function sendBookingConfirmation(env: Env, bookingId: string, moved
           [de ? 'Buchungsnummer' : 'Booking reference', b.id],
         ]),
         note(isVideo(b)
-          ? videoNote(l, de ? `Nach 10 Minuten gemeinsam im Anruf verdienst du ${money(b.subtotal, l)}.` : `After 10 minutes on the call together, you earn ${money(b.subtotal, l)}.`)
+          ? videoNote(l, de
+            ? `Bleib die ganze gebuchte Zeit im Anruf, dann verdienst du ${money(b.subtotal, l)}. Kommt ${guest} zu spät oder geht früher, bekommst du trotzdem alles; Zeit, in der ${guest} im Anruf ist und du nicht, wird nicht bezahlt.`
+            : `Stay in the call for the whole booked time to earn ${money(b.subtotal, l)}. If ${guest} is late or leaves early, you still get it all; time ${guest} is in the call and you aren’t isn’t paid.`)
           : [
             de ? `Frag ${guest} beim Treffen nach dem 4-stelligen Treffcode und gib ihn in der App ein. Dann verdienst du ${money(b.subtotal, l)}.` : `At the meet-up, ask ${guest} for their 4-digit meet code and enter it in the app. That’s when you earn ${money(b.subtotal, l)}.`,
             de ? 'Trefft euch an einem öffentlichen Ort. In der Buchung kannst du einen Live-Check-in mit einer Vertrauensperson teilen.' : 'Meet in a public place. From the booking you can share a live check-in with someone you trust.',

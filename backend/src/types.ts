@@ -32,8 +32,10 @@ export type Env = {
    */
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
-  /** Seconds two people must be on a video date together before the payment is released (600; tests shorten it). */
-  CALL_RELEASE_SECONDS?: string;
+  /** How long someone waits for the other in a video date before they're covered (300; tests shorten it). */
+  CALL_WAIT_SECONDS?: string;
+  /** A video date's unpaid time counts in whole steps of this many seconds (60: whole minutes; tests shorten it). */
+  CALL_PAY_STEP_SECONDS?: string;
   /** Seconds between pings from a video date (30; tests shorten it). Joining alone rings again after 4 times that. */
   CALL_PING_GAP_SECONDS?: string;
   /** Override for tests (mock Expo push service). */

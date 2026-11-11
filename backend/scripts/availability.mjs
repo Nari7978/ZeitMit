@@ -202,7 +202,9 @@ const c15 = r.data.id;
 await accept(c15);
 ok(!isFree(await free('meet'), at(D3, '11:00'), at(D3, '12:00')), '15 a confirmed 11:00–12:00 takes the time');
 r = await call('POST', `/bookings/${c15}/cancel`, B, { reason: 'Plans changed' });
-ok(r.status === 200 && r.data.late === false && row(c15).status === 'cancelled' && row(c15).pay_status === 'refunded', '   Ben cancels (days ahead): CANCELLED, refunded in full');
+const k15 = row(c15);
+ok(r.status === 200 && r.data.late === false && k15.status === 'cancelled' && k15.pay_status === 'refunded' && r.data.refunded === k15.refunded && k15.refunded === k15.total - k15.fee && k15.fee > 0,
+  '   Ben cancels (days ahead): CANCELLED, everything back but the service fee');
 ok(isFree(await free('meet'), at(D3, '11:00'), at(D3, '12:00')), '   11:00–12:00 is free again');
 r = await book(C, 'coffee', at(D3, '11:00'), 60);
 ok(r.status === 201 && (await accept(r.data.id)).status === 200, '   and someone else books it');

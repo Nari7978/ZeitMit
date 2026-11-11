@@ -72,15 +72,20 @@ export function historyLine(history: CompBooking[]) {
 function outcome(b: CompBooking): string {
   const first = b.who.split(' ')[0];
   const pay = eur(b.payout / 100);
-  if (b.status === 'completed') return b.pay === 'released' ? `Met · ${pay} earned` : 'Met';
+  if (b.status === 'completed') {
+    if (b.pay !== 'released') return 'Met';
+    // A video date you weren't in the call for all of: paid for the minutes you were.
+    return b.minutesPaid !== undefined ? `Met · ${pay} for ${b.minutesPaid} of ${b.minutes} min` : `Met · ${pay} earned`;
+  }
   if (b.status === 'rejected') return 'You declined';
   if (b.status === 'expired') return 'No reply in time';
   if (b.status === 'conflicted') return 'Another booking took this time';
-  // A video date someone never joined (settled after its end).
-  if (b.cancelNote?.includes('didn’t join the video date')) {
-    if (b.cancelledBy === 'companion') return 'You didn’t join';
+  // A video date someone wasn't there for, or whose video never connected (settled after its end).
+  if (b.cancelNote?.includes('didn’t join the video date') || b.cancelNote?.includes('wasn’t there for the video date')) {
+    if (b.cancelledBy === 'companion') return b.cancelNote.includes('wasn’t there') ? 'You weren’t there' : 'You didn’t join';
     return b.pay === 'released' ? `${first} didn’t join · ${pay} earned` : `${first} didn’t join`;
   }
+  if (b.cancelNote?.startsWith('The video didn’t connect')) return 'The video didn’t connect';
   if (b.cancelledBy === 'companion') return b.cancelNote?.startsWith('Declined') ? 'You declined' : 'You cancelled';
   if (b.cancelledBy === 'customer') return b.pay === 'released' ? `${first} cancelled late · ${pay} earned` : `${first} cancelled`;
   if (b.cancelledBy === 'support') return 'Cancelled by ZeitMit support';

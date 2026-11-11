@@ -95,7 +95,10 @@ function Note({ icon, children }: { icon: string; children: ReactNode }) {
 function Payments() {
   const credit = useStore((s) => s.user?.credit ?? 0);
   const bookings = useStore((s) => s.bookings);
-  const paid = bookings.filter((b) => b.pay !== 'refunded');
+  // Everything you paid for: what's held, what went to the companion, and a fee kept for a booking cancelled once
+  // accepted (`total` stays the price; `refunded` is what came back).
+  const backOf = (b: (typeof bookings)[number]) => b.refunded ?? (b.pay === 'refunded' ? b.total : 0);
+  const paid = bookings.filter((b) => b.total - backOf(b) > 0);
   return (
     <>
       <Card>
@@ -106,16 +109,16 @@ function Payments() {
           <SecondaryButton label="Redeem a gift code" icon="ticket" height={44} style={{ marginTop: 8 }} onPress={() => useStore.getState().openSheet('redeem')} />
         </View>
       </Card>
-      <Note icon="lock">Card payments are handled securely by our payment partner at checkout. ZeitMit never stores your card number. Money is held until you share your meet code, and refunded in full if a request is declined or cancelled 24+ hours before.</Note>
+      <Note icon="lock">Card payments are handled securely by our payment partner at checkout. ZeitMit never stores your card number. Money is held until you meet, and refunded in full if a request is declined or not answered in time. Once a companion accepts, the 10% service fee isn’t refundable.</Note>
       <Head>Recent payments</Head>
       <Card>
         {paid.length ? paid.slice(0, 20).map((b, i) => (
           <Row key={b.id} style={{ gap: 12, paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: i < Math.min(paid.length, 20) - 1 ? 1 : 0, borderBottomColor: colors.hairline }}>
             <View style={{ flex: 1 }}>
               <Txt size={14} weight={600}>{b.companionName}</Txt>
-              <Txt size={12} color={colors.gray600}>{b.day} · {b.pay === 'held' ? 'Held by ZeitMit' : 'Released'}</Txt>
+              <Txt size={12} color={colors.gray600}>{b.day} · {b.pay === 'held' ? 'Held by ZeitMit' : b.pay === 'refunded' ? 'Service fee' : 'Released'}</Txt>
             </View>
-            <Txt size={14} weight={700}>{eur(b.total / 100)}</Txt>
+            <Txt size={14} weight={700}>{eur((b.total - backOf(b)) / 100)}</Txt>
           </Row>
         )) : <Txt size={14} color={colors.gray600} style={{ padding: 16 }}>No payments yet.</Txt>}
       </Card>
@@ -282,7 +285,8 @@ function Verification() {
 
 function Help() {
   const faqs: [string, string][] = [
-    ['How does payment work?', 'You pay when you send a request. ZeitMit holds the money and releases it to the companion only when you share your 4-digit meet code in person. If they decline, or you cancel 24+ hours before, you get a full refund.'],
+    ['How does payment work?', 'You pay when you send a request. ZeitMit holds the money and releases it to the companion only when you share your 4-digit meet code in person, or after a video date. If they decline or don’t reply in time, you get a full refund. Once they accept, the 10% service fee isn’t refundable: if you cancel 24+ hours before, or they cancel, you get the rest back.'],
+    ['What if a video date is cut short?', 'If you leave early, the companion is still paid: they kept the time for you. If the companion isn’t in the call for all of it, you pay only for the time they were. Waiting for the other person? After 5 minutes you can leave without losing anything.'],
     ['Where can we meet?', 'Always in a public place: a café, park entrance, museum or venue. Home addresses, hotels and private locations are never allowed.'],
     ['What isn’t allowed?', 'Anything sexual, kissing or intimacy, overnight plans, and paying or meeting outside ZeitMit. Report anyone who asks.'],
     ['How do I stay safe?', 'Start a safety check-in from a confirmed booking and send your trusted contact the private live link on WhatsApp. If you miss a check-in, it shows on their page and our safety team is alerted. SOS sends them a WhatsApp alert. In an emergency, call 112.'],
@@ -336,7 +340,7 @@ function Terms() {
     <>
       <Note icon="info">Summary for users. The full legal terms and privacy policy will be published here before launch.</Note>
       <Head>Terms of use</Head>
-      <Para>ZeitMit connects adults who want company with companions who offer their time for public, non-sexual activities. Companions are independent and set their own rates, activities and boundaries. Bookings are paid through ZeitMit, which holds payments until the meet code is shared. ZeitMit charges a 10% service fee on each booking.</Para>
+      <Para>ZeitMit connects adults who want company with companions who offer their time for public, non-sexual activities. Companions are independent and set their own rates, activities and boundaries. Bookings are paid through ZeitMit, which holds payments until the meet code is shared or the video date ends. ZeitMit charges a 10% service fee on each booking, which isn’t refundable once the companion accepts.</Para>
       <Head>Privacy</Head>
       <Para>We store your email, name, profile, bookings and messages to run the service, on servers in the EU. ID photos for companion checks are deleted as soon as the check is done. We never sell your data. You can request a copy of your data or delete your account at any time in Privacy controls.</Para>
       <Head>Contact</Head>

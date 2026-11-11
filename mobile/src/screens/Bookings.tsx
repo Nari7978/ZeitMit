@@ -19,7 +19,7 @@ const EMPTY: Record<BTab, [string, string]> = {
   upcoming: ['No upcoming plans', 'Bookings show here once the companion accepts your request.'],
   pending: ['No pending requests', 'Requests wait here until the companion accepts them, at least 3 hours before the start.'],
   completed: ['Nothing completed yet', 'Past bookings and reviews will collect here.'],
-  cancelled: ['No cancellations', 'Declined, expired and cancelled bookings show here, always refunded unless you cancelled late.'],
+  cancelled: ['No cancellations', 'Declined, expired and cancelled bookings show here, with what was refunded.'],
 };
 
 export default function Bookings() {
@@ -131,17 +131,24 @@ function BookingCard({ b }: { b: Booking }) {
     conflicted: [again],
   }[b.status];
 
+  // What came back: all of it, all but ZeitMit's fee (cancelled once accepted), or part of a video date.
+  const back = b.refunded ?? (b.pay === 'refunded' ? b.total : 0);
+  const paidPart = eur((b.total - back) / 100);
   const pay = {
     held: {
       icon: 'lock', text: price + ' held by ZeitMit', bg: colors.lilac,
       sub: b.status === 'pending'
         ? (b.expiresAt ? `${c.name} has until ${untilLabel(b.expiresAt)} to accept, or it’s refunded in full` : 'Refunded in full if ' + c.name + ' declines')
-        : video ? 'Released after 10 minutes on the call together' : 'Released when ' + c.name + ' enters your meet code',
+        : video ? `Goes to ${c.name} after the call. You pay only for the time they’re there.` : 'Released when ' + c.name + ' enters your meet code',
     },
     released: b.status === 'cancelled'
       ? { icon: 'circle-check', text: price + ' paid to ' + c.name, sub: video && b.cancelledBy === 'customer' && b.note?.startsWith('You didn’t join') ? 'Not refunded' : `Cancelled less than ${FREE_CANCEL_HOURS} hours before`, bg: colors.butter }
-      : { icon: 'circle-check', text: price + ' released to ' + c.name, sub: video ? 'Confirmed by your video call' : 'Confirmed with meet code', bg: colors.mintSoft },
-    refunded: { icon: 'rotate-ccw', text: price + ' refunded to you', sub: 'Back on your card in 3–5 days', bg: colors.butter },
+      : back > 0
+        ? { icon: 'circle-check', text: `${paidPart} paid · ${eur(back / 100)} refunded`, sub: b.minutesPaid !== undefined ? `You paid for ${b.minutesPaid} of ${b.minutes} min` : 'Confirmed by your video call', bg: colors.mintSoft }
+        : { icon: 'circle-check', text: price + ' released to ' + c.name, sub: video ? 'Confirmed by your video call' : 'Confirmed with meet code', bg: colors.mintSoft },
+    refunded: back < b.total
+      ? { icon: 'rotate-ccw', text: eur(back / 100) + ' refunded to you', sub: `The ${paidPart} service fee isn’t refundable once accepted. Back on your card in 3–5 days.`, bg: colors.butter }
+      : { icon: 'rotate-ccw', text: price + ' refunded to you', sub: 'Back on your card in 3–5 days', bg: colors.butter },
   }[b.pay];
 
   return (
@@ -202,7 +209,7 @@ function BookingCard({ b }: { b: Booking }) {
         </Row>
         {b.status === 'confirmed' ? (
           <Txt size={12} color={colors.gray600} style={{ marginTop: -4 }}>
-            {freeNow ? `Free cancellation until ${whenShort(freeUntil)}` : 'No refund if you cancel now'}
+            {freeNow ? `Cancel by ${whenShort(freeUntil)} to get ${eur((b.total - (b.fee ?? 0)) / 100)} back` : 'No refund if you cancel now'}
           </Txt>
         ) : null}
         {open && (canMove || b.status === 'confirmed') ? (

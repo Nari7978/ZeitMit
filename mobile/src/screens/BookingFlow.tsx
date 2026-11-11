@@ -168,7 +168,7 @@ export default function BookingFlow() {
         <Enter kind="rise" delay={420}>
           <Txt size={15} lh={1.55} color={colors.gray800} align="center">
             {video
-              ? `You paid ${total}. ${c.name} has until ${until} to accept. Once they do, join from Bookings from 10 minutes before the start. ZeitMit holds the money until you’ve been on the call together for 10 minutes. If they decline or don’t accept in time, you get a full refund.`
+              ? `You paid ${total}. ${c.name} has until ${until} to accept. Once they do, join from Bookings from 10 minutes before the start. ZeitMit holds the money until the video date ends. If they decline or don’t accept in time, you get a full refund.`
               : `You paid ${total}. ZeitMit holds it safely until you meet. ${c.name} has until ${until} to accept. If they decline or don’t accept in time, you get a full refund.`}
           </Txt>
         </Enter>
@@ -182,7 +182,7 @@ export default function BookingFlow() {
           <Txt size={15} weight={700}>{total}</Txt>
         </Box>
         </Enter>
-        <Enter kind="fade" delay={700}><Txt size={12} color={colors.gray600} align="center">Free cancellation up to 24 hours before.</Txt></Enter>
+        <Enter kind="fade" delay={700}><Txt size={12} color={colors.gray600} align="center">Free cancellation until it’s accepted. After that, the service fee isn’t refundable.</Txt></Enter>
         <View style={{ width: '100%', gap: 6, marginTop: 16 }}>
           <PrimaryButton label="View in Bookings" onPress={() => toBookings('pending')} />
           <View style={{ alignItems: 'center' }}>
@@ -266,6 +266,17 @@ export default function BookingFlow() {
                 <Txt size={13} color={colors.gray600} style={{ flex: 1 }}>Agree on a public place in the chat.</Txt>
               </Row>
             )}
+            {/* What's refundable, before paying with one tap (the step-by-step flow says it on its last step). */}
+            {fits && b.minutes ? (
+              <Row style={{ marginTop: 10, gap: 8, alignItems: 'flex-start' }}>
+                <Icon name="rotate-ccw" size={15} color={colors.gray600} style={{ marginTop: 1 }} />
+                <Txt size={13} lh={1.45} color={colors.gray600} style={{ flex: 1 }}>
+                  {video
+                    ? `Once ${c.name} accepts, the ${eur(fee / 100)} service fee isn’t refundable. If they’re not in the call for all of it, you pay only for the time they were.`
+                    : `Once ${c.name} accepts, the ${eur(fee / 100)} service fee isn’t refundable.`}
+                </Txt>
+              </Row>
+            ) : null}
             {isDateAct ? <Boundaries c={c} kind={kind} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
             <TextButton label="Pick another time" icon="calendar" size={14} weight={700} onPress={() => { setQuick(false); setStep(b.act ? 2 : 1); }} style={{ alignSelf: 'center', marginTop: 18 }} />
           </>
@@ -418,7 +429,7 @@ export default function BookingFlow() {
                 <FlowStep icon="lock" bg={colors.sun} label={'ZeitMit\nholds it'} />
                 <Icon name="arrow-right" size={16} style={{ marginTop: 14 }} />
                 {video
-                  ? <FlowStep icon="video" bg={colors.mint} label={`${c.name} gets it\nafter 10 min on the call`} />
+                  ? <FlowStep icon="video" bg={colors.mint} label={`${c.name} gets it\nafter the call`} />
                   : <FlowStep icon="key-round" bg={colors.mint} label={`${c.name} gets it\nwith your code`} />}
               </Row>
               {deadline ? (
@@ -431,10 +442,16 @@ export default function BookingFlow() {
                 <Icon name="rotate-ccw" size={16} style={{ marginTop: 2 }} />
                 <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>
                   {video
-                    ? `Full refund if ${c.name} declines or doesn’t accept in time, if they don’t join, or if you cancel 24+ hours before.`
-                    : `Full refund if ${c.name} declines or doesn’t accept in time, or if you cancel 24+ hours before.`}
+                    ? `Full refund if ${c.name} declines or doesn’t accept in time. Once they accept, the ${eur(fee / 100)} service fee isn’t refundable: you get the rest back if you cancel 24+ hours before, or if ${c.name} cancels or doesn’t join.`
+                    : `Full refund if ${c.name} declines or doesn’t accept in time. Once they accept, the ${eur(fee / 100)} service fee isn’t refundable: you get the rest back if you cancel 24+ hours before, or if ${c.name} cancels.`}
                 </Txt>
               </Row>
+              {video ? (
+                <Row style={{ gap: 8, alignItems: 'flex-start' }}>
+                  <Icon name="video" size={16} style={{ marginTop: 2 }} />
+                  <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>{`If ${c.name} isn’t in the call for all of it, you pay only for the time they were.`}</Txt>
+                </Row>
+              ) : null}
             </View>
           </>
         )}

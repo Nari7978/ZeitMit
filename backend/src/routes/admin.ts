@@ -108,7 +108,7 @@ admin.get('/bookings', async (c) => {
   const [r, counts] = await Promise.all([
     c.env.DB.prepare(
       `SELECT b.id, b.status, b.kind, b.pay_status, b.activity, b.starts_at, b.ends_at, b.created_at, b.expires_at, b.decided_at, b.conflict_with,
-         b.total, b.cancel_note, b.cancelled_by, b.cancel_reason, u.email AS customer, cp.display_name AS companion, cp.timezone AS companion_tz
+         b.total, b.fee, b.subtotal, b.refunded, b.billed_minutes, b.cancel_note, b.cancelled_by, b.cancel_reason, u.email AS customer, cp.display_name AS companion, cp.timezone AS companion_tz
        FROM bookings b JOIN users u ON u.id = b.customer_id JOIN companions cp ON cp.user_id = b.companion_id
        WHERE ${where.join(' AND ')} ORDER BY b.created_at DESC LIMIT 200`,
     ).bind(...args).all(),
@@ -162,6 +162,8 @@ admin.post('/bookings/:id/cancel', async (c) => {
 admin.post('/bookings/:id/refund', async (c) => {
   const b = await c.env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(c.req.param('id')).first<Parameters<typeof refundBooking>[1]>();
   if (!b) fail(404, 'Booking not found.');
+  // What the customer paid in the end (part may have gone back already: a video date paid in part).
+  const paid = b!.total - (b!.refunded ?? 0);
   if (b!.pay_status === 'held') {
     if (!(await refundBooking(c.env, b!, (amt) => `Refunded by ZeitMit support · ${amt}`, false, 'support'))) fail(409, 'This payment was just updated. Reload and try again.');
   } else if (b!.pay_status === 'released') {
@@ -174,8 +176,8 @@ admin.post('/bookings/:id/refund', async (c) => {
       }
     }
     const res = await c.env.DB.prepare(
-      "UPDATE bookings SET pay_status = 'refunded', cancel_note = ?, updated_at = unixepoch() WHERE id = ? AND pay_status = 'released'",
-    ).bind(`Refunded by ZeitMit support · ${euros(b!.total)}`, b!.id).run();
+      "UPDATE bookings SET pay_status = 'refunded', refunded = total, cancel_note = ?, updated_at = unixepoch() WHERE id = ? AND pay_status = 'released'",
+    ).bind(`Refunded by ZeitMit support · ${euros(paid)}`, b!.id).run();
     if (!res.meta.changes) fail(409, 'This payment was just updated. Reload and try again.');
     if (b!.credit_used) await c.env.DB.prepare('UPDATE users SET credit = credit + ? WHERE id = ?').bind(b!.credit_used, b!.customer_id).run();
     await notify(c.env, b!.companion_id, {
@@ -183,9 +185,9 @@ admin.post('/bookings/:id/refund', async (c) => {
       body: `ZeitMit refunded ${ACT_LABEL[b!.activity]} on ${berlinWhen(b!.starts_at).day} to the customer. ${euros(b!.subtotal)} comes off your earnings.`, go: 'payouts',
     }, c.executionCtx);
   } else {
-    fail(409, 'This booking was already refunded.');
+    fail(409, b!.refunded && b!.refunded < b!.total ? 'Everything but the service fee was already refunded.' : 'This booking was already refunded.');
   }
-  await notify(c.env, b!.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Refund issued', body: `ZeitMit support refunded ${euros(b!.total)} for your booking.`, go: 'tab:cancelled' }, c.executionCtx);
+  await notify(c.env, b!.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Refund issued', body: `ZeitMit support refunded ${euros(paid)} for your booking.`, go: 'tab:cancelled' }, c.executionCtx);
   return c.json({ ok: true });
 });
 

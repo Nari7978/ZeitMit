@@ -1,6 +1,6 @@
 // The video date itself: the other person full screen, yourself in a corner, mute / camera / switch / end, report.
 // Nothing is recorded; screenshots and screen recording are blocked on phones while it's open.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -44,16 +44,6 @@ export default function VideoCall() {
       void allowScreenCaptureAsync('video-date').catch(() => {});
     };
   }, []);
-  // Once both have been on the call long enough, the server confirms the date (that releases the payment).
-  const before = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (!info) return;
-    if (before.current === false && call.confirmed) {
-      useStore.getState().showToast(info.side === 'customer' ? 'Your video date is confirmed. Enjoy!' : 'Video date confirmed. You’ll get paid.');
-    }
-    before.current = call.confirmed;
-  }, [call.confirmed, info]);
-
   const leave = () => { call.hangUp(); goBack(); };
 
   if (phase === 'error' || phase === 'denied' || phase === 'ended') {
@@ -66,11 +56,11 @@ export default function VideoCall() {
         <Txt size={20} weight={700} align="center">{done ? 'Your video date has ended' : phase === 'denied' ? 'Camera and microphone needed' : 'Can’t join right now'}</Txt>
         <Txt size={14} lh={1.5} color={colors.gray800} align="center" style={{ maxWidth: 320 }}>
           {done
-            ? call.confirmed ? 'Thanks for meeting on ZeitMit.' : 'You can see what happens next on the booking.'
+            ? call.wasLive ? 'Thanks for meeting on ZeitMit. You can see how it was settled on the booking.' : 'You can see what happens next on the booking.'
             : phase === 'denied' ? 'Allow ZeitMit to use your camera and microphone in your phone’s settings, then join again.' : call.error}
         </Txt>
         <View style={{ alignSelf: 'stretch', gap: 10, marginTop: 10 }}>
-          {done && call.confirmed ? (
+          {done && call.wasLive ? (
             <PrimaryButton label="How did it go?" icon="shield-check" height={50} radius={14} onPress={() => { goBack(); useStore.getState().openFeedback(id); }} />
           ) : null}
           {phase === 'denied' && Platform.OS !== 'web' ? <PrimaryButton label="Open settings" height={50} radius={14} onPress={() => void Linking.openSettings()} /> : null}
@@ -93,6 +83,10 @@ export default function VideoCall() {
             </View>
           ) : null}
           <Centre phase={phase} peer={peer} endsAt={info?.endsAt} camOff={call.peerCamOff} />
+          {/* Waiting alone: what it costs you (nothing), and when you can leave without losing anything. */}
+          {info && call.aloneSince !== null && (phase === 'waiting' || phase === 'left') ? (
+            <WaitHint side={info.side} peer={peer} left={phase === 'left'} startsAt={info.startsAt} wait={info.wait} since={call.aloneSince} covered={call.covered} />
+          ) : null}
           {/* Waiting for them, or they left: ring their phone again. */}
           {info && (phase === 'waiting' || phase === 'left') ? <PingButton peer={peer} startsAt={info.startsAt} ping={call.ping} onPing={call.sendPing} /> : null}
         </View>
@@ -105,12 +99,6 @@ export default function VideoCall() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Txt raw size={18} weight={700} color={colors.white} numberOfLines={1} style={{ flexShrink: 1 }}>{peer}</Txt>
             {call.peerMuted && phase === 'live' ? <Icon name="mic-off" size={15} color={colors.white} /> : null}
-            {call.confirmed ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, height: 22, borderRadius: 11, backgroundColor: 'rgba(79,214,152,.25)' }}>
-                <Icon name="check" size={12} color={colors.mint} />
-                <Txt size={11} weight={700} color={colors.mint}>Confirmed</Txt>
-              </View>
-            ) : null}
           </View>
           {info ? <Status phase={phase} startsAt={info.startsAt} endsAt={info.endsAt} /> : null}
         </View>
@@ -157,6 +145,39 @@ function Centre({ phase, peer, endsAt, camOff }: { phase: Phase; peer: string; e
       {sub ? <Txt size={14} lh={1.45} color="rgba(255,255,255,.75)" align="center" style={{ maxWidth: 300 }}>{sub}</Txt> : null}
       {phase === 'connecting' || phase === 'reconnecting' ? <ActivityIndicator color={colors.white} /> : null}
     </>
+  );
+}
+
+/**
+ * The rules while you wait: the customer doesn't pay for time the companion isn't there; the companion is paid even if
+ * the customer is late or leaves. Whoever has waited `wait` seconds (counted from the booked start) can leave without
+ * losing anything, even if the other comes back later. A countdown until then, from when you were left alone. If the
+ * other person had already waited that long for you and left (`covered`), this time counts against you instead.
+ */
+function WaitHint({ side, peer, left, startsAt, wait, since, covered }: {
+  side: 'customer' | 'companion'; peer: string; left: boolean; startsAt: number; wait: number; since: number; covered: 'customer' | 'companion' | null;
+}) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const iv = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  const customer = side === 'customer';
+  const theyWaited = covered !== null && covered !== side;
+  // Covered already (you waited earlier and came back): no countdown.
+  const rest = covered === side ? 0 : Math.ceil(Math.max(since, startsAt) + wait - now);
+  const mmss = `${Math.floor(rest / 60)}:${String(rest % 60).padStart(2, '0')}`;
+  const rule = theyWaited
+    ? (customer ? `${peer} waited for you and left, so you pay for this time. Ping them to come back.` : `${peer} waited for you and left, so this time isn’t paid until they’re back.`)
+    : customer ? `You don’t pay for the time ${peer} isn’t here.` : left ? 'You’re still paid in full.' : `You’re paid even if ${peer} is late.`;
+  const leave = theyWaited || now < startsAt ? ''
+    : rest > 0 ? (customer ? `In ${mmss} you can leave without losing anything.` : `In ${mmss} you can leave and still be paid in full.`)
+      : customer ? 'You can leave now without losing anything.' : 'You can leave now and still be paid in full.';
+  return (
+    <View testID="wait-hint" style={{ alignItems: 'center', gap: 2, maxWidth: 300 }}>
+      <Txt size={13} lh={1.45} color="rgba(255,255,255,.75)" align="center">{rule}</Txt>
+      {leave ? <Txt size={13} lh={1.45} weight={600} color={colors.white} align="center">{leave}</Txt> : null}
+    </View>
   );
 }
 

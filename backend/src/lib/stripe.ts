@@ -63,6 +63,10 @@ export const expireSession = (env: Env, id: string) =>
 export const capture = (env: Env, paymentIntent: string) =>
   stripe<{ status: string }>(env, 'POST', `/v1/payment_intents/${paymentIntent}/capture`, {}, `capture-${paymentIntent}`);
 
+/** Takes part of the held money (the rest of the hold goes back to the card), e.g. only the service fee. */
+export const captureAmount = (env: Env, paymentIntent: string, amount: number) =>
+  stripe<{ status: string }>(env, 'POST', `/v1/payment_intents/${paymentIntent}/capture`, { amount_to_capture: amount }, `capture-${paymentIntent}-${amount}`);
+
 /** Releases a hold (customer is never charged). */
 export const cancelIntent = (env: Env, paymentIntent: string) =>
   stripe<{ status: string }>(env, 'POST', `/v1/payment_intents/${paymentIntent}/cancel`, {}, `cancel-${paymentIntent}`);

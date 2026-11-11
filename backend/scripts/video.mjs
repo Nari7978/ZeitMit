@@ -1,8 +1,10 @@
 // Video dates: who can join and when, ringing and pinging the other person, the call room passing the setup between
-// the two phones, the payment released after enough time on the call together, the call ending at the booked end,
-// and the no-show rules.
-// Runs against a LOCAL API started with a short release time and ping gap, with pushes sent to this script, e.g.
-//   npx wrangler dev --local --test-scheduled --var CALL_RELEASE_SECONDS:3 --var CALL_PING_GAP_SECONDS:2 --var EXPO_PUSH_URL:http://localhost:8798/push
+// the two phones, the call ending at the booked end and the payment settled right after by who was there (the
+// companion paid in full unless they weren't there while the customer was; ZeitMit's fee kept once accepted), and
+// the no-show rules.
+// Runs against a LOCAL API started with a short wait, whole-second pay steps and a short ping gap, with pushes sent to
+// this script, e.g.
+//   npx wrangler dev --local --test-scheduled --var CALL_WAIT_SECONDS:3 --var CALL_PAY_STEP_SECONDS:1 --var CALL_PING_GAP_SECONDS:2 --var EXPO_PUSH_URL:http://localhost:8798/push
 // with the demo companions seeded (it moves booking times in the local database). Usage: node scripts/video.mjs [api]
 import { execSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -21,7 +23,10 @@ const login = async (email) => {
   return (await call('POST', '/auth/verify', null, { email, code: r.data.devCode })).data;
 };
 const sql = (q) => execSync(`npx wrangler d1 execute DB --local --command "${q}"`, { stdio: 'pipe' });
-const row = (id) => JSON.parse(execSync(`npx wrangler d1 execute DB --local --json --command "SELECT * FROM bookings WHERE id = '${id}'"`, { stdio: 'pipe' }).toString())[0].results[0];
+const rowsOf = (ids) => JSON.parse(execSync(`npx wrangler d1 execute DB --local --json --command "SELECT * FROM bookings WHERE id IN (${ids.map((i) => `'${i}'`).join(', ')})"`, { stdio: 'pipe' }).toString())[0].results;
+const row = (id) => rowsOf([id])[0];
+/** Amounts as the API writes them (whole euros without cents). */
+const eur = (c) => '€' + (Number.isInteger(c / 100) ? c / 100 : (c / 100).toFixed(2));
 const cron = () => fetch(`${BASE}/__scheduled?cron=*/10+*+*+*+*`);
 const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(150); } return false; };
 
@@ -87,7 +92,7 @@ startedAgo(id, 60);
 r = await call('POST', `/calls/${id}`, C.token);
 ok(r.status === 200 && r.data.side === 'customer' && r.data.peer === 'Yuki' && Array.isArray(r.data.iceServers) && r.data.iceServers[0].urls.some((u) => u.startsWith('stun:')),
   `the customer can join: with Yuki, free STUN servers (${JSON.stringify(r.data?.iceServers?.[0]?.urls)})`);
-ok(r.data.releaseAfter === 3 && r.data.endsAt - r.data.startsAt === 3600, `ends at the booked end, payment after ${r.data.releaseAfter}s together (test setting)`);
+ok(r.data.wait === 3 && r.data.endsAt - r.data.startsAt === 3600 && r.data.releaseAfter === undefined, `ends at the booked end; whoever waits ${r.data.wait}s for the other is covered (test setting)`);
 r = await call('POST', `/calls/${id}`, Y.token);
 ok(r.status === 200 && r.data.side === 'companion' && r.data.peer === 'Cora', 'the companion can join');
 ok((await call('POST', `/calls/${id}`, S.token)).status === 404, 'nobody else can (404)');
@@ -175,7 +180,8 @@ await call('POST', `/companion/bookings/${rid}/cancel`, Y.token, { reason: 'Some
 
 // 3) The call room
 const a = await join(id, C.token);
-ok(await until(() => a.has('hello')) && a.got.find((m) => m.type === 'hello').peer === false, 'the customer is first in: told the companion isn’t there yet');
+const aHello = await until(() => a.has('hello')) && a.got.find((m) => m.type === 'hello');
+ok(aHello && aHello.peer === false && aHello.wait === 3 && aHello.together === 0, 'the customer is first in: told the companion isn’t there yet, and how long to wait');
 ok(await until(async () => (await call('GET', '/me/notifications', Y.token)).data.some((n) => n.go === `call:${id}` && n.title === 'Cora is waiting in your video date')), 'the companion hears Cora is waiting (opens the call)');
 const b = await join(id, Y.token);
 ok(await until(() => b.has('hello')) && b.got.find((m) => m.type === 'hello').peer === true && await until(() => a.has('peer-joined')), 'the companion joins: both know the other is there');
@@ -184,54 +190,152 @@ a.send({ type: 'signal', data: { candidate: { candidate: 'candidate:1 1 udp 1 19
 ok(await until(() => a.got.some((m) => m.type === 'signal' && m.data.description?.sdp === 'v=0 test') && b.got.some((m) => m.type === 'signal' && m.data.candidate)), 'the call setup passes between the two');
 ok(!a.got.some((m) => m.type === 'signal' && m.data.candidate) && !b.got.some((m) => m.type === 'signal' && m.data.description), 'and never back to the sender');
 a.send({ type: 'media', on: true });
-await sleep(4000);
-ok(row(id).status === 'confirmed', 'only one side with video: the clock doesn’t run');
+await sleep(3000); // only one side with video: the clock doesn't run
 b.send({ type: 'media', on: true });
-ok(await until(() => a.has('confirmed') && b.has('confirmed'), 10000), 'both with video for 3s: both told the video date is confirmed');
-const done = row(id);
-ok(done.status === 'completed' && done.pay_status === 'released' && done.call_together_s >= 3, `payment released (${done.status}/${done.pay_status}, ${done.call_together_s}s together)`);
-const notes = (await call('GET', '/me/notifications', C.token)).data;
-ok(notes.some((n) => n.title === 'Video date confirmed' && /sent to Yuki/.test(n.body)), 'the customer gets “Video date confirmed”');
-r = await call('POST', `/calls/${id}`, C.token);
-ok(r.status === 200 && r.data.confirmed === true, 'the call carries on after that, until the booked end');
+await sleep(2500);
 // A second phone of the same person takes over; hanging up tells the other side straight away
 const a2 = await join(id, C.token);
 ok(await until(() => a.has('replaced') && a.closed()) && await until(() => a2.has('hello')), 'joining again replaces the old connection');
+const together = a2.got.find((m) => m.type === 'hello').together;
+ok(together >= 2 && together <= 4, `the together clock ran only while both had video (${together}s)`);
 ok(!b.got.some((m) => m.type === 'peer-left'), 'without the other side seeing them leave');
 b.send({ type: 'bye' });
 ok(await until(() => a2.got.some((m) => m.type === 'peer-left' && m.bye === true)), 'hanging up: the other side is told at once');
 a2.ws.close();
+await sleep(500);
+const mid = row(id);
+ok(mid.call_together_s >= together && mid.call_together_s <= together + 1, `the time together is saved (${mid.call_together_s}s)`);
+ok(!a.has('confirmed') && !b.has('confirmed') && mid.status === 'confirmed' && mid.pay_status === 'held', 'nothing is paid out during the call: it’s settled after the booked end');
 
-// 4) The call ends at the booked end
-const id2 = await book();
-startedAgo(id2, 3600 - 4); // ends in 4s
-const e1 = await join(id2, C.token), e2 = await join(id2, Y.token);
-ok(await until(() => e1.has('ended') && e2.has('ended') && e1.closed() && e2.closed(), 12000), 'at the booked end the call ends for both');
-r = await call('POST', `/calls/${id2}`, C.token);
-ok(r.status === 409 && r.data?.error === 'This video date has ended.', 'and can’t be joined any more');
+// 3b) Whoever comes in alone is told who has already waited long enough for the other (and so isn't at fault)
+const cov = await book();
+startedAgo(cov, 60);
+const w1 = await join(cov, C.token);
+await until(() => w1.has('hello'));
+ok(w1.got.find((m) => m.type === 'hello').covered === null, 'Cora comes in first: nobody has waited yet');
+await sleep(3500); // longer than the wait (3 s here)
+w1.send({ type: 'bye' });
+await sleep(300);
+const w2 = await join(cov, Y.token);
+await until(() => w2.has('hello'));
+ok(w2.got.find((m) => m.type === 'hello').covered === 'customer', 'Cora waited and left: Yuki is told the time alone isn’t paid until she’s back');
+const w3 = await join(cov, C.token);
+await until(() => w3.has('hello'));
+ok(w3.got.find((m) => m.type === 'hello').covered === null, 'together again: nothing is held against anyone');
+for (const w of [w2, w3]) w.ws.close();
+await call('POST', `/companion/bookings/${cov}/cancel`, Y.token, { reason: 'Something else' });
 
-// 5) No-shows, settled once by the cron after the end
+// 4) The call ends at the booked end and is settled right after, by who was there. Each case is its own video date,
+// all ending 10 seconds from now (1 hour booked; time before anyone joined counts for nobody).
+const ENDS_IN = 10;
+const cases = {};
+for (const k of ['full', 'custLeft', 'compLeft', 'compLate', 'noVideo', 'custAway']) cases[k] = await book();
+const [SUB, FEE, TOTAL] = (({ subtotal, fee, total }) => [subtotal, fee, total])(row(cases.full));
+ok(FEE === Math.round(SUB * 0.1) && TOTAL === SUB + FEE, `each: ${eur(SUB)} for Yuki + ${eur(FEE)} service fee`);
+sql(`UPDATE bookings SET starts_at = unixepoch() - ${3600 - ENDS_IN} WHERE id IN (${Object.values(cases).map((q) => `'${q}'`).join(', ')})`);
+const t0 = Date.now();
+const at = (s) => sleep(Math.max(0, t0 + s * 1000 - Date.now()));
+const both = async (k, media = true) => {
+  const c = await join(cases[k], C.token), y = await join(cases[k], Y.token);
+  await until(() => c.has('hello') && y.has('hello'));
+  if (media) { c.send({ type: 'media', on: true }); y.send({ type: 'media', on: true }); }
+  return { c, y };
+};
+const live = {};
+await Promise.all([
+  // Both there with video until the end
+  (async () => { live.full = await both('full'); })(),
+  // Cora leaves early; Yuki waits for her longer than the wait time, then leaves too
+  (async () => { const x = live.custLeft = await both('custLeft'); await at(2); x.c.send({ type: 'bye' }); await at(6.5); x.y.send({ type: 'bye' }); })(),
+  // Yuki leaves early; Cora waits for them longer than the wait time, then leaves too (still counts against Yuki)
+  (async () => { const x = live.compLeft = await both('compLeft'); await at(2); x.y.send({ type: 'bye' }); await at(6.5); x.c.send({ type: 'bye' }); })(),
+  // Yuki is 4 seconds late
+  (async () => { const c = await join(cases.compLate, C.token); await until(() => c.has('hello')); c.send({ type: 'media', on: true }); await at(4); const y = await join(cases.compLate, Y.token); await until(() => y.has('hello')); y.send({ type: 'media', on: true }); live.compLate = { c, y }; })(),
+  // Both in the call, but the video never connects
+  (async () => { live.noVideo = await both('noVideo', false); })(),
+  // Only Yuki comes
+  (async () => { const y = await join(cases.custAway, Y.token); await until(() => y.has('hello')); live.custAway = { y }; })(),
+]);
+const stillIn = [live.full.c, live.full.y, live.compLate.c, live.compLate.y, live.noVideo.c, live.noVideo.y, live.custAway.y];
+ok(await until(() => stillIn.every((w) => w.has('ended') && w.closed()), (ENDS_IN + 6) * 1000), 'at the booked end the call ends for everyone still in it');
+const settled = await until(() => rowsOf(Object.values(cases)).every((q) => q.pay_status !== 'held'), 10000);
+ok(settled, 'and every one of them is settled right away by the call room');
+r = await call('POST', `/calls/${cases.full}`, C.token);
+ok(r.status === 409 && r.data?.error === 'This video date has ended.', 'it can’t be joined any more');
+
+const all = rowsOf(Object.values(cases));
+const x = Object.fromEntries(Object.entries(cases).map(([k, v]) => [k, all.find((q) => q.id === v)]));
+/** The price stays; Cora paid the fee plus what Yuki earned, and got the rest back. */
+const paidOnly = (b) => b.total === TOTAL && b.fee === FEE && b.refunded === TOTAL - FEE - b.subtotal;
+ok(x.full.status === 'completed' && x.full.pay_status === 'released' && x.full.subtotal === SUB && x.full.total === TOTAL && x.full.refunded === 0 && x.full.billed_minutes === null,
+  `both there with video: Yuki gets the full ${eur(SUB)}`);
+ok(x.custLeft.status === 'completed' && x.custLeft.pay_status === 'released' && x.custLeft.subtotal === SUB && x.custLeft.refunded === 0,
+  'Cora left early (and Yuki waited, then left): Yuki still gets it all');
+const lost = (b) => Math.round(((SUB - b.subtotal) / SUB) * 3600);
+ok(x.compLeft.status === 'completed' && x.compLeft.pay_status === 'released' && x.compLeft.subtotal < SUB && lost(x.compLeft) >= 6 && lost(x.compLeft) <= 10 && paidOnly(x.compLeft),
+  `Yuki left early: paid only for the time they were there (${eur(x.compLeft.subtotal)}, ${lost(x.compLeft)}s not paid), Cora gets ${eur(x.compLeft.refunded)} back`);
+ok(x.compLeft.billed_minutes === 59 && x.compLeft.fee === FEE, `paid minutes noted (${x.compLeft.billed_minutes}); the fee is kept`);
+ok(x.compLate.status === 'completed' && x.compLate.subtotal < SUB && lost(x.compLate) >= 3 && lost(x.compLate) <= 6 && paidOnly(x.compLate),
+  `Yuki was late: the late seconds aren’t paid (${lost(x.compLate)}s)`);
+ok(x.noVideo.status === 'cancelled' && x.noVideo.pay_status === 'refunded' && x.noVideo.cancelled_by === 'system' && x.noVideo.subtotal === 0 && x.noVideo.total === TOTAL && x.noVideo.refunded === SUB
+  && x.noVideo.cancel_note === `The video didn’t connect · ${eur(SUB)} refunded (service fee kept)`, `the video never connected: everything back but the fee (${x.noVideo.cancel_note})`);
+ok(x.custAway.status === 'cancelled' && x.custAway.pay_status === 'released' && x.custAway.cancelled_by === 'customer' && x.custAway.subtotal === SUB && x.custAway.refunded === 0
+  && x.custAway.cancel_note === 'You didn’t join the video date · no refund', 'Cora never came: Yuki gets it all');
+
+// What each side sees
+const cb = (await call('GET', '/bookings', C.token)).data;
+const cbOf = (k) => cb.find((q) => q.id === cases[k]);
+ok(cbOf('compLeft').refunded === x.compLeft.refunded && cbOf('compLeft').fee === FEE && cbOf('compLeft').minutesPaid === 59 && cbOf('compLeft').total === TOTAL,
+  'Cora’s booking shows what she paid, the fee, what came back and the minutes paid');
+ok(cbOf('full').refunded === 0 && cbOf('full').minutesPaid === undefined && cbOf('noVideo').refunded === SUB && cbOf('noVideo').status === 'cancelled', 'and the others as they ended');
+const yb = (await call('GET', '/companion/bookings', Y.token)).data;
+const ybOf = (k) => yb.history.find((q) => q.id === cases[k]);
+ok(ybOf('compLeft')?.payout === x.compLeft.subtotal && ybOf('compLeft')?.minutesPaid === 59 && ybOf('full')?.payout === SUB, 'Yuki sees what they earned and the minutes paid');
+const has = (list, title, body) => list.some((n) => n.title === title && (!body || body.test(n.body)));
+let cn, yn;
+await until(async () => {
+  cn = (await call('GET', '/me/notifications', C.token)).data;
+  yn = (await call('GET', '/me/notifications', Y.token)).data;
+  return has(cn, 'You missed your video date') && has(cn, 'Your video date didn’t connect') && has(yn, 'Video date paid in part') && has(yn, 'Video date ended');
+}, 6000);
+ok(has(cn, 'Video date confirmed', /sent to Yuki/) && has(yn, 'Video date confirmed', /^You earned €/), 'full: both told it’s confirmed');
+ok(has(cn, 'Video date ended', /^You left before the end, so the full €[\d.]+ goes to Yuki\.$/) && has(yn, 'Video date ended', /^Cora left before the end\. You still get €/), 'Cora left early: both told');
+ok(has(cn, 'Yuki wasn’t there for all of your video date', /^You pay for 59 of 60 min: €[\d.]+ with the service fee\. €[\d.]+ is refunded\.$/)
+  && has(yn, 'Video date paid in part', /^Cora was in the call without you for part of it, so you earn €[\d.]+ for 59 of 60 min\.$/), 'Yuki left early: both told what it costs');
+ok(has(cn, 'Your video date didn’t connect', /€[\d.]+ is refunded\. The €[\d.]+ service fee isn’t refundable\.$/) && has(yn, 'Video date didn’t connect'), 'no video: both told');
+ok(has(cn, 'You missed your video date') && has(yn, 'Cora didn’t join the video date', /You still get €/), 'Cora never came: both told');
+
+// 5) No-shows nobody's call room saw: settled once by the cron after the end
 const noComp = await book();
 startedAgo(noComp, 3700); // ended, nobody joined
 const noCust = await book();
 startedAgo(noCust, 3700);
 sql(`UPDATE bookings SET call_companion_at = unixepoch() - 3000 WHERE id = '${noCust}'`);
-const both = await book();
-startedAgo(both, 3700);
-sql(`UPDATE bookings SET call_companion_at = unixepoch() - 3000, call_customer_at = unixepoch() - 2900, call_together_s = 120 WHERE id = '${both}'`);
+const noLog = await book(); // both joined and had video, but the room kept no record (counts as there throughout)
+startedAgo(noLog, 3700);
+sql(`UPDATE bookings SET call_companion_at = unixepoch() - 3000, call_customer_at = unixepoch() - 2900, call_together_s = 120 WHERE id = '${noLog}'`);
+const credit = await book(); // paid with gift credit; Yuki never joins
+startedAgo(credit, 3700);
+sql(`UPDATE bookings SET credit_used = total WHERE id = '${credit}'`);
+const creditOf = () => JSON.parse(execSync(`npx wrangler d1 execute DB --local --json --command "SELECT credit FROM users WHERE id = '${C.user.id}'"`, { stdio: 'pipe' }).toString())[0].results[0].credit;
+const credit0 = creditOf();
 await cron();
-await until(async () => row(noComp).status === 'cancelled' && row(noCust).status === 'cancelled', 10000);
-const x1 = row(noComp), x2 = row(noCust), x3 = row(both);
-ok(x1.status === 'cancelled' && x1.pay_status === 'refunded' && x1.cancelled_by === 'companion' && /^Yuki didn’t join the video date · €[\d.]+ refunded in full$/.test(x1.cancel_note),
-  `the companion never joined: full refund (${x1.cancel_note})`);
-ok(x2.status === 'cancelled' && x2.pay_status === 'released' && x2.cancelled_by === 'customer' && x2.cancel_note === 'You didn’t join the video date · no refund', 'only the companion joined: they keep the pay');
-ok(x3.status === 'confirmed' && x3.pay_status === 'held' && x3.call_closed, 'both joined but under the time: left for the safety team to settle');
-const cn = (await call('GET', '/me/notifications', C.token)).data;
-ok(cn.some((n) => n.title === 'Yuki didn’t join your video date') && cn.some((n) => n.title === 'You missed your video date'), 'the customer is told each time');
-const yn = (await call('GET', '/me/notifications', Y.token)).data;
-ok(yn.some((n) => n.title === 'You missed a video date') && yn.some((n) => n.title === 'Cora didn’t join the video date'), 'and so is the companion');
+await until(async () => rowsOf([noComp, noCust, noLog, credit]).every((q) => q.pay_status !== 'held'), 12000);
+const [n1, n2, n3, n4] = ((list) => [noComp, noCust, noLog, credit].map((q) => list.find((y) => y.id === q)))(rowsOf([noComp, noCust, noLog, credit]));
+ok(n1.status === 'cancelled' && n1.pay_status === 'refunded' && n1.cancelled_by === 'companion' && n1.refunded === SUB && n1.total === TOTAL && n1.subtotal === 0
+  && n1.cancel_note === `Yuki wasn’t there for the video date · ${eur(SUB)} refunded (service fee kept)`, `the companion never joined: everything back but the fee (${n1.cancel_note})`);
+ok(n2.status === 'cancelled' && n2.pay_status === 'released' && n2.cancelled_by === 'customer' && n2.subtotal === SUB && n2.cancel_note === 'You didn’t join the video date · no refund', 'only the companion joined: they keep the pay');
+ok(n3.status === 'completed' && n3.pay_status === 'released' && n3.subtotal === SUB && n3.call_closed, 'both joined with video and nothing says anyone left: paid in full');
+ok(n4.status === 'cancelled' && n4.credit_used === FEE && n4.refunded === SUB && creditOf() === credit0 + SUB, `paid with gift credit: the credit comes back but for the fee (+${eur(creditOf() - credit0)})`);
+let cn2;
+await until(async () => has(cn2 = (await call('GET', '/me/notifications', C.token)).data, 'Yuki didn’t join your video date'), 5000);
+// (The cron also asks “How did it go?” about each completed one: those aren't about the money.)
+const money = (list) => list.filter((n) => !n.go?.startsWith('feedback:')).length;
+ok(has(cn2, 'Yuki didn’t join your video date', /€[\d.]+ is refunded\. The €[\d.]+ service fee isn’t refundable\.$/), 'the customer is told');
+ok(has((await call('GET', '/me/notifications', Y.token)).data, 'You missed a video date', /They got their money back\.$/), 'and so is the companion');
 await cron(); await sleep(1500);
-ok(row(both).status === 'confirmed' && (await call('GET', '/me/notifications', C.token)).data.length === cn.length, 'each one is settled only once');
+ok(rowsOf([noComp, noCust, noLog, credit]).every((q) => q.call_closed) && money((await call('GET', '/me/notifications', C.token)).data) === money(cn2) && creditOf() === credit0 + SUB,
+  'each one is settled only once');
 
 pushMock.close();
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');

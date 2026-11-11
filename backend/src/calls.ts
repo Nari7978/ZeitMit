@@ -1,6 +1,7 @@
 // Video dates: the two phones talk directly to each other (WebRTC). The server only introduces them: one CallRoom
-// per booking passes the call setup between them, sees who is there, counts the time both are on the call together
-// and releases the payment once it's long enough. No video ever goes through the server.
+// per booking passes the call setup between them, sees who is there and when each side came and went, counts the time
+// both had video connected, and settles the payment at the booked end (routes/bookings.ts settleVideoDate). No video
+// ever goes through the server.
 import { DurableObject } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
@@ -8,12 +9,13 @@ import { VIDEO_ACT } from './types';
 import { broadcast } from './lib/live';
 import { ring } from './lib/notify';
 import { fail, now } from './lib/util';
-import { completeVideoDate } from './routes/bookings';
+import { settleVideoDate, waitSeconds, type CallSummary } from './routes/bookings';
+import { unpaidTime, type Presence } from './lib/videoDate';
 
 type Side = 'customer' | 'companion';
 type Attachment = { uid: string; side: Side; media: boolean; gone?: boolean };
 /** The video date, and who's on each side (rooms from before pings didn't keep that). */
-type Meta = { booking: string; end: number; release: number; customer?: string; companion?: string };
+type Meta = { booking: string; start: number; end: number; customer?: string; companion?: string };
 /** One side's rings of the other: when the last went out and how many of them were pings. */
 type Rang = { at: number; pings: number };
 /** Why a ping didn't go out: not in the call yourself, the other person is there, too soon, or too many. */
@@ -27,8 +29,6 @@ export const JOIN_EARLY_S = 10 * 60;
  */
 export const pingGap = (env: Env) => Math.max(1, Number(env.CALL_PING_GAP_SECONDS) || 30);
 export const PING_MAX = 10;
-/** Seconds on the call together before the payment is released. */
-export const releaseSeconds = (env: Env) => Math.max(1, Number(env.CALL_RELEASE_SECONDS) || 600);
 const otherSide = (s: Side): Side => (s === 'customer' ? 'companion' : 'customer');
 
 // Free public STUN servers: enough for most networks. A TURN relay is added when a Cloudflare TURN key is set.
@@ -98,7 +98,7 @@ calls.post('/:id', async (c) => {
     bookingId: b.id, side,
     peer: side === 'customer' ? b.companion_name : (b.customer_name || '').trim().split(/\s+/)[0] || 'Customer',
     peerId: side === 'customer' ? b.companion_id : b.customer_id,
-    startsAt: b.starts_at, endsAt: end, releaseAfter: releaseSeconds(c.env), confirmed: b.status === 'completed',
+    startsAt: b.starts_at, endsAt: end, wait: waitSeconds(c.env),
     iceServers: await iceServersFor(c.env, end - now() + 1800),
   });
 });
@@ -109,7 +109,7 @@ calls.get('/:id/ws', async (c) => {
   const { b, side, end } = await joinable(c.env, c.req.param('id'), c.get('user').id);
   const url = new URL('https://call/ws');
   for (const [k, v] of Object.entries({
-    uid: c.get('user').id, side, booking: b.id, end: String(end), release: String(releaseSeconds(c.env)), customer: b.customer_id, companion: b.companion_id,
+    uid: c.get('user').id, side, booking: b.id, start: String(b.starts_at), end: String(end), customer: b.customer_id, companion: b.companion_id,
   })) url.searchParams.set(k, v);
   return c.env.CALLS.get(c.env.CALLS.idFromName(b.id)).fetch(url.toString(), c.req.raw);
 });
@@ -169,11 +169,12 @@ export class CallRoom extends DurableObject<Env> {
   async fetch(req: Request) {
     const url = new URL(req.url);
     if (url.pathname === '/ping') return Response.json(await this.ping(url.searchParams.get('side') === 'companion' ? 'companion' : 'customer'));
+    if (url.pathname === '/summary') return Response.json(await this.summary());
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
     const q = url.searchParams;
     const uid = q.get('uid') ?? '', side = q.get('side') === 'companion' ? 'companion' : 'customer';
     const meta: Meta = {
-      booking: q.get('booking') ?? '', end: Number(q.get('end')), release: Number(q.get('release')) || 600,
+      booking: q.get('booking') ?? '', start: Number(q.get('start')) || 0, end: Number(q.get('end')),
       customer: q.get('customer') ?? undefined, companion: q.get('companion') ?? undefined,
     };
     await this.ctx.storage.put('meta', meta);
@@ -184,12 +185,15 @@ export class CallRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], [side, uid]);
     pair[1].serializeAttachment({ uid, side, media: false } satisfies Attachment);
+    if (!old.length) await this.note(side, true); // a second phone taking over isn't coming in
     const peer = this.live(otherSide(side));
     // In alone: the other person's phone rings (each time, not just the first; a reconnect a moment later doesn't).
     let rang = await this.rang(side);
     if (!peer.length && now() - rang.at >= 4 * pingGap(this.env)) rang = await this.ringOther(side, 'join', rang);
     this.send([pair[1]], {
-      type: 'hello', peer: peer.length > 0, confirmed: !!(await this.ctx.storage.get('released')), together: await this.together(), release: meta.release, endsAt: meta.end,
+      type: 'hello', peer: peer.length > 0, together: await this.together(), endsAt: meta.end, wait: waitSeconds(this.env),
+      // Who has already waited long enough for the other (so the screen says what being here alone costs).
+      covered: await this.covered(meta),
       ...this.pingInfo(rang),
     });
     this.send(peer, { type: 'peer-joined' });
@@ -213,6 +217,7 @@ export class CallRoom extends DurableObject<Env> {
       // Hung up on purpose: the other phone can end its side of the call straight away.
       ws.serializeAttachment({ ...me, media: false, gone: true });
       if (!this.live(me.side, ws).length) {
+        await this.note(me.side, false);
         this.send(peer, { type: 'peer-left', bye: true });
         if (!peer.length) await this.ringOff(me.side);
       }
@@ -238,7 +243,10 @@ export class CallRoom extends DurableObject<Env> {
       ws.serializeAttachment({ ...me, media: false });
       // Replaced by a newer connection of the same person: nothing changed for the other side.
       // (The ringing goes on: they may be back in a moment. It stops by itself, or when they hang up.)
-      if (!this.live(me.side, ws).length) this.send(this.live(otherSide(me.side)), { type: 'peer-left', bye: false });
+      if (!this.live(me.side, ws).length) {
+        await this.note(me.side, false);
+        this.send(this.live(otherSide(me.side)), { type: 'peer-left', bye: false });
+      }
     }
     await this.recount(ws);
   }
@@ -281,6 +289,25 @@ export class CallRoom extends DurableObject<Env> {
     this.ctx.waitUntil(broadcast(this.env, `user:${to}`, { type: 'ring-off', bookingId: meta.booking, at: now() }));
   }
 
+  /** Notes a side coming into the call or leaving it, for settling the payment at the end. */
+  private async note(side: Side, on: boolean) {
+    const log = (await this.ctx.storage.get<Presence[]>('log')) ?? [];
+    log.push({ s: side, t: now(), on });
+    await this.ctx.storage.put('log', log.slice(-500));
+  }
+
+  /** Who is covered right now: waited `wait` alone for the other and not together with them since (lib/videoDate.ts). */
+  private async covered(meta: Meta) {
+    const log = (await this.ctx.storage.get<Presence[]>('log')) ?? [];
+    return meta.start ? unpaidTime(log, meta.start, now() + 1, waitSeconds(this.env)).covered : null;
+  }
+
+  /** The final count, for settling the payment (stops the together clock first). */
+  private async summary(): Promise<CallSummary> {
+    await this.recount();
+    return { together: await this.together(), log: (await this.ctx.storage.get<Presence[]>('log')) ?? [] };
+  }
+
   /** Seconds both have been on the call together so far. */
   private async together() {
     const total = (await this.ctx.storage.get<number>('together')) ?? 0;
@@ -288,7 +315,7 @@ export class CallRoom extends DurableObject<Env> {
     return total + (since ? now() - since : 0);
   }
 
-  /** Starts or stops the together clock, releases the payment when it's reached, and sets the next wake-up. */
+  /** Starts or stops the together clock, and wakes up at the booked end. */
   private async recount(except?: WebSocket) {
     const meta = await this.ctx.storage.get<Meta>('meta');
     if (!meta) return;
@@ -302,36 +329,24 @@ export class CallRoom extends DurableObject<Env> {
       await this.ctx.storage.delete('since');
       await this.env.DB.prepare('UPDATE bookings SET call_together_s = MAX(call_together_s, ?) WHERE id = ?').bind(total, meta.booking).run();
     }
-    await this.release(meta);
-    await this.wake(meta);
-  }
-
-  private async release(meta: Meta) {
-    if (await this.ctx.storage.get('released')) return;
-    const t = await this.together();
-    if (t < meta.release) return;
-    await this.ctx.storage.put('released', true);
-    await this.env.DB.prepare('UPDATE bookings SET call_together_s = MAX(call_together_s, ?) WHERE id = ?').bind(t, meta.booking).run();
-    if (await completeVideoDate(this.env, meta.booking)) this.send(this.ctx.getWebSockets(), { type: 'confirmed' });
-  }
-
-  /** Wakes up when the together clock reaches the release time, or at the booked end. */
-  private async wake(meta: Meta) {
-    let at = meta.end;
-    const since = await this.ctx.storage.get<number>('since');
-    if (since && !(await this.ctx.storage.get('released'))) at = Math.min(at, since + meta.release - ((await this.ctx.storage.get<number>('together')) ?? 0));
-    await this.ctx.storage.setAlarm(Math.max(at, now() + 1) * 1000);
+    if (now() < meta.end) await this.ctx.storage.setAlarm(meta.end * 1000);
   }
 
   async alarm() {
     const meta = await this.ctx.storage.get<Meta>('meta');
     if (!meta) return;
     if (now() < meta.end) return this.recount();
-    // The booked time is over: stop the clock and end the call for both.
+    // The booked time is over: stop the clock, settle the payment from what the room saw (the cron does it for video
+    // dates whose room never woke up), then end the call for both, so the booking already shows how it ended.
     await this.recount();
+    await this.ctx.storage.deleteAlarm();
+    try {
+      await settleVideoDate(this.env, meta.booking, { together: await this.together(), log: (await this.ctx.storage.get<Presence[]>('log')) ?? [] });
+    } catch (e) {
+      console.error('Settling the video date failed', meta.booking, e);
+    }
     for (const w of this.ctx.getWebSockets()) {
       try { w.send(JSON.stringify({ type: 'ended' })); w.close(1000, 'ended'); } catch { /* closed */ }
     }
-    await this.ctx.storage.deleteAlarm();
   }
 }
