@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, Image, View } from 'react-native';
-import { Stack, usePathname } from 'expo-router';
+import { router, Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -11,7 +11,7 @@ import { msSinceRefresh, useStore } from '../store';
 import { Toast, useNavBottom } from '../ui/chrome';
 import { APP_MAX_WIDTH, useAppFrame } from '../ui/layout';
 import { SheetHost } from '../sheets/SheetHost';
-import { onNotificationTap, registerForPush } from '../lib/push';
+import { onNotificationTap, pushAccess, pushAsked, registerForPush } from '../lib/push';
 import { useLive } from '../lib/live';
 import { endRing, showRing } from '../lib/ring';
 import { RingBanner } from '../ui/RingBanner';
@@ -91,15 +91,22 @@ export default function RootLayout() {
     return () => { sub.remove(); clearInterval(t); };
   }, [live]);
 
-  // Push: register once signed in; follow taps on notifications once the screens exist
-  // (a tap can arrive before the navigator is mounted when it opened the app).
+  // Push: register once signed in (if allowed); follow taps on notifications once the screens exist (a tap can arrive
+  // before the navigator is mounted when it opened the app). Not allowed yet: ZeitMit's own screen says why, once per
+  // phone, and the phone's dialog only comes if they choose to turn notifications on.
   useEffect(() => {
     if (session !== 'in' || !ready) return;
     void registerForPush();
-    return onNotificationTap((go) => {
+    const ask = setTimeout(() => void (async () => {
+      if ((await pushAccess()) !== 'ask' || (await pushAsked.load())) return;
+      await pushAsked.save();
+      router.push('/turn-on-notifications');
+    })(), 1200);
+    const off = onNotificationTap((go) => {
       void useStore.getState().refresh();
       setTimeout(() => void followGo(go), 60);
     });
+    return () => { clearTimeout(ask); off(); };
   }, [session, ready]);
 
   const path = usePathname();
@@ -135,6 +142,7 @@ export default function RootLayout() {
           <Stack.Screen name="reschedule/[id]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="turn-on-notifications" options={{ animation: 'fade', gestureEnabled: false }} />
         </Stack.Protected>
         {/* First time on this phone: a few welcome screens, then login. */}
         <Stack.Protected guard={!signedIn && !welcomed}>

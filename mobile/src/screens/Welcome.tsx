@@ -123,7 +123,7 @@ function Page({ width, children }: { width: number; children: ReactNode }) {
   );
 }
 
-function Point({ icon, title, body }: { icon: string; title: string; body: string }) {
+export function Point({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
     <Row style={{ gap: 14, alignItems: 'flex-start' }}>
       <View style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' }}>

@@ -211,6 +211,11 @@ export const MAX_MINUTES = 480;
 export const placeOr = (place: string) => place || 'Agree on a place in the chat';
 /** Video dates happen in the app: no meeting place, check-in or meet code. */
 export const isVideo = (act: ActId) => act === 'call';
+/**
+ * A video date whose booked end has passed: the server settles it right then, so it's never still to come, even in
+ * the moment before the app hears it was settled.
+ */
+export const videoEnded = (b: { act: ActId; endsAt: number }, nowS = Date.now() / 1000) => isVideo(b.act) && b.endsAt <= nowS;
 export const kindOf = (act: ActId): Kind => (isVideo(act) ? 'video' : 'meet');
 /** The kinds a list of activities covers (in person first). */
 export const kindsOf = (acts: ActId[]): Kind[] => (['meet', 'video'] as Kind[]).filter((k) => acts.some((a) => kindOf(a) === k));

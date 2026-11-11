@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../theme';
-import { AM, eur, hours, isVideo, placeFor, ST, tabOf, whenShort, type BTab } from '../data';
+import { AM, eur, hours, isVideo, placeFor, ST, tabOf, videoEnded, whenShort, type BTab } from '../data';
 import { untilLabel } from '../lib/dates';
 import { FREE_CANCEL_HOURS, priceOf, useStore, type Booking } from '../store';
 import { bookAgain, joinVideoDate, openBookingChat, openProfile, openReschedule } from '../nav';
@@ -101,11 +101,14 @@ function BookingCard({ b }: { b: Booking }) {
     : openReschedule(b.id));
 
   const video = isVideo(b.act);
+  // A video date whose booked time is over: the server settles it right then (no joining or cancelling any more).
+  const ended = video && b.status === 'confirmed' && videoEnded(b);
   type Act = { label: string; fn: () => void; primary?: boolean };
   const again: Act = { label: 'Book again', fn: () => bookAgain(c.id) };
   const actions: Act[] = {
     // A video date happens in the app: no check-in or meet code, the call itself confirms it.
-    confirmed: video
+    confirmed: ended ? [{ label: 'Message', fn: msg }]
+      : video
       ? [{ label: 'Message', fn: msg }, { label: 'Join video date', fn: () => joinVideoDate(b.id, b.startsAt), primary: true }]
       : [
         { label: 'Message', fn: msg },
@@ -139,7 +142,8 @@ function BookingCard({ b }: { b: Booking }) {
       icon: 'lock', text: price + ' held by ZeitMit', bg: colors.lilac,
       sub: b.status === 'pending'
         ? (b.expiresAt ? `${c.name} has until ${untilLabel(b.expiresAt)} to accept, or it’s refunded in full` : 'Refunded in full if ' + c.name + ' declines')
-        : video ? `Goes to ${c.name} after the call. You pay only for the time they’re there.` : 'Released when ' + c.name + ' enters your meet code',
+        : ended ? 'The video date has ended. It’s being settled now.'
+          : video ? `Goes to ${c.name} after the call. You pay only for the time they’re there.` : 'Released when ' + c.name + ' enters your meet code',
     },
     released: b.status === 'cancelled'
       ? { icon: 'circle-check', text: price + ' paid to ' + c.name, sub: video && b.cancelledBy === 'customer' && b.note?.startsWith('You didn’t join') ? 'Not refunded' : `Cancelled less than ${FREE_CANCEL_HOURS} hours before`, bg: colors.butter }
@@ -207,12 +211,12 @@ function BookingCard({ b }: { b: Booking }) {
             </Pressable>
           ))}
         </Row>
-        {b.status === 'confirmed' ? (
+        {b.status === 'confirmed' && !ended ? (
           <Txt size={12} color={colors.gray600} style={{ marginTop: -4 }}>
             {freeNow ? `Cancel by ${whenShort(freeUntil)} to get ${eur((b.total - (b.fee ?? 0)) / 100)} back` : 'No refund if you cancel now'}
           </Txt>
         ) : null}
-        {open && (canMove || b.status === 'confirmed') ? (
+        {open && !ended && (canMove || b.status === 'confirmed') ? (
           <Row style={{ justifyContent: 'space-between', gap: 10, marginTop: -8 }}>
             {canMove ? <TextButton label="Change time" icon="calendar-clock" size={13} weight={700} onPress={move} style={{ paddingVertical: 6 }} /> : <View />}
             {b.status === 'confirmed' ? <TextButton label="Cancel booking" size={13} weight={700} color={colors.roseDeep} onPress={cancel} style={{ paddingVertical: 6 }} /> : null}

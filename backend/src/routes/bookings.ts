@@ -386,6 +386,7 @@ export const bookings = new Hono<AppEnv>();
 bookings.get('/', async (c) => {
   const u = c.get('user');
   await expirePending(c.env, { customer: u.id });
+  await endVideoDates(c.env, u.id);
   const r = await c.env.DB.prepare(
     `SELECT b.*, c.display_name AS companion_name, c.hue, c.photo_id, EXISTS (SELECT 1 FROM meet_feedback f WHERE f.booking_id = b.id AND f.from_id = ?1) AS my_feedback
      FROM bookings b JOIN companions c ON c.user_id = b.companion_id
@@ -703,6 +704,9 @@ bookings.delete('/:id/reschedule', async (c) => {
   return c.json({ ok: true, withdrawn: mine });
 });
 
+/** Why an ended video date can't be cancelled by either side: it's settled right after its end. */
+const VIDEO_OVER = 'This video date has ended. It’s settled by who was there.';
+
 /**
  * Customer cancels. A request (any time) is refunded in full; an accepted booking more than FREE_CANCEL_HOURS ahead
  * gets everything back except ZeitMit's fee; later, the companion keeps their pay for the reserved time.
@@ -713,6 +717,7 @@ bookings.post('/:id/cancel', async (c) => {
   const b = await load(c.env, c.req.param('id'));
   if (b.customer_id !== u.id) fail(404, 'Booking not found.');
   if ((b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'This booking can’t be cancelled any more.');
+  if (b.activity === VIDEO_ACT && b.status === 'confirmed' && b.ends_at <= now()) fail(409, VIDEO_OVER);
   const reason = reasonFor('customer', body.reason);
   const p = await peopleOf(c.env, b);
   const when = `${ACT_LABEL[b.activity]} on ${whenIn(b.starts_at, p.companionTz).day}`;
@@ -787,6 +792,7 @@ export const companionBookings = new Hono<AppEnv>();
 companionBookings.get('/', async (c) => {
   const u = c.get('user');
   await expirePending(c.env, { companion: u.id });
+  await endVideoDates(c.env, u.id);
   const rows = (where: string, order: string, limit: number) => c.env.DB.prepare(
     `SELECT b.*, u.name AS customer_name, u.avatar_id, u.bio AS customer_bio, u.id_status AS customer_id_status, u.created_at AS customer_since,
        EXISTS (SELECT 1 FROM meet_feedback f WHERE f.booking_id = b.id AND f.from_id = ?1) AS my_feedback
@@ -811,7 +817,8 @@ companionBookings.get('/', async (c) => {
   const history = [...done, ...closed.results.map((b) => forCompanion(b, m, u.tz))].sort((a, b) => b.startsAt - a.startsAt);
   return c.json({
     requests: pending.map((b) => ({ ...forCompanion(b, m, u.tz), overlaps: overlaps(b) })),
-    upcoming: open.results.filter((b) => b.status === 'confirmed').map((b) => forCompanion(b, m, u.tz)),
+    // A video date that has ended is never still to come, even before it's settled (an in-person one waits for its code).
+    upcoming: open.results.filter((b) => b.status === 'confirmed' && !(b.activity === VIDEO_ACT && b.ends_at <= now())).map((b) => forCompanion(b, m, u.tz)),
     done,
     history,
     earnings: {
@@ -887,6 +894,7 @@ companionBookings.post('/:id/cancel', async (c) => {
   const b = await own(c, c.req.param('id'));
   const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
   if ((b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'This booking can’t be cancelled any more.');
+  if (b.activity === VIDEO_ACT && b.status === 'confirmed' && b.ends_at <= now()) fail(409, VIDEO_OVER);
   const reason = reasonFor('companion', body.reason);
   const p = await peopleOf(c.env, b);
   const to = b.status === 'pending' ? 'rejected' : 'cancelled';
@@ -1024,13 +1032,15 @@ export async function settleVideoDate(env: Env, id: string, room: CallSummary | 
 }
 
 /**
- * Cron: video dates whose booked end passed a minute ago and that the call room hasn't settled (nobody joined, or it
- * missed its wake-up). The room is asked for its final count; with no room there's nothing to count.
+ * Video dates whose booked end has passed that the call room hasn't settled (nobody joined, or it missed its wake-up):
+ * by the cron a minute after the end, and whenever either side opens their bookings (`user`), so an ended video date
+ * never shows as still to come. The room is asked for its final count; with no room there's nothing to count.
  */
-export async function endVideoDates(env: Env) {
+export async function endVideoDates(env: Env, user?: string) {
   const due = await env.DB.prepare(
-    `SELECT id FROM bookings WHERE activity = ? AND status = 'confirmed' AND pay_status = 'held' AND paid = 1 AND call_closed IS NULL AND ends_at <= ? LIMIT 50`,
-  ).bind(VIDEO_ACT, now() - 60).all<{ id: string }>();
+    `SELECT id FROM bookings WHERE activity = ?1 AND status = 'confirmed' AND pay_status = 'held' AND paid = 1 AND call_closed IS NULL AND ends_at <= ?2
+       ${user ? 'AND (customer_id = ?3 OR companion_id = ?3)' : ''} LIMIT 50`,
+  ).bind(VIDEO_ACT, user ? now() : now() - 60, ...(user ? [user] : [])).all<{ id: string }>();
   for (const { id } of due.results) {
     let room: CallSummary | null = null;
     try {

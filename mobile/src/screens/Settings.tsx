@@ -8,6 +8,7 @@ import { eur, PREF } from '../data';
 import { api } from '../api';
 import { useStore, type Lang } from '../store';
 import { goBack, openVerify } from '../nav';
+import { usePushAccess } from '../lib/push';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, H, Row, Toggle, Txt } from '../ui/primitives';
 import { CircleButton, NotLoaded, PrimaryButton, SecondaryButton, StatusCover } from '../ui/common';
@@ -129,8 +130,24 @@ function Payments() {
 function Notifications() {
   const p = useStore((s) => s.user!.prefs);
   const save = useStore((s) => s.savePrefs);
+  const { access, turnOn } = usePushAccess();
   return (
     <>
+      {/* The phone's own switch comes first: without it none of these reach the phone. */}
+      {access && access !== 'on' ? (
+        <Card>
+          <View style={{ padding: 16, gap: 8 }}>
+            <Row style={{ gap: 10 }}>
+              <Icon name="smartphone" size={18} />
+              <Txt size={15} weight={700} style={{ flex: 1 }}>Phone notifications are off</Txt>
+            </Row>
+            <Txt size={13} lh={1.45} color={colors.gray600}>
+              {access === 'ask' ? 'Turn them on to hear about requests, video date calls and messages.' : 'Turn them on for ZeitMit in your phone’s settings to hear about requests, video date calls and messages.'}
+            </Txt>
+            <SecondaryButton label={access === 'ask' ? 'Turn on notifications' : 'Open phone settings'} icon="bell" height={44} style={{ marginTop: 4 }} onPress={() => void turnOn()} />
+          </View>
+        </Card>
+      ) : null}
       <Card>
         <ToggleRow title="Messages" sub="New messages from companions or customers." on={p.pushMessages} onPress={() => save({ pushMessages: !p.pushMessages })} />
         <ToggleRow title="Bookings" sub="Requests, confirmations, payments and reminders." on={p.pushBookings} onPress={() => save({ pushBookings: !p.pushBookings })} />

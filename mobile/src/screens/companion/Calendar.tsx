@@ -1,7 +1,7 @@
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../../theme';
-import { AM, CALL_OPENS_EARLY_S, hours, isVideo, kindsOf, placeFor, WEEK, whenShort } from '../../data';
+import { AM, CALL_OPENS_EARLY_S, hours, isVideo, kindsOf, placeFor, videoEnded, WEEK, whenShort } from '../../data';
 import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
 import { addDays, dateLabel, localAt, localToday, rangesText } from '../../lib/dates';
 import { cityOf, offsetMin, TZ } from '../../lib/tz';
@@ -18,7 +18,8 @@ export default function Calendar() {
   // One calendar for in-person and video dates: each range of hours is open for both, or one of them.
   const both = kindsOf(useStore((s) => s.comp.acts)).length > 1;
   const cal = useStore((s) => s.comp.hours);
-  const up = useStore((s) => s.comp.upcoming);
+  // An ended video date is settled right then, so it isn't listed as still to come.
+  const up = useStore((s) => s.comp.upcoming).filter((u) => !videoEnded(u));
   const history = useStore((s) => s.comp.history);
   const done = useStore((s) => s.comp.done);
   const { openSheet, setCompanionTz } = useStore.getState();

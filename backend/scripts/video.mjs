@@ -337,6 +337,22 @@ await cron(); await sleep(1500);
 ok(rowsOf([noComp, noCust, noLog, credit]).every((q) => q.call_closed) && money((await call('GET', '/me/notifications', C.token)).data) === money(cn2) && creditOf() === credit0 + SUB,
   'each one is settled only once');
 
+// 6) Video dates the old rules left held (both joined, under 10 minutes together): never "upcoming" once ended;
+// migration 0021 reopens them, and they're settled as soon as either side opens their bookings
+const old1 = await book(), old2 = await book();
+startedAgo(old1, 3700); startedAgo(old2, 3700);
+sql(`UPDATE bookings SET call_companion_at = unixepoch() - 3600, call_customer_at = unixepoch() - 3590, call_together_s = CASE id WHEN '${old1}' THEN 200 ELSE 0 END, call_closed = unixepoch() - 30 WHERE id IN ('${old1}', '${old2}')`);
+let yu = (await call('GET', '/companion/bookings', Y.token)).data;
+ok(!yu.upcoming.some((q) => q.id === old1 || q.id === old2), 'an ended video date is never in Yuki’s upcoming, even while it waits to be settled');
+ok(rowsOf([old1, old2]).every((q) => q.status === 'confirmed' && q.pay_status === 'held'), 'closed by the old rules, they stay held');
+execSync('npx wrangler d1 execute DB --local --file migrations/0021_reopen_held_video_dates.sql', { stdio: 'pipe' });
+await call('GET', '/bookings', C.token); // opening the bookings settles them
+const [o1, o2] = ((list) => [old1, old2].map((q) => list.find((y) => y.id === q)))(rowsOf([old1, old2]));
+ok(o1.status === 'completed' && o1.pay_status === 'released' && o1.subtotal === SUB && o1.refunded === 0, 'reopened: the video had connected, so Yuki is paid in full');
+ok(o2.status === 'cancelled' && o2.pay_status === 'refunded' && o2.refunded === SUB && o2.cancel_note?.startsWith('The video didn’t connect'), 'the video never connected: everything back but the fee');
+yu = (await call('GET', '/companion/bookings', Y.token)).data;
+ok(yu.done.some((q) => q.id === old1) && !yu.upcoming.some((q) => q.id === old1 || q.id === old2), 'and they show in Yuki’s history, not as still to come');
+
 pushMock.close();
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

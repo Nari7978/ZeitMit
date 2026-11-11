@@ -1,7 +1,8 @@
+import { useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, eur, hours, isVideo } from '../../data';
+import { AM, eur, hours, isVideo, videoEnded } from '../../data';
 import { joinVideoDate } from '../../nav';
 import { CODE_OPENS_HOURS, GALLERY_MIN, hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
@@ -12,6 +13,7 @@ import { CompShell, Initial } from './Shell';
 import { historyLine } from './History';
 import { t } from '../../i18n';
 import { feedbackDue, useFeedbackPopup } from '../../lib/feedbackPrompt';
+import { usePushAccess } from '../../lib/push';
 
 export default function Overview() {
   // Only what this screen shows (the whole store would redraw it on every change anywhere in the app).
@@ -20,12 +22,20 @@ export default function Overview() {
   const first = useStore((s) => s.user?.first ?? '');
   const name = useStore((s) => s.user?.name ?? '');
   const { openSheet, openFeedback } = useStore.getState();
-  const { requests, upcoming, earnings, rate, acts, gallery } = comp;
+  const { requests, earnings, rate, acts, gallery } = comp;
+  // Redrawn every 30 seconds, so a video date leaves "now" when its booked time is over.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => tick((n) => n + 1), 30000);
+    return () => clearInterval(iv);
+  }, []);
+  const nowS = Date.now() / 1000;
+  // An ended video date is settled right then: it isn't still to come, even before the server says it's done.
+  const upcoming = comp.upcoming.filter((b) => !videoEnded(b, nowS));
   const next = upcoming[0];
   const held = earnings.held / 100;
   const live = status === 'approved';
   // Meet-ups happening now (the code can be entered from 2 hours before): enter the customer's code right here.
-  const nowS = Date.now() / 1000;
   const { done } = comp;
   // A video date stays here while its booked time runs, even once the call confirmed it, so you can get back in.
   const meeting = [
@@ -36,6 +46,8 @@ export default function Overview() {
   // once by itself.
   const ask = feedbackDue(comp.done);
   useFeedbackPopup('companion');
+  // Requests and video date calls reach a companion's phone only with notifications on.
+  const push = usePushAccess();
 
   return (
     <CompShell title={'Hi, ' + first}>
@@ -84,6 +96,18 @@ export default function Overview() {
           <View style={{ flex: 1 }}>
             <Txt size={15} weight={700}>{`How did it go with ${ask.who.split(' ')[0]}?`}</Txt>
             <Txt size={13} lh={1.4} color={colors.gray800}>Tell us privately whether you felt safe. Only the safety team sees it.</Txt>
+          </View>
+          <Icon name="chevron-right" size={18} color={colors.gray600} />
+        </PressBox>
+      ) : null}
+      {push.access && push.access !== 'on' ? (
+        <PressBox shadow={4} fx="push" onPress={() => void push.turnOn()} accessibilityLabel={t('Turn on notifications')} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.butter }]}>
+          <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="bell-ring" size={22} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Txt size={15} weight={700}>Turn on notifications</Txt>
+            <Txt size={13} lh={1.4} color={colors.gray800}>Without them you won’t hear about new requests or video date calls.</Txt>
           </View>
           <Icon name="chevron-right" size={18} color={colors.gray600} />
         </PressBox>
