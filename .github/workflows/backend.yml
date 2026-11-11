@@ -106,6 +106,18 @@ jobs:
             openssl rand -hex 32 | npx wrangler secret put JWT_SECRET
           fi
 
+      - name: Video call relay check
+        if: ${{ env.TURN_KEY_ID != '' && env.TURN_KEY_API_TOKEN != '' }}
+        run: |
+          # The TURN key can hand out relay credentials, as the API does for every video date (nothing secret is printed).
+          CODE=$(curl -s -o turn.json -w '%{http_code}' -m 20 -X POST "https://rtc.live.cloudflare.com/v1/turn/keys/$TURN_KEY_ID/credentials/generate-ice-servers" \
+            -H "Authorization: Bearer $TURN_KEY_API_TOKEN" -H 'Content-Type: application/json' -d '{"ttl": 300}' || true)
+          if [ "${CODE:0:1}" = 2 ] && grep -q '"turn' turn.json; then
+            echo "::notice::Video call relay: the Cloudflare TURN key works ($(node -e "const j=require('./turn.json');console.log([].concat(j.iceServers||[]).flatMap((x)=>[].concat(x.urls)).filter((u)=>/^turns?:/.test(u)).length+' relay addresses')"))"
+          else
+            echo "::warning::Video call relay: Cloudflare refused the TURN key (HTTP $CODE). Check the TURN_KEY_ID and TURN_KEY_API_TOKEN secrets."
+          fi
+          rm -f turn.json
       - name: Health check
         run: |
           SUB=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result?.subdomain??''))")
