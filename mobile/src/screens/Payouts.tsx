@@ -62,11 +62,15 @@ export default function Payouts() {
   }
   const { balance: b, rules } = d;
   const open = b.requested > 0;
+  const below = b.available < rules.min;
+  // Why a payout can't be requested now (both reasons when both apply, so nothing promises an amount it can't send).
   const why = !d.account
     ? 'Add the bank account your payouts go to first.'
     : open
-      ? `${euros(b.requested)} is on its way. You can request again once it’s sent.`
-      : b.available < rules.min
+      ? below
+        ? `${euros(b.requested)} is on its way. Once it’s sent, you can request again from ${euros(rules.min)}.`
+        : `${euros(b.requested)} is on its way. You can request again once it’s sent.`
+      : below
         ? `You can request a payout from ${euros(rules.min)}.`
         : null;
 
@@ -93,7 +97,7 @@ export default function Payouts() {
             <Line label="Paid out so far" value={euros(b.paid)} last />
           </Card>
 
-          <PrimaryButton label={busy === 'request' ? 'Requesting…' : b.available > 0 ? `Request payout of ${euros(b.available)}` : 'Request payout'} dim={!!why || !!busy} onPress={() => void request()} />
+          <PrimaryButton label={busy === 'request' ? 'Requesting…' : !why && b.available > 0 ? `Request payout of ${euros(b.available)}` : 'Request payout'} dim={!!why || !!busy} onPress={() => void request()} />
           {why ? <Txt size={13} lh={1.45} color={colors.gray600} align="center" style={{ marginTop: -6 }}>{why}</Txt> : null}
 
           {/* Bank account */}

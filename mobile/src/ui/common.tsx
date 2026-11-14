@@ -96,21 +96,27 @@ type BtnProps = {
   accessibilityLabel?: string;
 };
 
-/** Black primary button with the pink (or custom) offset shadow. */
+/**
+ * Black primary button with the pink (or custom) offset shadow. Not available yet (`dim`): plain gray without the
+ * shadow, the same on every background (fading the black button let the yellow screens show through it as brown).
+ */
 export function PrimaryButton({ label, children, onPress, icon, iconSize = 16, height = 52, radius = 16, size = 15, weight = 600, style, dim, shadowColor = colors.pink, bg = colors.ink, fg = colors.white, accessibilityLabel }: BtnProps & { shadowColor?: string; bg?: string; fg?: string }) {
+  const color = dim ? colors.gray600 : fg;
   return (
     <PressBox
       onPress={dim ? undefined : onPress}
       accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={{ disabled: !!dim }}
+      // Disabled for screen readers on phones and the web (accessibilityState no longer reaches the web), and no press
+      // animation.
+      disabled={!!dim}
       shadow={3}
-      shadowColor={shadowColor}
+      shadowColor={dim ? 'transparent' : shadowColor}
       fx="scale"
-      style={[{ height, borderRadius: radius, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 20, opacity: dim ? 0.4 : 1 }, style]}
+      style={[{ height, borderRadius: radius, backgroundColor: dim ? colors.gray300 : bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 20 }, style]}
     >
-      {icon ? <Icon name={icon} size={iconSize} color={fg} /> : null}
+      {icon ? <Icon name={icon} size={iconSize} color={color} /> : null}
       {/* A button squeezed by its neighbours (German on small phones) wraps its label instead of crushing them. */}
-      {label ? <Txt size={size} weight={weight} color={fg} align="center" style={{ flexShrink: 1 }}>{label}</Txt> : children}
+      {label ? <Txt size={size} weight={weight} color={color} align="center" style={{ flexShrink: 1 }}>{label}</Txt> : children}
     </PressBox>
   );
 }

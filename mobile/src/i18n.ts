@@ -885,6 +885,7 @@ const PATTERNS: [RegExp, string][] = [
   [/^Request payout of (€[\d.]+)$/, 'Auszahlung von $1 anfordern'],
   [/^(€[\d.]+) is on its way\. You can request again once it’s sent\.$/, '$1 sind unterwegs. Du kannst wieder anfordern, sobald sie überwiesen sind.'],
   [/^You can request a payout from (€[\d.]+)\.$/, 'Du kannst ab $1 eine Auszahlung anfordern.'],
+  [/^(€[\d.]+) is on its way\. Once it’s sent, you can request again from (€[\d.]+)\.$/, '$1 sind unterwegs. Sobald sie überwiesen sind, kannst du ab $2 wieder anfordern.'],
   [/^You can request a payout from (€[\d.]+)\. Available now: (€[\d.]+)\.$/, 'Du kannst ab $1 eine Auszahlung anfordern. Jetzt verfügbar: $2.'],
   [/^Payout of (€[\d.]+) requested\. We’ll let you know when it’s sent\.$/, 'Auszahlung von $1 angefordert. Wir sagen dir Bescheid, sobald sie überwiesen ist.'],
   [/^Sent (.+) to (.+)$/, 'Überwiesen $1 an $2'],
