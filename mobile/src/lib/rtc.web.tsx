@@ -13,9 +13,36 @@ export const newPeer = (iceServers: IceServer[]): Peer => new RTCPeerConnection(
 export const candidate = (c: object) => new RTCIceCandidate(c as RTCIceCandidateInit);
 export const description = (d: object) => d as RTCSessionDescriptionInit;
 
-/** Camera and microphone. The browser asks for permission the first time (it throws if refused). */
-export function openMedia(): Promise<Stream> {
-  return navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } });
+/** Camera (HD, 30 frames a second) and microphone. The browser asks for permission the first time (it throws if refused). */
+export async function openMedia(): Promise<Stream> {
+  const s = await navigator.mediaDevices.getUserMedia({
+    audio: true, video: { facingMode: 'user', width: { ideal: VIDEO.width }, height: { ideal: VIDEO.height }, frameRate: { ideal: VIDEO.fps } },
+  });
+  // Smooth motion over sharpness when the network is tight (browsers read this hint).
+  for (const t of s.getVideoTracks()) { try { t.contentHint = 'motion'; } catch { /* older browser */ } }
+  return s;
+}
+
+/** The video we send, as on phones (rtc.tsx). */
+export const VIDEO = { width: 1280, height: 720, fps: 30, maxBitrate: 2_500_000 };
+
+/** Once connected: the bitrate cap, 30 frames a second, and smooth motion over sharpness (see rtc.tsx). */
+export async function tuneVideo(pc: Peer) {
+  for (const s of pc.getSenders()) {
+    if (s.track?.kind !== 'video') continue;
+    try {
+      const p = s.getParameters();
+      if (!p.encodings?.length) continue;
+      p.encodings[0].maxBitrate = VIDEO.maxBitrate;
+      p.encodings[0].maxFramerate = VIDEO.fps;
+      await s.setParameters(p);
+    } catch { /* the browser's defaults */ }
+    try {
+      const p = s.getParameters() as RTCRtpSendParameters & { degradationPreference?: string };
+      p.degradationPreference = 'maintain-framerate';
+      await s.setParameters(p);
+    } catch { /* the browser's default (contentHint above says the same) */ }
+  }
 }
 
 export function flipCamera(_s: Stream) {

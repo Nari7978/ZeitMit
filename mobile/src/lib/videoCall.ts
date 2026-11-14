@@ -5,7 +5,7 @@
 // connection to the server doesn't end a call that's still flowing; a phone that comes back fresh offers again.
 import { useEffect, useRef, useState } from 'react';
 import { api, wsUrl } from '../api';
-import { callAudio, candidate, description, newPeer, openMedia, type IceServer, type Peer, type Stream } from './rtc';
+import { callAudio, candidate, description, newPeer, openMedia, tuneVideo, type IceServer, type Peer, type Stream } from './rtc';
 
 export type CallInfo = {
   bookingId: string; side: 'customer' | 'companion'; peer: string; peerId: string;
@@ -83,7 +83,7 @@ export function useVideoCall(bookingId: string) {
       listen(pc, 'connectionstatechange', () => {
         if (c.pc !== pc || c.done) return;
         const s = pc.connectionState;
-        if (s === 'connected') { setPhase('live'); setWasLive(true); send({ type: 'media', on: true }); shareState(); }
+        if (s === 'connected') { setPhase('live'); setWasLive(true); send({ type: 'media', on: true }); shareState(); void tuneVideo(pc); }
         else if (s === 'disconnected' || s === 'failed') {
           setPhase('reconnecting');
           send({ type: 'media', on: false });
