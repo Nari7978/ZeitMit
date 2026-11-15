@@ -2,7 +2,11 @@ import type { Env } from '../types';
 import { broadcast, userChanged } from './live';
 import { newId, now } from './util';
 
-type Note = { icon: string; tone: 'violet' | 'success' | 'warning' | 'error' | 'neutral'; title: string; body: string; go?: string };
+/**
+ * `urgent`: needs an answer within minutes (a short-notice request): a high-priority push with sound that goes out
+ * whatever the booking-update setting says, like a video date ringing, and is dropped once `until` (unix) has passed.
+ */
+type Note = { icon: string; tone: 'violet' | 'success' | 'warning' | 'error' | 'neutral'; title: string; body: string; go?: string; urgent?: { until: number } };
 
 /** Stores an in-app notification, refreshes the person's open apps and sends an Expo push if they have a push token. */
 export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUntil(p: Promise<unknown>): void }) {
@@ -17,11 +21,14 @@ export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUnti
   const prefs = (() => { try { return JSON.parse(row.prefs || '{}'); } catch { return {}; } })() as { pushMessages?: boolean; pushBookings?: boolean };
   const isMessage = (n.go ?? '').startsWith('chat:');
   const isSafety = n.go === 'checkin';
-  if (!isSafety && (isMessage ? prefs.pushMessages === false : prefs.pushBookings === false)) return;
+  if (!isSafety && !n.urgent && (isMessage ? prefs.pushMessages === false : prefs.pushBookings === false)) return;
   const send = fetch(env.EXPO_PUSH_URL ?? 'https://exp.host/--/api/v2/push/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ to: row.push_token, title: n.title, body: n.body, data: { go: n.go ?? '' }, sound: 'default' }),
+    body: JSON.stringify({
+      to: row.push_token, title: n.title, body: n.body, data: { go: n.go ?? '' }, sound: 'default',
+      ...(n.urgent ? { priority: 'high', ttl: Math.max(30, n.urgent.until - now()) } : {}),
+    }),
   }).catch(() => undefined);
   if (ctx) ctx.waitUntil(send);
   else await send;

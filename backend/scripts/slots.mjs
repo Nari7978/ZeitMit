@@ -129,7 +129,7 @@ ok(count(`SELECT id FROM bookings WHERE id = '${id}' AND status = 'expired'`) ==
 id = (await book(A, date, time)).data.id;
 await call('POST', `/companion/bookings/${id}/accept`, N);
 const real = (await call('GET', '/bookings', A)).data.find((x) => x.id === id).startsAt;
-sql(`UPDATE bookings SET starts_at = unixepoch() + 6 * 3600 WHERE id = '${id}'`); // within 24 h, so it's a late cancellation
+sql(`UPDATE bookings SET starts_at = unixepoch() + 6 * 3600, decided_at = unixepoch() - 3600 WHERE id = '${id}'`); // within 24 h and accepted an hour ago, so it's a late cancellation
 r = await call('POST', `/bookings/${id}/cancel`, A, { reason: 'Plans changed' });
 ok(r.status === 200 && r.data.late === true, 'late cancellation (companion keeps the pay)');
 sql(`UPDATE bookings SET starts_at = ${real} WHERE id = '${id}'`);

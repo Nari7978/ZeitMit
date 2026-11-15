@@ -199,6 +199,8 @@ export function lengthLabel(min: number) {
   if (!m) return t(`${h} ${h === 1 ? 'hour' : 'hours'}`);
   return t(m === 30 ? `${h}½ hours` : `${h} h ${m} min`);
 }
+/** How far ahead (seconds): "20 min", "1½ hours", "1 day". */
+export const noticeLabel = (s: number) => (s >= 86400 && s % 86400 === 0 ? t(s === 86400 ? '1 day' : `${s / 86400} days`) : lengthLabel(Math.round(s / 60)));
 /** The same for a length in hours (bookings' `dur`). */
 export const hours = (d: number) => lengthLabel(Math.round(d * 60));
 /** What stood out at a meet-up, for the private safety feedback (the server accepts the same lists). */

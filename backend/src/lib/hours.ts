@@ -28,11 +28,24 @@ export const STEP_S = STEP_MIN * 60;
 /** Booking lengths in minutes: at least an hour in person, half an hour on video; at most 8 hours. */
 export const MIN_MINUTES: Record<Kind, number> = { meet: 60, video: 30 };
 export const MAX_MINUTES = 8 * 60;
-/** A request must be accepted at least 3 hours before its start, and within 24 hours of being sent. */
+/** A request sent well ahead must be accepted at least 3 hours before its start, and within 24 hours of being sent. */
 export const ACCEPT_BEFORE_S = 3 * 3600;
 export const EXPIRE_AFTER_S = 24 * 3600;
-/** The earliest start: 3½ hours from now, so the companion has at least half an hour to accept. */
+/**
+ * Short notice (closer than that): the companion answers within `window` (10 minutes for a video date, 30 minutes in
+ * person) and at least `before` the start (10 minutes, or an hour to get there).
+ */
+export const SHORT_REPLY: Record<Kind, { window: number; before: number }> = { video: { window: 600, before: 600 }, meet: { window: 1800, before: 3600 } };
+/**
+ * How far ahead a companion can be booked, per kind (minutes): what they chose in their listing, from these. The
+ * shortest is the answer time plus the gap before the start: 20 minutes for a video date, 1½ hours in person.
+ */
+export const NOTICE_OPTIONS: Record<Kind, number[]> = { video: [20, 60, 240], meet: [90, 240, 1440] };
+export const DEFAULT_NOTICE: Record<Kind, number> = { video: 20, meet: 90 };
+/** Moving a booking to another time still needs 3½ hours' notice, so the other side has at least half an hour to answer. */
 export const LEAD_S = ACCEPT_BEFORE_S + 30 * 60;
+/** A companion's notice for a kind in seconds (a stored value that isn't an option falls back to the default). */
+export const noticeS = (kind: Kind, minutes?: number | null) => (NOTICE_OPTIONS[kind].includes(minutes ?? -1) ? minutes! : DEFAULT_NOTICE[kind]) * 60;
 /** Customers book up to 7 days ahead. */
 export const HORIZON_S = 7 * 86400;
 /** Companions plan specific dates and blocks up to 60 days ahead. */
@@ -42,10 +55,17 @@ export const MAX_RANGES = 6;
 export const ceilStep = (u: number) => Math.ceil(u / STEP_S) * STEP_S;
 export const floorStep = (u: number) => Math.floor(u / STEP_S) * STEP_S;
 
-/** When a request expires: 24 hours after it was sent, or 3 hours before its start if that's sooner. */
-export const expiryOf = (b: { created_at: number; starts_at: number }) => Math.min(b.created_at + EXPIRE_AFTER_S, b.starts_at - ACCEPT_BEFORE_S);
+/**
+ * When a request expires. Sent well ahead: 24 hours after it was sent, or 3 hours before its start if that's sooner.
+ * Short notice: within SHORT_REPLY's window and before its gap to the start. The later of the two, so the rules meet
+ * without a jump. The database works out the same (bookings.expires_at, migration 0022).
+ */
+export const expiryOf = (b: { created_at: number; starts_at: number; kind: Kind }) => Math.max(
+  Math.min(b.created_at + EXPIRE_AFTER_S, b.starts_at - ACCEPT_BEFORE_S),
+  Math.min(b.created_at + SHORT_REPLY[b.kind].window, b.starts_at - SHORT_REPLY[b.kind].before),
+);
 /** Whether a request can still be accepted at moment `t` (up to and including its expiry). */
-export const canAccept = (b: { created_at: number; starts_at: number }, t: number) => t <= expiryOf(b);
+export const canAccept = (b: { created_at: number; starts_at: number; kind: Kind }, t: number) => t <= expiryOf(b);
 
 /** "1 hour", "2½ hours", "1 hour 15 minutes", "45 minutes": the same wording as the app. */
 export function lengthText(min: number) {
@@ -233,18 +253,22 @@ export async function busyOf(env: Env, companionId: string, from: number, to: nu
 /** UTC dates that cover [from, to) in any zone (±14 hours), for loading dates' own hours. */
 const utcDates = (from: number, to: number) => [new Date((from - 86400) * 1000).toISOString().slice(0, 10), new Date((to + 86400) * 1000).toISOString().slice(0, 10)];
 
-/** A companion's hours (weekly, dates around the window, blocks in it), time zone and activities. */
-export async function loadHours(env: Env, companionId: string, from: number, to: number): Promise<Hours & { acts: string[] } | null> {
+/**
+ * A companion's hours (weekly, dates around the window, blocks in it), time zone, activities and how far ahead they can
+ * be booked per kind (seconds).
+ */
+export async function loadHours(env: Env, companionId: string, from: number, to: number): Promise<Hours & { acts: string[]; notice: Record<Kind, number> } | null> {
   const [d0, d1] = utcDates(from, to);
   const [c, days, blocks] = await env.DB.batch([
-    env.DB.prepare('SELECT c.timezone, c.activities, w.ranges FROM companions c LEFT JOIN hours_week w ON w.companion_id = c.user_id WHERE c.user_id = ?').bind(companionId),
+    env.DB.prepare('SELECT c.timezone, c.activities, c.notice_video, c.notice_meet, w.ranges FROM companions c LEFT JOIN hours_week w ON w.companion_id = c.user_id WHERE c.user_id = ?').bind(companionId),
     env.DB.prepare('SELECT date, ranges FROM hours_days WHERE companion_id = ? AND date >= ? AND date <= ?').bind(companionId, d0, d1),
     env.DB.prepare('SELECT starts_at, ends_at FROM hours_blocks WHERE companion_id = ? AND ends_at > ? AND starts_at < ?').bind(companionId, from, to),
   ]);
-  const row = (c.results as { timezone: string | null; activities: string; ranges: string | null }[])[0];
+  const row = (c.results as { timezone: string | null; activities: string; notice_video: number | null; notice_meet: number | null; ranges: string | null }[])[0];
   if (!row) return null;
   return {
     tz: row.timezone || DEFAULT_TZ,
+    notice: { video: noticeS('video', row.notice_video), meet: noticeS('meet', row.notice_meet) },
     acts: parseJson<string[]>(row.activities, []),
     week: parseWeek(row.ranges),
     days: new Map((days.results as { date: string; ranges: string }[]).map((d) => [d.date, parseDay(d.ranges)])),
@@ -252,36 +276,48 @@ export async function loadHours(env: Env, companionId: string, from: number, to:
   };
 }
 
-export type KindFree = { min: number; max: number; open: Interval[] };
+/** One kind of date: lengths (minutes), how far ahead it can be booked (`lead`, seconds; `earliest`) and the free time. */
+export type KindFree = { min: number; max: number; lead: number; earliest: number; open: Interval[] };
 export type Availability = {
   tz: string; now: number; earliest: number; latest: number; step: number;
   kinds: Record<Kind, KindFree | null>;
 };
 
 /**
- * What a customer can book with a companion: for each kind they offer, the free intervals (bookings start from
- * `earliest`, before `latest`, and can run up to 8 hours past it), plus the rules. `except` leaves one booking out
- * (to move it).
+ * What a customer can book with a companion: for each kind they offer, the free intervals (bookings start from that
+ * kind's `earliest`: the companion's notice for it, before `latest`, and can run up to 8 hours past it), plus the rules.
+ * `except` leaves one booking out and `moving` asks for 3½ hours' notice at least (to move a booking).
  */
-export async function availabilityOf(env: Env, companionId: string, except = ''): Promise<Availability | null> {
+export async function availabilityOf(env: Env, companionId: string, except = '', moving = false): Promise<Availability | null> {
   const t = now();
-  const earliest = ceilStep(t + LEAD_S);
   const latest = t + HORIZON_S;
   const to = latest + MAX_MINUTES * 60;
   const [h, busy] = await Promise.all([loadHours(env, companionId, t, to), busyOf(env, companionId, t, to, except)]);
   if (!h) return null;
   const kinds: Record<Kind, KindFree | null> = { meet: null, video: null };
-  for (const k of kindsOf(h.acts)) kinds[k] = { min: MIN_MINUTES[k], max: MAX_MINUTES, open: freeTime(h, k, earliest, to, busy) };
+  for (const k of kindsOf(h.acts)) {
+    const lead = Math.max(h.notice[k], moving ? LEAD_S : 0);
+    const earliest = ceilStep(t + lead);
+    kinds[k] = { min: MIN_MINUTES[k], max: MAX_MINUTES, lead, earliest, open: freeTime(h, k, earliest, to, busy) };
+  }
+  // The soonest of the kinds (what app versions from before per-kind notice go by; they ask 3½ hours themselves).
+  const earliest = Math.min(...KINDS.map((k) => kinds[k]?.earliest ?? Infinity), ceilStep(t + LEAD_S));
   return { tz: h.tz, now: t, earliest, latest, step: STEP_MIN, kinds };
 }
 
-/** Validates a booking's start and length for a kind (grid, lengths, notice, horizon). Returns a message, or null. */
-export function ruleProblem(kind: Kind, start: number, min: number, t = now()) {
+/** "20 minutes", "1½ hours", "1 day": how far ahead, for messages. */
+export const noticeText = (s: number) => (s >= 86400 && s % 86400 === 0 ? (s === 86400 ? '1 day' : `${s / 86400} days`) : lengthText(Math.round(s / 60)));
+
+/**
+ * Validates a booking's start and length for a kind (grid, lengths, notice, horizon). `lead`: the notice needed, in
+ * seconds (the companion's for that kind; 3½ hours to move a booking). Returns a message, or null.
+ */
+export function ruleProblem(kind: Kind, start: number, min: number, lead: number, t = now()) {
   if (!Number.isInteger(min) || min % STEP_MIN || min < MIN_MINUTES[kind] || min > MAX_MINUTES) {
     return kind === 'video' ? 'Choose 30 minutes to 8 hours, in 15-minute steps.' : 'Choose 1 to 8 hours, in 15-minute steps.';
   }
   if (!Number.isInteger(start) || start % STEP_S) return 'Start times go in 15-minute steps, like 18:00 or 22:15.';
-  if (start < t + LEAD_S) return 'Book at least 3½ hours ahead: the companion has to accept at least 3 hours before the start.';
+  if (start < t + lead) return `Pick a time at least ${noticeText(lead)} from now.`;
   if (start >= t + HORIZON_S) return 'You can book up to 7 days ahead.';
   return null;
 }
@@ -307,12 +343,11 @@ function freeSummary(free: Interval[], min: number, earliest: number, latest: nu
  */
 export async function nextFreeAll(env: Env) {
   const t = now();
-  const earliest = ceilStep(t + LEAD_S);
   const latest = t + HORIZON_S;
   const to = latest + MAX_MINUTES * 60;
   const [d0, d1] = utcDates(t, to);
   const [cs, days, blocks, busy] = await env.DB.batch([
-    env.DB.prepare('SELECT c.user_id, c.timezone, c.activities, w.ranges FROM companions c LEFT JOIN hours_week w ON w.companion_id = c.user_id WHERE c.status = \'approved\''),
+    env.DB.prepare('SELECT c.user_id, c.timezone, c.activities, c.notice_video, c.notice_meet, w.ranges FROM companions c LEFT JOIN hours_week w ON w.companion_id = c.user_id WHERE c.status = \'approved\''),
     env.DB.prepare('SELECT companion_id, date, ranges FROM hours_days WHERE date >= ? AND date <= ?').bind(d0, d1),
     env.DB.prepare('SELECT companion_id, starts_at, ends_at FROM hours_blocks WHERE ends_at > ? AND starts_at < ?').bind(t, to),
     env.DB.prepare(`SELECT companion_id, starts_at, ends_at FROM bookings WHERE status IN ${HOLDING} AND starts_at < ? AND ends_at > ?`).bind(to, t),
@@ -326,8 +361,9 @@ export async function nextFreeAll(env: Env) {
   const blockRows = group<{ starts_at: number; ends_at: number }>(blocks.results);
   const busyRows = group<{ starts_at: number; ends_at: number }>(busy.results);
   const out = new Map<string, { next: number | null; today: boolean; days: number[]; free: Record<Kind, Free | null> }>();
-  for (const c of cs.results as { user_id: string; timezone: string | null; activities: string; ranges: string | null }[]) {
+  for (const c of cs.results as { user_id: string; timezone: string | null; activities: string; notice_video: number | null; notice_meet: number | null; ranges: string | null }[]) {
     const tz = c.timezone || DEFAULT_TZ;
+    const notice: Record<Kind, number> = { video: noticeS('video', c.notice_video), meet: noticeS('meet', c.notice_meet) };
     const h: Hours = {
       tz, week: parseWeek(c.ranges),
       days: new Map((dayRows.get(c.user_id) ?? []).map((d) => [d.date, parseDay(d.ranges)])),
@@ -336,7 +372,10 @@ export async function nextFreeAll(env: Env) {
     const taken: Interval[] = (busyRows.get(c.user_id) ?? []).map((b) => [b.starts_at, b.ends_at]);
     const today = dateIn(t, tz);
     const free: Record<Kind, Free | null> = { meet: null, video: null };
-    for (const k of kindsOf(parseJson<string[]>(c.activities, []))) free[k] = freeSummary(freeTime(h, k, earliest, to, taken), MIN_MINUTES[k], earliest, latest, tz, today);
+    for (const k of kindsOf(parseJson<string[]>(c.activities, []))) {
+      const earliest = ceilStep(t + notice[k]);
+      free[k] = freeSummary(freeTime(h, k, earliest, to, taken), MIN_MINUTES[k], earliest, latest, tz, today);
+    }
     const all = KINDS.map((k) => free[k]).filter((f): f is Free => !!f);
     const nexts = all.map((f) => f.next).filter((n): n is number => n !== null);
     out.set(c.user_id, {
@@ -376,7 +415,7 @@ export function legacyDays(free: Interval[], tz: string, earliest: number, lates
 /** Older apps' open times: one list (in person, or video for a video-only companion) and per kind. */
 export function legacyViews(a: Availability, h?: { days: Map<string, Range[]> }) {
   const own = h ? new Set(h.days.keys()) : undefined;
-  const days = (k: Kind) => (a.kinds[k] ? legacyDays(a.kinds[k]!.open, a.tz, a.earliest, a.latest, own) : null);
+  const days = (k: Kind) => (a.kinds[k] ? legacyDays(a.kinds[k]!.open, a.tz, a.kinds[k]!.earliest, a.latest, own) : null);
   const meet = days('meet'), video = days('video');
   return { slots: meet ?? video ?? [], meet, video };
 }

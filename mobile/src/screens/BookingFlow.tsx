@@ -3,7 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, TextInp
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { AM, boundariesOf, BSTEPS, eur, isVideo, kindOf, kindsOf, lengthLabel, MAX_MINUTES, MIN_MINUTES, placeFor, placeOr, ROM, slotDay, type ActId, type Kind } from '../data';
+import { AM, boundariesOf, BSTEPS, eur, isVideo, kindOf, kindsOf, lengthLabel, MAX_MINUTES, MIN_MINUTES, noticeLabel, placeFor, placeOr, ROM, slotDay, type ActId, type Kind } from '../data';
 import { daysOf, deadlineFor, earliestNow, firstStart, freeFrom, otherZone, timeOf, useAvailability } from '../lib/avail';
 import { cityOf } from '../lib/tz';
 import { localAt, untilLabel, whenAt } from '../lib/dates';
@@ -50,7 +50,7 @@ export default function BookingFlow() {
   const days = a ? daysOf(a, kind, minLen) : [];
   const day = days.find((d) => d.date === b.date);
   // How long a booking from the picked start can be: up to the next booking, closed or blocked time, at most 8 hours.
-  const room = a && free && b.start !== null && b.start >= earliestNow(a) && b.start < a.latest ? Math.min(maxLen, freeFrom(free.open, b.start)) : 0;
+  const room = a && free && b.start !== null && b.start >= earliestNow(a, kind) && b.start < a.latest ? Math.min(maxLen, freeFrom(free.open, b.start)) : 0;
   const fits = room >= minLen;
 
   // A checkout left unpaid earlier: close it before trying again.
@@ -122,7 +122,7 @@ export default function BookingFlow() {
   const video = !!b.act && isVideo(b.act);
   const order = video ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6];
   const at = order.indexOf(step);
-  const deadline = b.start !== null ? deadlineFor(b.start) : null;
+  const deadline = b.start !== null ? deadlineFor(b.start, kind) : null;
   const zone = otherZone(a);
 
   const go = () => {
@@ -304,7 +304,7 @@ export default function BookingFlow() {
 
         {!quick && step === 2 && (
           <>
-            <StepTitle title="Pick a day and start time" sub="Any start in 15-minute steps, from 3½ hours from now. Green is free." />
+            <StepTitle title="Pick a day and start time" sub={`Any start in 15-minute steps, at least ${noticeLabel(free?.lead ?? 3.5 * 3600)} from now. Green is free.`} />
             {!a ? (
               <Txt size={14} color={colors.gray600}>Loading availability…</Txt>
             ) : (
@@ -442,8 +442,8 @@ export default function BookingFlow() {
                 <Icon name="rotate-ccw" size={16} style={{ marginTop: 2 }} />
                 <Txt size={13} lh={1.5} color={colors.gray800} style={{ flex: 1 }}>
                   {video
-                    ? `Full refund if ${c.name} declines or doesn’t accept in time. Once they accept, the ${eur(fee / 100)} service fee isn’t refundable: you get the rest back if you cancel 24+ hours before, or if ${c.name} cancels or doesn’t join.`
-                    : `Full refund if ${c.name} declines or doesn’t accept in time. Once they accept, the ${eur(fee / 100)} service fee isn’t refundable: you get the rest back if you cancel 24+ hours before, or if ${c.name} cancels.`}
+                    ? `Full refund if ${c.name} declines or doesn’t accept in time. Once they accept, the ${eur(fee / 100)} service fee isn’t refundable: you get the rest back if you cancel 24+ hours before or within 10 minutes after they accept, or if ${c.name} cancels or doesn’t join.`
+                    : `Full refund if ${c.name} declines or doesn’t accept in time. Once they accept, the ${eur(fee / 100)} service fee isn’t refundable: you get the rest back if you cancel 24+ hours before or within 10 minutes after they accept, or if ${c.name} cancels.`}
                 </Txt>
               </Row>
               {video ? (

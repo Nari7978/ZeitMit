@@ -1,7 +1,8 @@
 // In-person and video dates on one calendar: each range of hours is open for both kinds (the default), in person only
 // or video only, and a confirmed booking of either kind takes the time for both. Both kinds are requests with the same
-// rules: bookable from 3½ hours ahead in 15-minute steps (video from 30 minutes, in person from 1 hour), accepted
-// within 24 hours and at least 3 hours before the start. Plus the per-kind controls of older app versions. Runs
+// rules: bookable in 15-minute steps (video from 30 minutes, in person from 1 hour) from the companion's notice (by
+// default 20 minutes ahead for video, 1½ hours in person), accepted within 24 hours and at least 3 hours before the
+// start (sooner for short notice: scripts/short-notice.mjs). Plus the per-kind controls of older app versions. Runs
 // against a LOCAL API with the demo companions seeded (it sets and removes Yuki's own hours for the next 8 days, and
 // briefly lets Noah offer video dates). Usage: node scripts/kinds.mjs [api]
 import { execSync } from 'node:child_process';
@@ -124,7 +125,7 @@ ok(r.data.availability.kinds.meet === null && same(openOn(r.data.availability, '
 // 4) Cancelling: free until 24 hours before, for both kinds (no special case for video)
 let mine = (await call('GET', '/bookings', B)).data.find((x) => x.id === vid);
 ok(mine.freeUntil === mine.startsAt - 24 * 3600, 'free to cancel until 24 hours before');
-sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600 WHERE id = '${vid}'`);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600, decided_at = unixepoch() - 3600 WHERE id = '${vid}'`); // accepted an hour ago
 r = await call('POST', `/bookings/${vid}/cancel`, B, { reason: 'Plans changed' });
 ok(r.status === 200 && r.data.late === true && r.data.refunded === 0, 'less than 24 hours before: no refund');
 
@@ -154,9 +155,9 @@ ok((await accept(soon)).status === 200 && row(soon).status === 'confirmed', 'acc
 await call('POST', `/companion/bookings/${soon}/cancel`, Y.token, { reason: 'Something else' });
 r = await book(A, 'call', day, '22:00', 45);
 const tooSoon = r.data.id;
-sql(`UPDATE bookings SET starts_at = unixepoch() + 3 * 3600 - 60 WHERE id = '${tooSoon}'`);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 3 * 3600 - 60, created_at = unixepoch() - 3600 WHERE id = '${tooSoon}'`); // sent an hour ago
 r = await accept(tooSoon);
-ok(r.status === 409 && row(tooSoon).status === 'expired', 'less than 3 hours before the start: too late, refunded');
+ok(r.status === 409 && row(tooSoon).status === 'expired', 'sent an hour ago, now less than 3 hours before the start: too late, refunded');
 
 // 7) Yuki answers a request with another time: it waits for Anna's answer, past the 24 hours
 r = await book(A, 'coffee', day, '18:00');
@@ -171,18 +172,20 @@ r = await call('POST', `/bookings/${counter}/reschedule/accept`, A);
 ok(r.status === 200 && r.data.confirmed === true && row(counter).status === 'confirmed' && clock(row(counter).starts_at) === '19:00', 'Anna accepts: confirmed for 19:00');
 await call('POST', `/companion/bookings/${counter}/cancel`, Y.token, { reason: 'Something else' });
 
-// 8) Notice: both kinds from 3½ hours ahead (today open 06:00–24:00 for both)
+// 8) Notice: video dates from 20 minutes ahead, in person from 1½ hours (Yuki's default; today open 06:00–24:00 for both)
 const today = berlin(0);
 await call('PUT', `/companion/hours/days/${today}`, Y.token, { ranges: [R('06:00', '24:00')] });
-const e0 = Math.ceil((Date.now() / 1000 + 3.5 * 3600) / 900) * 900;
+const lead = { meet: 5400, video: 1200 };
+const firstAt = () => Object.fromEntries(['meet', 'video'].map((k) => [k, Math.ceil((Date.now() / 1000 + lead[k]) / 900) * 900]));
+const e0 = firstAt();
 a = await avail();
-const e1 = Math.ceil((Date.now() / 1000 + 3.5 * 3600) / 900) * 900;
+const e1 = firstAt();
 const expect = (e) => (e < at(next(today), '00:00') ? [`${clock(Math.max(e, at(today, '06:00')))}–00:00`] : []);
 for (const kind of ['meet', 'video']) {
   const got = openOn(a, kind, today);
-  ok(same(got, expect(e0)) || same(got, expect(e1)), `${kind === 'meet' ? 'in person' : 'video'} today: ${got.join(', ') || 'nothing'} (from 3½ hours ahead, in 15-minute steps)`);
+  ok(same(got, expect(e0[kind])) || same(got, expect(e1[kind])), `${kind === 'meet' ? 'in person' : 'video'} today: ${got.join(', ') || 'nothing'} (from ${kind === 'meet' ? '1½ hours' : '20 minutes'} ahead, in 15-minute steps)`);
 }
-ok(a.earliest === e0 || a.earliest === e1, `the earliest start is ${clock(a.earliest)}`);
+ok(a.earliest === e0.video || a.earliest === e1.video, `the earliest start is ${clock(a.earliest)} (the sooner of the two kinds)`);
 await call('DELETE', `/companion/hours/days/${today}`, Y.token);
 
 // 9) Older app versions' per-kind controls, on the same calendar
@@ -206,7 +209,7 @@ const n0 = (await call('GET', '/companion', N.token)).data;
 await call('PATCH', '/companion', N.token, { acts: [...n0.acts, 'call'] });
 const n1 = (await call('GET', '/companion', N.token)).data;
 const na = await avail(NID);
-ok(n1.availVideo.length > 0 && same([...n1.availVideo].sort(), [...n1.avail].sort()) && same(na.kinds.video.open, na.kinds.meet.open), `Noah adds video dates: the same hours are open for them too (${n1.availVideo.length} windows)`);
+ok(n1.availVideo.length > 0 && same([...n1.availVideo].sort(), [...n1.avail].sort()) && same(na.kinds.video.open.map(([x, y]) => [Math.max(x, na.kinds.meet.earliest), y]).filter(([x, y]) => y > x), na.kinds.meet.open), `Noah adds video dates: the same hours are open for them too (${n1.availVideo.length} windows)`);
 await call('PATCH', '/companion', N.token, { acts: n0.acts });
 ok((await avail(NID)).kinds.video === null && (await times(NID)).video === null, 'without video dates again: no video times');
 

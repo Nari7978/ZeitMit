@@ -17,7 +17,7 @@ const TABS: BTab[] = ['upcoming', 'pending', 'completed', 'cancelled'];
 const TAB_LABEL: Record<BTab, string> = { upcoming: 'Upcoming', pending: 'Pending', completed: 'Past', cancelled: 'Cancelled' };
 const EMPTY: Record<BTab, [string, string]> = {
   upcoming: ['No upcoming plans', 'Bookings show here once the companion accepts your request.'],
-  pending: ['No pending requests', 'Requests wait here until the companion accepts them, at least 3 hours before the start.'],
+  pending: ['No pending requests', 'Requests wait here until the companion accepts them.'],
   completed: ['Nothing completed yet', 'Past bookings and reviews will collect here.'],
   cancelled: ['No cancellations', 'Declined, expired and cancelled bookings show here, with what was refunded.'],
 };

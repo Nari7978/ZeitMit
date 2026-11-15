@@ -131,14 +131,14 @@ ok(r.status === 409, '   which can’t be accepted any more');
 // ---- 6 & 7) The 3-hour deadline
 await setDay(D2, [{ from: '08:00', to: '22:00', kind: 'both' }]);
 const d6 = (await book(A, 'coffee', at(D2, '10:00'), 60)).data.id;
-sql(`UPDATE bookings SET starts_at = unixepoch() + 3 * 3600 + 20 WHERE id = '${d6}'`);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 3 * 3600 + 20, created_at = unixepoch() - 3600 WHERE id = '${d6}'`); // sent an hour ago (past the short-notice window)
 r = await accept(d6);
 ok(r.status === 200 && row(d6).status === 'confirmed', `6  accepted seconds before the 3-hour deadline: confirmed (${r.status}; exactly at it: engine-check)`);
 await call('POST', `/companion/bookings/${d6}/cancel`, Y.token, { reason: 'Something else' });
 const d7 = (await book(B, 'coffee', at(D2, '11:00'), 60)).data.id;
-sql(`UPDATE bookings SET starts_at = unixepoch() + 3 * 3600 - 5 WHERE id = '${d7}'`);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 3 * 3600 - 5, created_at = unixepoch() - 3600 WHERE id = '${d7}'`);
 r = await accept(d7);
-ok(r.status === 409 && /at least 3 hours before/.test(r.data?.error), `7  5 seconds past the deadline: refused (“${r.data?.error}”)`);
+ok(r.status === 409 && /^Too late to accept: the time to answer this request has run out\./.test(r.data?.error), `7  5 seconds past the deadline: refused (“${r.data?.error}”)`);
 ok(row(d7).status === 'expired' && row(d7).pay_status === 'refunded', '   and the request is EXPIRED, refunded');
 ok((await notes(B)).some((n) => n.title === 'Request expired'), '   Ben is told');
 
@@ -226,7 +226,8 @@ await rule('a start off the 15-minute grid is refused', at(D3, '10:10'), 60);
 await rule('a length off the 15-minute steps is refused', at(D3, '10:00'), 70);
 await rule('in person needs at least an hour', at(D3, '10:00'), 45);
 await rule('at most 8 hours', at(D3, '08:00'), 8 * 60 + 15);
-await rule('at least 3½ hours ahead', Math.ceil((Date.now() / 1000 + 3 * 3600) / 900) * 900, 60);
+await rule('in person at least 1½ hours ahead', Math.ceil((Date.now() / 1000 + 5400) / 900) * 900 - 900, 60);
+await rule('a video date at least 20 minutes ahead', Math.ceil((Date.now() / 1000 + 1200) / 900) * 900 - 900, 30, 'call');
 await rule('at most 7 days ahead', at(berlin(8), '10:00'), 60);
 r = await book(D, 'call', at(D3, '10:00'), 30);
 ok(r.status === 201 && r.data.minutes === 30, 'R  a video date can be 30 minutes');

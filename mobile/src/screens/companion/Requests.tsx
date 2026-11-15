@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
 import { AM, eur, isVideo, memberSince, placeFor } from '../../data';
@@ -38,13 +39,8 @@ export default function Requests() {
               </Pressable>
               <Pill label="New" bg={colors.blush} fg={colors.ink} height={24} />
             </Row>
-            {/* Not accepted by then (within 24 hours, at least 3 hours before the start), the request expires and is refunded. */}
-            {r.expiresAt ? (
-              <Row style={{ gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FDF3E2' }}>
-                <Icon name="hourglass" size={14} color="#8A5A0F" />
-                <Txt size={13} weight={600} color="#8A5A0F" style={{ flex: 1 }}>{`Accept by ${untilLabel(r.expiresAt)}`}</Txt>
-              </Row>
-            ) : null}
+            {/* Not accepted by then, the request expires and is refunded (short notice: a countdown of the minutes left). */}
+            {r.expiresAt ? <AnswerBy until={r.expiresAt} /> : null}
             {/* Requests don't hold time: other customers may want the same time, and accepting one ends the others. */}
             {r.overlaps ? (
               <Row style={{ gap: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: colors.lilac, alignItems: 'flex-start' }}>
@@ -91,5 +87,30 @@ export default function Requests() {
         </View>
       ) : null}
     </CompShell>
+  );
+}
+
+/**
+ * Until when to accept. With half an hour or less left (a short-notice request), the minutes left, counting down, in red
+ * at the end.
+ */
+function AnswerBy({ until }: { until: number }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  const soon = until - now <= 30 * 60;
+  useEffect(() => {
+    if (!soon) return;
+    const iv = setInterval(() => setNow(Date.now() / 1000), 15000);
+    return () => clearInterval(iv);
+  }, [soon]);
+  const left = Math.max(0, Math.ceil((until - now) / 60));
+  const urgent = soon && left <= 5;
+  const fg = urgent ? colors.roseDeep : '#8A5A0F';
+  return (
+    <Row style={{ gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: urgent ? '#FDE6EC' : '#FDF3E2' }}>
+      <Icon name={soon ? 'alarm-clock' : 'hourglass'} size={14} color={fg} />
+      <Txt size={13} weight={soon ? 700 : 600} color={fg} style={{ flex: 1 }}>
+        {soon ? (left > 0 ? `Answer within ${left} min (by ${untilLabel(until)})` : 'Time to answer is up') : `Accept by ${untilLabel(until)}`}
+      </Txt>
+    </Row>
   );
 }

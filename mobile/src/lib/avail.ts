@@ -14,25 +14,41 @@ import { addDays, localAt, localToday } from './dates';
 import { TZ, offsetMin } from './tz';
 
 export type Interval = [number, number];
-/** One kind of date: the shortest and longest booking (minutes) and the free intervals. */
-export type KindFree = { min: number; max: number; open: Interval[] };
+/**
+ * One kind of date: the shortest and longest booking (minutes), how far ahead it can be booked (`lead`, seconds: the
+ * companion's choice; servers from before that send none) and the free intervals.
+ */
+export type KindFree = { min: number; max: number; lead?: number; earliest?: number; open: Interval[] };
 export type Availability = {
   /** The companion's time zone (their hours are set in it). */
   tz: string; now: number; earliest: number; latest: number; step: number;
   kinds: Record<Kind, KindFree | null>;
 };
 
-/** Rules (as on the server): starts and lengths in 15-minute steps, from 3½ hours ahead. */
+/**
+ * Rules (as on the server, backend/src/lib/hours.ts): starts and lengths in 15-minute steps, from the companion's
+ * notice for that kind (20 minutes for a video date, 1½ hours in person at the soonest; 3½ hours before servers sent it).
+ */
 export const STEP_S = 15 * 60;
 export const LEAD_S = 3.5 * 3600;
-/** A request has to be accepted within 24 hours, and at least 3 hours before its start. */
+/**
+ * Until when a request can be accepted. Sent well ahead: within 24 hours, and at least 3 hours before its start. Short
+ * notice: within 10 minutes for a video date (and 10 minutes before it) or 30 minutes in person (and an hour before).
+ */
 export const ACCEPT_BEFORE_S = 3 * 3600;
 export const EXPIRE_AFTER_S = 24 * 3600;
-export const deadlineFor = (startsAt: number, sentAt = Date.now() / 1000) => Math.min(sentAt + EXPIRE_AFTER_S, startsAt - ACCEPT_BEFORE_S);
+const SHORT_REPLY: Record<Kind, { window: number; before: number }> = { video: { window: 600, before: 600 }, meet: { window: 1800, before: 3600 } };
+export const deadlineFor = (startsAt: number, kind: Kind, sentAt = Date.now() / 1000) => Math.max(
+  Math.min(sentAt + EXPIRE_AFTER_S, startsAt - ACCEPT_BEFORE_S),
+  Math.min(sentAt + SHORT_REPLY[kind].window, startsAt - SHORT_REPLY[kind].before),
+);
 
 const ceilStep = (u: number) => Math.ceil(u / STEP_S) * STEP_S;
-/** The earliest start right now: the server's, moved on as time passes. */
-export const earliestNow = (a: Availability) => Math.max(a.earliest, ceilStep(Date.now() / 1000 + LEAD_S));
+/** The earliest start for a kind right now: the server's, moved on as time passes. */
+export const earliestNow = (a: Availability, kind: Kind) => {
+  const k = a.kinds[kind];
+  return Math.max(k?.earliest ?? a.earliest, ceilStep(Date.now() / 1000 + (k?.lead ?? LEAD_S)));
+};
 
 /** Minutes free from `start` until the end of its free interval (0 when it isn't free). */
 export function freeFrom(open: Interval[], start: number) {
@@ -53,7 +69,7 @@ export function startsBetween(open: Interval[], min: number, from: number, to: n
 export function firstStart(a: Availability, kind: Kind, min?: number) {
   const k = a.kinds[kind];
   if (!k) return null;
-  return startsBetween(k.open, min ?? k.min, earliestNow(a), a.latest)[0] ?? null;
+  return startsBetween(k.open, min ?? k.min, earliestNow(a, kind), a.latest)[0] ?? null;
 }
 
 /** Midnight at the start of a date (in this phone's zone). */
@@ -75,7 +91,7 @@ export type Day = {
 export function daysOf(a: Availability, kind: Kind, min?: number): Day[] {
   const k = a.kinds[kind];
   const today = localToday();
-  const from0 = earliestNow(a);
+  const from0 = earliestNow(a, kind);
   return Array.from({ length: 7 }, (_, i) => {
     const date = addDays(today, i);
     const from = dayStart(date), to = dayStart(addDays(date, 1));

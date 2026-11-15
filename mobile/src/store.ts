@@ -77,7 +77,16 @@ export type HoursDay = { date: string; ranges: Range[] };
 /** Time a companion blocked (a break, time off): closed whatever the hours say, until removed. */
 export type Block = { id: string; startsAt: number; endsAt: number; note: string };
 /** One calendar for both kinds of date, in the companion's time zone. */
-export type Hours = { tz: string; week: WeekRange[]; days: HoursDay[]; blocks: Block[] };
+/**
+ * A companion's calendar: their zone, weekly hours, dates with their own hours, blocked time, and how far ahead they
+ * can be booked per kind (minutes; `noticeOptions` are the choices).
+ */
+export type Hours = {
+  tz: string; week: WeekRange[]; days: HoursDay[]; blocks: Block[];
+  notice: Record<Kind, number>; noticeOptions: Record<Kind, number[]>;
+};
+/** As on the server (backend/src/lib/hours.ts), for servers from before companions chose their notice. */
+const NOTICE_FALLBACK = { notice: { video: 20, meet: 90 }, noticeOptions: { video: [20, 60, 240], meet: [90, 240, 1440] } };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
   | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'hours' | 'block';
@@ -200,6 +209,8 @@ type Actions = {
   removeBlock: (id: string) => Promise<boolean>;
   /** The time zone a companion's hours are in. */
   setCompanionTz: (tz: string) => Promise<boolean>;
+  /** How far ahead customers can book this kind of date with you (minutes, one of the options). */
+  setNotice: (kind: Kind, minutes: number) => Promise<boolean>;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
@@ -456,7 +467,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
         api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'history' | 'earnings'>>('GET', '/companion/bookings'),
-        api<Companion & { timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[] }>('GET', '/companion'),
+        api<Companion & { timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[]; notice?: Hours['notice']; noticeOptions?: Hours['noticeOptions'] }>('GET', '/companion'),
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
@@ -465,7 +476,10 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
           ...(bk.status === 'fulfilled' ? bk.value : {}),
           ...(profile.status === 'fulfilled' && profile.value.rate ? {
             rate: profile.value.rate, acts: profile.value.acts, gallery: profile.value.gallery?.length ?? 0,
-            hours: { tz: profile.value.timezone ?? 'Europe/Berlin', week: profile.value.week ?? [], days: profile.value.days ?? [], blocks: profile.value.blocks ?? [] },
+            hours: {
+              tz: profile.value.timezone ?? 'Europe/Berlin', week: profile.value.week ?? [], days: profile.value.days ?? [], blocks: profile.value.blocks ?? [],
+              notice: profile.value.notice ?? NOTICE_FALLBACK.notice, noticeOptions: profile.value.noticeOptions ?? NOTICE_FALLBACK.noticeOptions,
+            },
           } : {}),
         }),
         compConvos: convos.status === 'fulfilled' ? keep(s.compConvos, convos.value) : s.compConvos,
@@ -734,6 +748,14 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, blocks: s.comp.hours.blocks.filter((x) => x.id !== id) } } }));
       get().showToast('Unblocked. That time is open again where your hours are.');
       return true;
+    },
+    setNotice: async (kind, minutes) => {
+      const before = get().comp.hours;
+      // Shown at once; put back if the server says no.
+      set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, notice: { ...s.comp.hours.notice, [kind]: minutes } } } }));
+      const ok = await attempt(() => api('PATCH', '/companion', { notice: { [kind]: minutes } }));
+      if (!ok) set((s) => ({ comp: { ...s.comp, hours: before } }));
+      return !!ok;
     },
     setCompanionTz: async (tz) => {
       const ok = await attempt(() => api('PATCH', '/companion', { timezone: tz }));

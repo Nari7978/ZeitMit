@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
 import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, VIDEO_ACT, type ActId } from '../types';
 import {
-  ACCEPT_BEFORE_S, availabilityOf, canAccept, fitAt, fits, HOLDING, legacyDays, lengthText, ruleProblem, type Kind,
+  ACCEPT_BEFORE_S, availabilityOf, canAccept, fitAt, fits, HOLDING, LEAD_S, legacyDays, lengthText, noticeS, ruleProblem, type Kind,
 } from '../lib/hours';
 import { slotsChanged } from '../lib/live';
 import { alertAdmins, notify } from '../lib/notify';
@@ -38,7 +38,7 @@ export type BookingRow = {
   /** What went back to the customer (cents), and the minutes a video date was paid for when less than booked (0020). */
   refunded: number; billed_minutes: number | null;
   // Worked out by the database (migration 0018)
-  ends_at: number; accept_by: number; expires_at: number; kind: Kind; decided_at: number | null; conflict_with: string | null;
+  ends_at: number; expires_at: number; kind: Kind; decided_at: number | null; conflict_with: string | null;
 };
 
 /** App versions from before the seven statuses only know four: they see the new ones as cancelled. */
@@ -71,6 +71,14 @@ const timeOf = (b: BookingRow, tz: string) => ({
   startsAt: b.starts_at, endsAt: b.ends_at, minutes: lengthOf(b), ...whenIn(b.starts_at, tz), end: whenIn(b.ends_at, tz).time, dur: b.duration_h,
 });
 
+/**
+ * Until when the customer can cancel an accepted booking and get everything back except the fee: 24 hours before the
+ * start, or (for short notice) 10 minutes after the companion accepted, if that's later and still before the start.
+ */
+export const CHANGE_MIND_S = 10 * 60;
+const freeUntilOf = (b: Pick<BookingRow, 'starts_at' | 'decided_at'>) =>
+  Math.max(b.starts_at - FREE_CANCEL_HOURS * 3600, Math.min((b.decided_at ?? 0) + CHANGE_MIND_S, b.starts_at));
+
 /** What went back to the customer (bookings refunded before migration 0020 got their whole total back). */
 const refundedOf = (b: BookingRow) => b.refunded || (b.pay_status === 'refunded' ? b.total : 0);
 
@@ -85,7 +93,7 @@ const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; ph
   cancelledBy: b.cancelled_by ?? undefined, resched: reschedOf(b, tz), reschedLeft: MAX_RESCHEDULES - b.resched_count,
   // A request: until when the companion can accept it. A confirmed booking: until when cancelling is free.
   expiresAt: b.status === 'pending' ? b.expires_at : undefined, replyBy: b.status === 'pending' ? b.expires_at : undefined,
-  freeUntil: b.status === 'confirmed' ? b.starts_at - FREE_CANCEL_HOURS * 3600 : undefined,
+  freeUntil: b.status === 'confirmed' ? freeUntilOf(b) : undefined,
   decidedAt: b.decided_at ?? undefined,
   feedback: !!(b as { my_feedback?: number }).my_feedback,
 });
@@ -272,7 +280,8 @@ async function expireRequest(env: Env, b: BookingRow) {
 }
 
 /**
- * Requests past their expiry (24 hours after they were sent, or 3 hours before the start), and requests whose time
+ * Requests past their expiry (24 hours after they were sent or 3 hours before the start; for short notice 10 or 30
+ * minutes after: src/lib/hours.ts expiryOf), and requests whose time
  * another booking took, are closed. Runs from the cron and before showing someone's bookings, so nobody sees an
  * expired request as still waiting. A request the companion answered with another time waits for the customer
  * instead (until that suggestion runs out too).
@@ -327,8 +336,9 @@ async function releaseHold(env: Env, b: BookingRow, ctx?: Ctx): Promise<'release
 }
 
 /**
- * Once a request is paid it reaches the companion, who has until its expiry to accept: 24 hours, or until 3 hours
- * before the start if that's sooner. Video dates and in-person dates both wait for the companion's answer. Tells both sides.
+ * Once a request is paid it reaches the companion, who has until its expiry to accept: up to 24 hours and 3 hours before
+ * the start, or for short notice 10 minutes (video) or 30 minutes (in person). Video dates and in-person dates both
+ * wait for the companion's answer. Tells both sides; a request with half an hour or less to answer rings the companion.
  */
 async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
   const b = await env.DB.prepare('SELECT * FROM bookings WHERE id = ?').bind(id).first<BookingRow>();
@@ -340,6 +350,16 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
     await conflictRequest(env, b, winner);
     return;
   }
+  // Paid so late that it starts too soon for an answer: it can't happen, so it's refunded in full at once.
+  if (b.expires_at <= now()) {
+    if (await closeBooking(env, b, 'expired', { note: (amt) => `Too close to the start to send · ${amt} refunded in full`, by: 'system' })) {
+      await notify(env, b.customer_id, {
+        icon: 'receipt', tone: 'neutral', title: 'Too late for that time',
+        body: `${ACT_LABEL[b.activity]} on ${whenIn(b.starts_at, p.customerTz).full} starts too soon for ${p.companion} to answer, so ${euros(b.total)} is refunded in full. Pick a later time.`, go: 'tab:cancelled',
+      }, ctx);
+    }
+    return;
+  }
   await ensureThread(env, b);
   const forThem = whenIn(b.starts_at, p.customerTz);
   const forHer = whenIn(b.starts_at, p.companionTz);
@@ -347,10 +367,13 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
     icon: 'hourglass', tone: 'warning', title: 'Request sent to ' + p.companion,
     body: `${ACT_LABEL[b.activity]} on ${forThem.full}. ${p.companion} has until ${untilText(b.expires_at, p.customerTz)} to accept.`, go: 'tab:pending',
   }, ctx);
+  // Short notice: the companion has minutes to answer, so it rings (a high-priority push, whatever their settings).
+  const left = Math.max(1, Math.round((b.expires_at - now()) / 60));
+  const urgent = b.expires_at - now() <= 30 * 60;
   await notify(env, b.companion_id, {
-    icon: 'inbox', tone: 'violet', title: 'New booking request',
+    icon: 'inbox', tone: 'violet', title: urgent ? `Answer within ${left} min: new request` : 'New booking request',
     body: `${p.customer} · ${ACT_LABEL[b.activity]} · ${forHer.full} · ${lengthText(lengthOf(b))}. Accept by ${untilText(b.expires_at, p.companionTz)}. ${euros(b.subtotal)} is already paid and held.`,
-    go: 'comp:requests',
+    go: 'comp:requests', ...(urgent ? { urgent: { until: b.expires_at } } : {}),
   }, ctx);
   await inBackground(ctx, () => sendBookingInvoice(env, b.id));
 }
@@ -361,7 +384,8 @@ async function settleCheckout(env: Env, b: BookingRow, ctx?: { waitUntil(p: Prom
   if (!b.payment_ref?.startsWith('cs_') || !stripeOn(env)) return false;
   const pi = intentOf(await getSession(env, b.payment_ref));
   if (!pi || !['requires_capture', 'succeeded'].includes(pi.status)) return false;
-  const res = await env.DB.prepare('UPDATE bookings SET paid = 1, payment_ref = ?, checkout_url = NULL, updated_at = unixepoch() WHERE id = ? AND paid = 0').bind(pi.id, b.id).run();
+  // The request is sent now, so its time to answer starts now (created_at is what its expiry counts from).
+  const res = await env.DB.prepare('UPDATE bookings SET paid = 1, payment_ref = ?, checkout_url = NULL, created_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND paid = 0').bind(pi.id, b.id).run();
   if (res.meta.changes) await announceBooking(env, b.id, ctx);
   return true;
 }
@@ -409,9 +433,9 @@ bookings.post('/', async (c) => {
   if (!age?.age_confirmed) fail(403, 'Confirm you’re 18 or older before booking.');
   if (age!.id_status !== 'approved') fail(403, 'Verify your ID before your first booking.');
   if (hasContactDetails(b.note ?? '') || hasContactDetails(b.place ?? '')) fail(400, CONTACT_MSG);
-  const comp = await c.env.DB.prepare("SELECT user_id, display_name, rate, activities, timezone FROM companions WHERE user_id = ? AND status = 'approved'")
+  const comp = await c.env.DB.prepare("SELECT user_id, display_name, rate, activities, timezone, notice_video, notice_meet FROM companions WHERE user_id = ? AND status = 'approved'")
     .bind(b.companionId)
-    .first<{ user_id: string; display_name: string; rate: number; activities: string; timezone: string | null }>();
+    .first<{ user_id: string; display_name: string; rate: number; activities: string; timezone: string | null; notice_video: number | null; notice_meet: number | null }>();
   if (!comp) fail(404, 'This companion isn’t available.');
   if (comp!.user_id === u.id) fail(400, 'You can’t book yourself.');
   const blocked = await c.env.DB.prepare('SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)')
@@ -420,7 +444,8 @@ bookings.post('/', async (c) => {
   if (!ACTIVITIES.includes(b.act) || !parseJson<string[]>(comp!.activities, []).includes(b.act)) fail(400, `${comp!.display_name} doesn’t offer that activity.`);
   const kind: Kind = b.act === VIDEO_ACT ? 'video' : 'meet';
   const { start, length } = startAndLength(b, comp!.timezone || DEFAULT_TZ);
-  const problem = ruleProblem(kind, start, length);
+  // As far ahead as this companion asks for this kind of date (20 minutes for a video date at the soonest).
+  const problem = ruleProblem(kind, start, length, noticeS(kind, kind === 'video' ? comp!.notice_video : comp!.notice_meet));
   if (problem) fail(400, problem);
   // Optional: the two can agree on a place in the chat after the request is accepted. Video dates happen in the app.
   const place = b.act === VIDEO_ACT ? '' : (b.place ?? '').trim();
@@ -541,7 +566,7 @@ bookings.get('/:id/reschedule', async (c) => {
   const b = await load(c.env, c.req.param('id'));
   const side = sideOf(b, u.id);
   const p = await peopleOf(c.env, b);
-  const a = await availabilityOf(c.env, b.companion_id, b.id);
+  const a = await availabilityOf(c.env, b.companion_id, b.id, true);
   const free = a?.kinds[b.kind] ?? null;
   return c.json({
     id: b.id, side, cid: b.companion_id, act: b.activity, kind: b.kind, status: shown(b.status, modern(c)), ...timeOf(b, u.tz),
@@ -568,10 +593,11 @@ bookings.post('/:id/reschedule', async (c) => {
   if (side === 'customer' && b.status === 'confirmed' && b.starts_at - now() < FREE_CANCEL_HOURS * 3600) {
     fail(409, `You can change the time up to ${FREE_CANCEL_HOURS} hours before. Send a message or cancel instead.`);
   }
-  const a = await availabilityOf(c.env, b.companion_id, b.id);
+  // A new time needs 3½ hours' notice (or more, if the companion asks for more), like booking used to.
+  const a = await availabilityOf(c.env, b.companion_id, b.id, true);
   const length = lengthOf(b);
   const { start } = startAndLength({ ...body, dur: b.duration_h }, a?.tz ?? DEFAULT_TZ);
-  const problem = ruleProblem(b.kind, start, length);
+  const problem = ruleProblem(b.kind, start, length, a?.kinds[b.kind]?.lead ?? LEAD_S);
   if (problem) fail(400, problem);
   if (!fits(a?.kinds[b.kind]?.open ?? [], start, start + length * 60)) fail(409, 'That time isn’t free. Pick another one.');
   if (start === b.starts_at) fail(400, 'That’s the current time. Pick a different one.');
@@ -721,7 +747,7 @@ bookings.post('/:id/cancel', async (c) => {
   const reason = reasonFor('customer', body.reason);
   const p = await peopleOf(c.env, b);
   const when = `${ACT_LABEL[b.activity]} on ${whenIn(b.starts_at, p.companionTz).day}`;
-  const late = b.status === 'confirmed' && b.starts_at - now() < FREE_CANCEL_HOURS * 3600;
+  const late = b.status === 'confirmed' && now() > freeUntilOf(b);
 
   if (!late) {
     let back = b.total;
@@ -834,7 +860,7 @@ async function own(c: { env: Env; get: (k: 'user') => { id: string } }, id: stri
   return b;
 }
 
-const TOO_LATE = 'Too late to accept: a request has to be accepted at least 3 hours before its start, and within 24 hours. It has expired and the customer was refunded.';
+const TOO_LATE = 'Too late to accept: the time to answer this request has run out. It has expired and the customer was refunded.';
 
 /**
  * Accepts a request. One statement confirms it only if it's still pending, still within its expiry and nothing

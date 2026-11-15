@@ -69,7 +69,7 @@ ok(r.status === 200 && (await intent(b.id)).status === 'succeeded', 'meet code c
 // 3) Late cancellation captures too (companion is paid); support can refund it afterwards
 const c = await paidBooking('demo_lena', lena[1], 'coffee');
 await call('POST', `/companion/bookings/${c.id}/accept`, L);
-sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600 WHERE id = '${c.id}'`);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600, decided_at = unixepoch() - 3600 WHERE id = '${c.id}'`); // accepted an hour ago
 r = await call('POST', `/bookings/${c.id}/cancel`, T);
 ok(r.status === 200 && r.data.late === true && (await intent(c.id)).status === 'succeeded', 'late cancellation takes the payment');
 r = await call('POST', `/admin/bookings/${c.id}/refund`, A);
@@ -127,6 +127,35 @@ r = await at(T, 2);
 ok(r.status === 201 && !!r.data.checkoutUrl && r.data.id !== g.id, 'the same customer can start again with another length');
 ok(!!(await pay(g.checkoutUrl)).error, 'and their first checkout page was closed');
 await call('POST', `/bookings/${r.data.id}/release`, T);
+
+// 9) Short notice and a slow checkout: the time to answer starts once the payment goes through, and a request paid
+//    so late that it starts too soon for an answer is released at once (Lena open all day for this)
+const berlin = (days) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() + days * 86400000));
+const call3 = async (m, p, t, b) => { const x = await fetch(BASE + p, { method: m, headers: { 'Content-Type': 'application/json', 'X-ZeitMit-Api': '3', Authorization: `Bearer ${t}` }, body: b ? JSON.stringify(b) : undefined }); return { status: x.status, data: await x.json().catch(() => null) }; };
+const rowOf = (id) => JSON.parse(execSync(`npx wrangler d1 execute DB --local --json --command "SELECT * FROM bookings WHERE id = '${id}'"`, { stdio: 'pipe' }).toString())[0].results[0];
+for (let i = 0; i <= 2; i++) await call3('PUT', `/companion/hours/days/${berlin(i)}`, L, { ranges: [{ from: '00:00', to: '24:00' }] });
+// Bookings other suites left in Lena's next hours move out of the way
+sql(`UPDATE bookings SET starts_at = starts_at - 30 * 86400 WHERE companion_id = 'demo_lena' AND status IN ('confirmed', 'completed') AND starts_at < unixepoch() + 9 * 3600 AND starts_at > unixepoch() - 9 * 3600`);
+const soon = Math.ceil((Date.now() / 1000 + 5400 + 60) / 900) * 900;
+const slow = (await call3('POST', '/bookings', T, { companionId: 'demo_lena', act: 'coffee', startsAt: soon, minutes: 60, place: 'Café', boundariesAgreed: true })).data;
+ok(!!slow?.checkoutUrl, `a coffee in about 1½ hours goes to checkout (${slow?.error ?? 'ok'})`);
+sql(`UPDATE bookings SET created_at = created_at - 3000 WHERE id = '${slow.id}'`); // 50 minutes on the checkout page
+await pay(slow.checkoutUrl);
+await call3('POST', `/bookings/${slow.id}/confirm-payment`, T);
+let s = rowOf(slow.id);
+ok(s.status === 'pending' && Math.abs(s.created_at - Date.now() / 1000) < 10 && s.expires_at === s.created_at + 1800, 'paid after 50 minutes: still a request, with 30 minutes to answer from the payment');
+await call3('POST', `/bookings/${slow.id}/cancel`, T);
+const tooLate = (await call3('POST', '/bookings', T, { companionId: 'demo_lena', act: 'coffee', startsAt: soon, minutes: 60, place: 'Café', boundariesAgreed: true })).data;
+sql(`UPDATE bookings SET starts_at = unixepoch() + 1800 WHERE id = '${tooLate.id}'`); // so long on the checkout page that it starts in half an hour
+await pay(tooLate.checkoutUrl);
+await call3('POST', `/bookings/${tooLate.id}/confirm-payment`, T);
+s = rowOf(tooLate.id);
+ok(s.status === 'expired' && s.pay_status === 'refunded' && /^Too close to the start to send · .+ refunded in full$/.test(s.cancel_note ?? ''), `paid half an hour before the start: too late to answer, so it’s closed and refunded (${s.status}, ${s.cancel_note})`);
+ok((await intent(tooLate.id)).status === 'canceled', 'the card hold is released');
+const told = (await call3('GET', '/me/notifications', T)).data;
+ok(told.some((n) => n.title === 'Too late for that time' && /starts too soon for Lena to answer, so .+ is refunded in full\. Pick a later time\.$/.test(n.body)), 'the customer is told to pick a later time');
+ok(!(await call3('GET', '/companion/bookings', L)).data.requests.some((x) => x.id === tooLate.id), 'Lena never sees it');
+sql(`DELETE FROM hours_days WHERE companion_id = 'demo_lena'`);
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll payment checks passed');
 process.exit(failures ? 1 : 0);

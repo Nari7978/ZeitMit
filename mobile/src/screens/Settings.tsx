@@ -302,7 +302,7 @@ function Verification() {
 
 function Help() {
   const faqs: [string, string][] = [
-    ['How does payment work?', 'You pay when you send a request. ZeitMit holds the money and releases it to the companion only when you share your 4-digit meet code in person, or after a video date. If they decline or don’t reply in time, you get a full refund. Once they accept, the 10% service fee isn’t refundable: if you cancel 24+ hours before, or they cancel, you get the rest back.'],
+    ['How does payment work?', 'You pay when you send a request. ZeitMit holds the money and releases it to the companion only when you share your 4-digit meet code in person, or after a video date. If they decline or don’t reply in time, you get a full refund. Once they accept, the 10% service fee isn’t refundable: if you cancel 24+ hours before or within 10 minutes after they accept, or they cancel, you get the rest back.'],
     ['What if a video date is cut short?', 'If you leave early, the companion is still paid: they kept the time for you. If the companion isn’t in the call for all of it, you pay only for the time they were. Waiting for the other person? After 5 minutes you can leave without losing anything.'],
     ['Where can we meet?', 'Always in a public place: a café, park entrance, museum or venue. Home addresses, hotels and private locations are never allowed.'],
     ['What isn’t allowed?', 'Anything sexual, kissing or intimacy, overnight plans, and paying or meeting outside ZeitMit. Report anyone who asks.'],

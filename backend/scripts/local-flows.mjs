@@ -75,7 +75,7 @@ ok(r.data.id === t2, 'Message on the profile opens the current booking’s threa
 
 // 3) Late cancellation: no refund, companion keeps their pay
 await call('POST', `/companion/bookings/${b2.id}/accept`, L);
-sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600 WHERE id = '${b2.id}'`);
+sql(`UPDATE bookings SET starts_at = unixepoch() + 5 * 3600, decided_at = unixepoch() - 3600 WHERE id = '${b2.id}'`); // accepted an hour ago (past the 10 minutes to change your mind)
 const before = (await call('GET', '/companion/bookings', L)).data.earnings.released;
 r = await call('POST', `/bookings/${b2.id}/cancel`, T, { reason: 'Feeling unwell' });
 ok(r.status === 200 && r.data.late === true && r.data.refunded === 0, 'cancelling less than 24 h before: no refund');

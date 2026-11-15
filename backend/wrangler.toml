@@ -40,8 +40,9 @@ tag = "v2"
 new_sqlite_classes = ["CallRoom"]
 
 [triggers]
-# Every 10 minutes: expire unanswered requests, alert on missed safety check-ins.
-crons = ["*/10 * * * *"]
+# Every 2 minutes: expire unanswered requests (a short-notice one has only 10 minutes, so its refund mustn't wait long),
+# settle ended video dates, alert on missed safety check-ins. Each run reads only open rows through indexes.
+crons = ["*/2 * * * *"]
 
 [observability]
 enabled = true

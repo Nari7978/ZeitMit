@@ -2,7 +2,7 @@
 // months away), exactly-at-the-deadline acceptance, ranges past midnight, other time zones, tidying ranges.
 // Run: npm run test:engine (bundles this file with esbuild, which comes with wrangler, and runs it with node).
 import {
-  canAccept, changeCoverage, cleanRanges, expiryOf, firstStart, fitAt, fits, normalize, openHours, ruleProblem, subtract, union,
+  canAccept, changeCoverage, cleanRanges, expiryOf, firstStart, fitAt, fits, LEAD_S, normalize, noticeS, openHours, ruleProblem, subtract, union,
   type Hours, type Range,
 } from '../src/lib/hours';
 import { localMoments, localToUnix, offsetAt, whenIn, zoneName } from '../src/lib/time';
@@ -65,17 +65,32 @@ ok(bad([['10:10', '12:00']]) && bad([['10:00', '10:15']]) && bad([['10:00', '14:
 ok(!bad([['00:00', '24:00']]) && !bad([['18:00', '18:00']]) && !bad([['22:15', '01:45', 'video']]), '   a whole day, 24 hours from 18:00, or 22:15–01:45 for video only are fine');
 
 // ---- The acceptance deadline and expiry
-const req = { created_at: 1_000_000, starts_at: 1_000_000 + 5 * 3600 };
+const req = { created_at: 1_000_000, starts_at: 1_000_000 + 5 * 3600, kind: 'meet' as const };
 ok(expiryOf(req) === req.starts_at - 3 * 3600, '6  starting in 5 hours: the deadline is 3 hours before the start');
 ok(canAccept(req, req.starts_at - 3 * 3600), '6  accepting exactly at the 3-hour deadline is allowed');
 ok(!canAccept(req, req.starts_at - 3 * 3600 + 1), '7  one second later it isn’t');
-const far = { created_at: 1_000_000, starts_at: 1_000_000 + 4 * 86400 };
+ok(expiryOf({ ...req, kind: 'video' }) === req.starts_at - 3 * 3600, '   the same for a video date');
+const far = { created_at: 1_000_000, starts_at: 1_000_000 + 4 * 86400, kind: 'meet' as const };
 ok(expiryOf(far) === far.created_at + 86400 && !canAccept(far, far.created_at + 86400 + 1), '8  days ahead: it expires 24 hours after the request');
+// Short notice (less than 3 hours to go, or so little time left before the 3-hour mark that the short window is longer)
+{
+  const T = 1_000_000, at = (kind: 'video' | 'meet', ahead: number) => expiryOf({ created_at: T, starts_at: T + ahead, kind });
+  ok(at('video', 3600) === T + 600 && at('video', 1200) === T + 600, 'S1 a video date 1 hour or 20 minutes away: 10 minutes to answer');
+  ok(at('video', 900) === T + 300, 'S2 never later than 10 minutes before a video date starts');
+  ok(at('meet', 7200) === T + 1800 && at('meet', 5400) === T + 1800, 'S3 in person 2 hours or 1½ hours away: 30 minutes to answer');
+  ok(at('meet', 4800) === T + 1200, 'S4 never later than 1 hour before an in-person date starts');
+  ok(at('meet', 3 * 3600 + 600) === T + 1800 && at('video', 3 * 3600 + 300) === T + 600, 'S5 just over 3 hours away: the short window, not 5 or 10 minutes');
+  ok(at('meet', 4 * 3600) === T + 3600 && at('video', 4 * 3600) === T + 3600, 'S6 4 hours away: as before, until 3 hours before the start');
+  ok(!canAccept({ created_at: T, starts_at: T + 3600, kind: 'video' }, T + 601), 'S7 a short-notice video request can’t be accepted after its 10 minutes');
+  ok(noticeS('video', 60) === 3600 && noticeS('meet', 1440) === 86400 && noticeS('video', 7) === 1200 && noticeS('meet', null) === 5400, 'S8 a companion’s notice: one of the options, else 20 minutes (video) / 1½ hours (in person)');
+}
 
 // ---- Start times and lengths
 const t = utc('2026-11-09T12:00:00Z');
-ok(ruleProblem('meet', t + 4 * 3600, 60, t) === null && ruleProblem('video', t + 4 * 3600, 30, t) === null, '   any 15-minute start 3½ hours or more ahead; video from 30 minutes');
-ok(!!ruleProblem('meet', t + 4 * 3600 + 600, 60, t) && !!ruleProblem('meet', t + 4 * 3600, 50, t) && !!ruleProblem('meet', t + 3 * 3600, 60, t) && !!ruleProblem('meet', t + 8 * 86400, 60, t), '   off-grid, odd lengths, too soon or too far are refused');
+ok(ruleProblem('meet', t + 4 * 3600, 60, LEAD_S, t) === null && ruleProblem('video', t + 4 * 3600, 30, LEAD_S, t) === null, '   any 15-minute start 3½ hours or more ahead; video from 30 minutes');
+ok(ruleProblem('video', t + 1800, 30, 1200, t) === null && ruleProblem('video', t + 900, 30, 1200, t) === 'Pick a time at least 20 minutes from now.', 'S9 with 20 minutes’ notice: a video date in 30 minutes is fine, in 15 it’s too soon');
+ok(ruleProblem('meet', t + 5400, 60, 5400, t) === null && ruleProblem('meet', t + 4500, 60, 5400, t) === 'Pick a time at least 1½ hours from now.' && ruleProblem('meet', t + 3 * 86400, 60, 86400, t) === null && ruleProblem('meet', t + 86400 - 900, 60, 86400, t) === 'Pick a time at least 1 day from now.', 'S10 in person with 1½ hours’ or 1 day’s notice');
+ok(!!ruleProblem('meet', t + 4 * 3600 + 600, 60, LEAD_S, t) && !!ruleProblem('meet', t + 4 * 3600, 50, LEAD_S, t) && !!ruleProblem('meet', t + 3 * 3600, 60, LEAD_S, t) && !!ruleProblem('meet', t + 8 * 86400, 60, LEAD_S, t), '   off-grid, odd lengths, too soon or too far are refused');
 ok(firstStart(union([[t + 3600, t + 7200], [t + 5 * 3600, t + 9 * 3600]]), 60, t + 3.5 * 3600, t + 7 * 86400) === t + 5 * 3600, '   the next free start skips what’s too soon');
 
 // ---- Video dates: who wasn't there, and what the companion earns (30-minute date from S, 5 minutes to wait)

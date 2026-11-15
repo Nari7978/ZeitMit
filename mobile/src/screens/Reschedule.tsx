@@ -7,7 +7,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { goBack } from '../nav';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { AM, lengthLabel, type ActId, type BookingStatus, type Kind } from '../data';
+import { AM, lengthLabel, noticeLabel, type ActId, type BookingStatus, type Kind } from '../data';
 import { api, ApiError } from '../api';
 import { useStore, type Resched } from '../store';
 import { daysOf, deadlineFor, otherZone, type Availability } from '../lib/avail';
@@ -76,7 +76,7 @@ export default function Reschedule() {
         : null;
   const label = !chosen ? 'Pick a new time' : direct ? 'Move request' : d.side === 'customer' ? `Ask ${d.other} to move it` : 'Suggest this time';
   const zone = otherZone(a);
-  const answerBy = chosen ? untilLabel(direct ? deadlineFor(pick.start!) : pick.start! - 3 * 3600) : null;
+  const answerBy = chosen ? untilLabel(direct ? deadlineFor(pick.start!, d.kind) : pick.start! - 3 * 3600) : null;
 
   const submit = async () => {
     if (!chosen || busy) return;
@@ -116,7 +116,7 @@ export default function Reschedule() {
           </Row>
         ) : (
           <>
-            <StepTitle title="Pick a new time" sub={`Same length (${lengthLabel(d.minutes)}). Any free start in 15-minute steps, from 3½ hours from now.`} />
+            <StepTitle title="Pick a new time" sub={`Same length (${lengthLabel(d.minutes)}). Any free start in 15-minute steps, at least ${noticeLabel(a?.kinds[d.kind]?.lead ?? 3.5 * 3600)} from now.`} />
             {!a ? <Txt size={14} color={colors.gray600}>{`${d.other} has no free time for this kind of date.`}</Txt> : (
               <>
                 <DayStrip days={days} selected={pick.date} onPick={(x) => setPick({ date: x, start: null })} />

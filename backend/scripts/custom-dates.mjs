@@ -195,9 +195,9 @@ ok((await listed()).days.includes(wd), 'own hours on that date make it free');
 await call('DELETE', `/companion/hours/days/${dLate}`, N.token);
 r = await call('PUT', '/companion/hours/week', N.token, { ranges: week });
 ok(r.status === 200 && (await listed()).days.includes(wd), 'weekly hours restored');
-// "Free today": a start today (the companion’s date) at least 3½ hours from now, in 15-minute steps, with an hour to spare
+// "Free today": a start today (the companion’s date) at least 1½ hours from now (Noah’s notice for in person), in 15-minute steps, with an hour to spare
 const today = berlin(0);
-const earliest = () => Math.ceil((Date.now() / 1000 + 3.5 * 3600) / 900) * 900;
+const earliest = () => Math.ceil((Date.now() / 1000 + 1.5 * 3600) / 900) * 900;
 await put(today, [R('06:00', '07:00')]);
 ok((await listed()).today === (earliest() <= at(today, '06:00')), `own hours early today (06:00–07:00): free today = ${earliest() <= at(today, '06:00')}`);
 await put(today, [R('22:00', '24:00')]);

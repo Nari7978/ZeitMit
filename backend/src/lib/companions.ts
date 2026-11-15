@@ -7,6 +7,8 @@ export type CompanionRow = {
   interests: string; languages: string; activities: string; boundaries: string; video_boundaries: string; lgbtq: number; status: string;
   id_verified: number; rating: number | null; review_count: number; photo_id: string | null; id_photo_id: string | null;
   gallery: string; timezone: string | null;
+  /** How far ahead they can be booked, per kind (minutes; migration 0022). */
+  notice_video: number; notice_meet: number;
 };
 
 /** Besides the profile photo, companions show this many more photos (the application needs the minimum). */

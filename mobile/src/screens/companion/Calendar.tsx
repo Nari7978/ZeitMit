@@ -1,12 +1,12 @@
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { colors } from '../../theme';
-import { AM, CALL_OPENS_EARLY_S, hours, isVideo, kindsOf, placeFor, videoEnded, WEEK, whenShort } from '../../data';
+import { AM, CALL_OPENS_EARLY_S, hours, isVideo, kindsOf, noticeLabel, placeFor, videoEnded, WEEK, whenShort } from '../../data';
 import { CODE_OPENS_HOURS, hueOf, useStore } from '../../store';
 import { addDays, dateLabel, localAt, localToday, rangesText } from '../../lib/dates';
 import { cityOf, offsetMin, TZ } from '../../lib/tz';
 import { Icon } from '../../ui/Icon';
-import { Box, PressBox, Row, Txt } from '../../ui/primitives';
+import { Box, Chip, PressBox, Row, Txt } from '../../ui/primitives';
 import { CompShell, Initial } from './Shell';
 import { PastRow } from './History';
 import { t } from '../../i18n';
@@ -16,13 +16,14 @@ import { ReschedBox } from '../../ui/ReschedBox';
 
 export default function Calendar() {
   // One calendar for in-person and video dates: each range of hours is open for both, or one of them.
-  const both = kindsOf(useStore((s) => s.comp.acts)).length > 1;
+  const offered = kindsOf(useStore((s) => s.comp.acts));
+  const both = offered.length > 1;
   const cal = useStore((s) => s.comp.hours);
   // An ended video date is settled right then, so it isn't listed as still to come.
   const up = useStore((s) => s.comp.upcoming).filter((u) => !videoEnded(u));
   const history = useStore((s) => s.comp.history);
   const done = useStore((s) => s.comp.done);
-  const { openSheet, setCompanionTz } = useStore.getState();
+  const { openSheet, setCompanionTz, setNotice } = useStore.getState();
   const tz = cal?.tz ?? TZ;
   const today = localToday(tz);
   const dates = (cal?.days ?? []).filter((d) => d.date >= today); // a date that just passed, with the app left open
@@ -58,10 +59,36 @@ export default function Calendar() {
         <Icon name="globe" size={17} style={{ marginTop: 1 }} />
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <Txt size={13.5} weight={600}>{`Your hours are in ${cityOf(tz)} time`}</Txt>
-          <Txt size={12} lh={1.45} color={colors.gray600}>Customers see them in their own time. Bookings start 3½ hours ahead at the earliest, and you accept requests within 24 hours, at least 3 hours before the start.</Txt>
+          <Txt size={12} lh={1.45} color={colors.gray600}>Customers see them in their own time.</Txt>
           {otherTz ? <TextButton label={`Use this phone’s time zone (${cityOf(TZ)})`} size={13} weight={700} onPress={() => void setCompanionTz(TZ)} style={{ alignSelf: 'flex-start', paddingVertical: 4 }} /> : null}
         </View>
       </Row>
+
+      {/* How far ahead customers can book each kind of date with you (saved at once). */}
+      {cal && offered.length ? (
+        <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink, gap: 12 }}>
+          <View style={{ gap: 2 }}>
+            <Txt size={15} weight={700}>How soon can people book you?</Txt>
+            <Txt size={12.5} lh={1.45} color={colors.gray600}>At least this long before the start:</Txt>
+          </View>
+          {offered.map((k) => (
+            <View key={k} style={{ gap: 6 }}>
+              <Row style={{ gap: 6 }}>
+                <Icon name={k === 'video' ? 'video' : 'map-pin'} size={14} color={colors.gray600} />
+                <Txt size={13} weight={600}>{k === 'video' ? 'Video dates' : 'In person'}</Txt>
+              </Row>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {cal.noticeOptions[k].map((m) => (
+                  <Chip key={m} label={noticeLabel(m * 60)} on={cal.notice[k] === m} height={36} size={13} onPress={() => { if (cal.notice[k] !== m) void setNotice(k, m); }} />
+                ))}
+              </View>
+            </View>
+          ))}
+          <Txt size={12} lh={1.45} color={colors.gray600}>
+            Requests less than 3 hours away need your answer within 10 minutes (video) or 30 minutes (in person), and your phone rings for them. Requests further ahead: within 24 hours, at least 3 hours before the start.
+          </Txt>
+        </Box>
+      ) : null}
 
       <Box shadow={4} style={{ padding: 16, borderRadius: 22, backgroundColor: colors.white, borderWidth: 2, borderColor: colors.ink }}>
         <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 4 }}>

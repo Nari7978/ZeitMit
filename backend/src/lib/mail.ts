@@ -157,7 +157,8 @@ export async function sendBookingInvoice(env: Env, bookingId: string) {
   const name = (b.customer_name || '').trim();
   const thanks = de ? `Danke${firstName(name) ? `, ${firstName(name)}` : ''}.` : `Thanks${firstName(name) ? `, ${firstName(name)}` : ''}.`;
   const tz = b.customer_tz || DEFAULT_TZ;
-  // Every request (in person or video) waits for the companion: until 24 hours after it, or 3 hours before the start.
+  // Every request (in person or video) waits for the companion until its expiry (src/lib/hours.ts expiryOf): up to 24
+  // hours and 3 hours before the start, or minutes for short notice.
   const until = untilText(b.expires_at, l, tz);
   const m = layout(env, {
     lang: l,
@@ -198,14 +199,14 @@ export async function sendBookingInvoice(env: Env, bookingId: string) {
         : isVideo(b)
           ? de
             ? [`ZeitMit hält das Geld sicher bis zu eurem Video-Date. Es geht für die gebuchte Zeit an ${who}; ist ${who} nicht die ganze Zeit da, zahlst du nur für die Zeit, in der ${who} da war.`,
-              `Lehnt ${who} ab oder antwortet nicht rechtzeitig, bekommst du alles zurück. Nach der Annahme ist die Servicegebühr von ${money(b.fee, l)} nicht erstattbar: Stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher oder storniert ${who} oder tritt nicht bei, bekommst du den Rest zurück.`]
+              `Lehnt ${who} ab oder antwortet nicht rechtzeitig, bekommst du alles zurück. Nach der Annahme ist die Servicegebühr von ${money(b.fee, l)} nicht erstattbar: Stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher oder innerhalb von 10 Minuten nach der Annahme, oder storniert ${who} oder tritt nicht bei, bekommst du den Rest zurück.`]
             : [`ZeitMit holds the money until your video date. It goes to ${who} for the booked time; if ${who} isn’t there for all of it, you pay only for the time they were.`,
-              `If ${who} declines or doesn’t answer in time, you get everything back. Once accepted, the ${money(b.fee, l)} service fee isn’t refundable: if you cancel at least ${FREE_CANCEL_HOURS} hours before, or ${who} cancels or doesn’t join, you get the rest back.`]
+              `If ${who} declines or doesn’t answer in time, you get everything back. Once accepted, the ${money(b.fee, l)} service fee isn’t refundable: if you cancel at least ${FREE_CANCEL_HOURS} hours before or within 10 minutes of ${who} accepting, or ${who} cancels or doesn’t join, you get the rest back.`]
           : de
             ? [`ZeitMit hält das Geld sicher, bis ihr euch trefft: Es geht erst an ${who}, wenn du beim Treffen deinen 4-stelligen Treffcode teilst.`,
-              `Lehnt ${who} ab oder antwortet nicht rechtzeitig, bekommst du alles zurück. Nach der Annahme ist die Servicegebühr von ${money(b.fee, l)} nicht erstattbar: Stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher oder storniert ${who}, bekommst du den Rest zurück.`]
+              `Lehnt ${who} ab oder antwortet nicht rechtzeitig, bekommst du alles zurück. Nach der Annahme ist die Servicegebühr von ${money(b.fee, l)} nicht erstattbar: Stornierst du mindestens ${FREE_CANCEL_HOURS} Stunden vorher oder innerhalb von 10 Minuten nach der Annahme, oder storniert ${who}, bekommst du den Rest zurück.`]
             : [`ZeitMit holds the money until you meet: it only goes to ${who} when you share your 4-digit meet code at the meet-up.`,
-              `If ${who} declines or doesn’t answer in time, you get everything back. Once accepted, the ${money(b.fee, l)} service fee isn’t refundable: if you cancel at least ${FREE_CANCEL_HOURS} hours before, or ${who} cancels, you get the rest back.`]),
+              `If ${who} declines or doesn’t answer in time, you get everything back. Once accepted, the ${money(b.fee, l)} service fee isn’t refundable: if you cancel at least ${FREE_CANCEL_HOURS} hours before or within 10 minutes of ${who} accepting, or ${who} cancels, you get the rest back.`]),
     ],
     footer: [...seller(env), de ? `Gesendet an ${b.customer_email} für deine Buchung bei ZeitMit.` : `Sent to ${b.customer_email} for your booking on ZeitMit.`],
   });

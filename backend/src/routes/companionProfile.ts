@@ -3,7 +3,8 @@ import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_BOUNDARY_OPTIONS, WINDOWS } from '../types';
 import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
 import {
-  changeCoverage, cleanRanges, dayJson, normalize, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson, type Range, type WeekRange,
+  changeCoverage, cleanRanges, dayJson, DEFAULT_NOTICE, normalize, NOTICE_OPTIONS, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson,
+  type Range, type WeekRange,
 } from '../lib/hours';
 import { slotsChanged } from '../lib/live';
 import { addDays, clock, dateIn, DEFAULT_TZ, localToUnix, minutes, realDate, validTz, weekdayOf, whenIn } from '../lib/time';
@@ -18,6 +19,8 @@ type Listing = {
   name?: string; showAge?: boolean; age?: number; about?: string; interests?: string[]; acts?: string[]; ok?: string[]; okVideo?: string[];
   langs?: string[]; rate?: number; days?: string[]; wins?: string[]; area?: string; gender?: 'w' | 'm' | 'nb'; pronouns?: string; lgbtq?: boolean;
   tagline?: string; levels?: Record<string, string>; photoId?: string; idPhotoId?: string; galleryIds?: string[]; timezone?: string;
+  /** How far ahead they can be booked, per kind, in minutes (one of NOTICE_OPTIONS). */
+  notice?: { video?: number; meet?: number };
 };
 
 const LEVELS = ['Native', 'Fluent', 'Conversational', 'Intermediate', 'Basic'];
@@ -36,6 +39,7 @@ function validate(b: Listing, full: boolean) {
   if (full || b.gender !== undefined) if (!['w', 'm', 'nb'].includes(b.gender ?? '')) fail(400, 'Choose how you identify.');
   if (b.pronouns && b.pronouns.length > 20) fail(400, 'Pronouns are limited to 20 characters.');
   if (b.timezone !== undefined && !validTz(b.timezone)) fail(400, 'Unknown time zone.');
+  if (b.notice != null && (['video', 'meet'] as const).some((k) => b.notice![k] !== undefined && !NOTICE_OPTIONS[k].includes(b.notice![k]!))) fail(400, 'Choose one of the notice options.');
   if (full) {
     if (!b.days?.length || !b.wins?.length) fail(400, 'Choose at least one day and time of day.');
   }
@@ -62,6 +66,9 @@ companionProfile.get('/', async (c) => {
     ...toCompanion(row), ageValue: row.age, galleryIds: parseJson<string[]>(row.gallery, []),
     // One calendar, in the companion's zone: weekly hours, dates with their own hours, blocked time (unix).
     timezone: tz, week, days, blocks,
+    // How far ahead they can be booked, per kind (minutes), and the choices.
+    notice: { video: NOTICE_OPTIONS.video.includes(row.notice_video) ? row.notice_video : DEFAULT_NOTICE.video, meet: NOTICE_OPTIONS.meet.includes(row.notice_meet) ? row.notice_meet : DEFAULT_NOTICE.meet },
+    noticeOptions: NOTICE_OPTIONS,
     avail: windows(1), dates: datesOf(1), availVideo: windows(2), datesVideo: datesOf(2),
   });
 });
@@ -210,16 +217,19 @@ companionProfile.patch('/', async (c) => {
     `UPDATE companions SET rate = COALESCE(?, rate), activities = COALESCE(?, activities), boundaries = COALESCE(?, boundaries), video_boundaries = COALESCE(?, video_boundaries),
        bio = COALESCE(?, bio), tagline = COALESCE(?, tagline), interests = COALESCE(?, interests), languages = COALESCE(?, languages),
        area = COALESCE(?, area), show_age = COALESCE(?, show_age), lgbtq = COALESCE(?, lgbtq),
-       age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END, timezone = COALESCE(?, timezone) WHERE user_id = ?`,
+       age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END, timezone = COALESCE(?, timezone),
+       notice_video = COALESCE(?, notice_video), notice_meet = COALESCE(?, notice_meet) WHERE user_id = ?`,
   ).bind(
     b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.okVideo ? JSON.stringify(b.okVideo) : null, b.about?.trim() ?? null,
     b.tagline?.trim() ?? null, b.interests ? JSON.stringify(b.interests) : null, langs, b.area?.trim() ?? null,
     b.showAge === undefined ? null : b.showAge ? 1 : 0, b.lgbtq === undefined ? null : b.lgbtq ? 1 : 0,
-    b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, b.timezone ?? null, u.id,
+    b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, b.timezone ?? null,
+    b.notice?.video ?? null, b.notice?.meet ?? null, u.id,
   ).run();
   if (!res.meta.changes) fail(404, 'You don’t have a companion profile yet.');
-  // The kinds of date offered (or the zone their hours are in) may have changed: open profiles update at once.
-  if (b.acts || b.timezone) void slotsChanged(c.env, u.id, c.executionCtx);
+  // The kinds of date offered, the zone their hours are in or how far ahead they're bookable may have changed: open
+  // profiles update at once.
+  if (b.acts || b.timezone || b.notice) void slotsChanged(c.env, u.id, c.executionCtx);
   return c.json({ ok: true });
 });
 
