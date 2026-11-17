@@ -116,7 +116,6 @@ export default function Profile() {
   const free: Record<Kind, number | null> = { meet: avail ? firstStart(avail, 'meet') : null, video: avail ? firstStart(avail, 'video') : null };
   const stripKind: Kind = stripPick && kinds.includes(stripPick) ? stripPick : kinds[0] ?? 'meet';
   const strip = avail ? daysOf(avail, stripKind) : [];
-  const bookKind = free[stripKind] !== null ? stripKind : kinds.find((k) => free[k] !== null);
   const freeLabel = (k: Kind) => (k === 'video' ? 'Next free video date' : kinds.length > 1 ? 'Next free in person' : 'Next free');
   const btnBg = scrolled ? colors.white : 'rgba(255,255,255,.88)';
   const btnBd = scrolled ? colors.ink : 'transparent';
@@ -341,7 +340,8 @@ export default function Profile() {
           <Txt size={12} color={colors.gray600} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>+10% fee</Txt>
         </View>
         <SecondaryButton label={narrow ? '' : 'Message'} accessibilityLabel={t('Message')} icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
-        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => (bookKind ? openQuickBook(c.id, bookKind) : openBooking(c.id))} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
+        {/* Step by step: what to do, then the day and start time (never a time picked for you; the "Next free" cards do that). */}
+        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
           <Txt size={15} weight={600} color={colors.white}>Book now</Txt>
         </PressBox>
       </Row>
