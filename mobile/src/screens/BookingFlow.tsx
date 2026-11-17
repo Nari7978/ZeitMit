@@ -32,7 +32,9 @@ export default function BookingFlow() {
   const top = useTopPad();
   const insets = useSafeAreaInsets();
   const keyboard = useKeyboardShown();
-  const [step, setStep] = useState(1);
+  // One activity to choose from (a video date, or a companion with one activity): it's picked, so the steps start at the day.
+  const oneAct = acts.length === 1;
+  const [step, setStep] = useState(oneAct && params.quick !== '1' ? 2 : 1);
   // Quick booking: the companion's next free time, booked on one page (activity, length, pay). "Pick another time"
   // switches to the step-by-step flow.
   const [quick, setQuick] = useState(params.quick === '1');
@@ -96,7 +98,10 @@ export default function BookingFlow() {
   }, [quick, a, next, busy, done, c?.id]);
   // One activity on offer (or one of the kind asked for, like video dates): it's the one.
   useEffect(() => {
-    if (acts.length === 1 && !b.act) upd({ act: acts[0] });
+    if (acts.length === 1 && !b.act) {
+      upd({ act: acts[0] });
+      if (!quick && step === 1) setStep(2);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c?.id, acts.length]);
   // The day picked (from a profile's day strip) has nothing free for this length: no day picked.
@@ -120,7 +125,7 @@ export default function BookingFlow() {
     : [!!b.act, fits, okLength, true, true, !isDateAct || b.agree][step - 1];
   // A video date happens in the app, so it skips the meeting place.
   const video = !!b.act && isVideo(b.act);
-  const order = video ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6];
+  const order = (video ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6]).filter((n) => n !== 1 || !oneAct);
   const at = order.indexOf(step);
   const deadline = b.start !== null ? deadlineFor(b.start, kind) : null;
   const zone = otherZone(a);
@@ -143,7 +148,7 @@ export default function BookingFlow() {
         setBusy(false);
       });
   };
-  const back = () => (!quick && step > 1 ? setStep(order[at - 1] ?? step - 1) : goBack());
+  const back = () => (!quick && at > 0 ? setStep(order[at - 1]) : goBack());
   const close = () => goBack();
   const dayLabel = b.start !== null ? slotDay(localAt(b.start).date, 9).full : '—';
   const when = b.start !== null ? (b.minutes ? spanText(b.start, b.minutes, day?.dst) : timeOf(b.start, day?.dst)) : '—';
@@ -278,7 +283,7 @@ export default function BookingFlow() {
               </Row>
             ) : null}
             {isDateAct ? <Boundaries c={c} kind={kind} agree={b.agree} onToggle={() => upd({ agree: !b.agree })} /> : null}
-            <TextButton label="Pick another time" icon="calendar" size={14} weight={700} onPress={() => { setQuick(false); setStep(b.act ? 2 : 1); }} style={{ alignSelf: 'center', marginTop: 18 }} />
+            <TextButton label="Pick another time" icon="calendar" size={14} weight={700} onPress={() => { setQuick(false); setStep(b.act || oneAct ? 2 : 1); }} style={{ alignSelf: 'center', marginTop: 18 }} />
           </>
         )}
         {!quick && step === 1 && (
@@ -304,7 +309,7 @@ export default function BookingFlow() {
 
         {!quick && step === 2 && (
           <>
-            <StepTitle title="Pick a day and start time" sub={`Any start in 15-minute steps, at least ${noticeLabel(free?.lead ?? 3.5 * 3600)} from now. Green is free.`} />
+            <StepTitle title="Pick a day and start time" sub={free?.lead ? `Any start in 15-minute steps, at least ${noticeLabel(free.lead)} from now. Green is free.` : 'Any start in 15-minute steps. Green is free.'} />
             {!a ? (
               <Txt size={14} color={colors.gray600}>Loading availability…</Txt>
             ) : (

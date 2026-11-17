@@ -6,13 +6,13 @@ import Slider from '@react-native-community/slider';
 import { useShallow } from 'zustand/react/shallow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font } from '../theme';
-import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, kindsOf, LANGS, PREF, SORT, WHEN } from '../data';
-import { addDays, clock, dateLabel, KIND_SHORT, localToday, localUnix, MAX_RANGES, minutes, nextRange, PLAN_DAYS, rangeProblem, span, weekdayOf, type HourKind, type Range } from '../lib/dates';
+import { A, AM, ageStr, eur, FEEDBACK_CONCERNS, FEEDBACK_GOOD, INTERESTS, kindOf, kindsOf, LANGS, PREF, SORT, WHEN, type Kind } from '../data';
+import { addDays, clock, dateLabel, KIND_SHORT, localToday, localUnix, MAX_RANGES, minutes, nextRange, PLAN_DAYS, rangeProblem, span, weekdayOf, whenAt, type HourKind, type Range } from '../lib/dates';
 import { TZ } from '../lib/tz';
 import { locale } from '../i18n';
 import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
-import { goBack, openProfile } from '../nav';
+import { goBack, openBooking, openProfile } from '../nav';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useKeyboardTop } from '../ui/common';
@@ -85,6 +85,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'feedback': return <FeedbackSheet />;
     case 'hours': return <HoursSheet />;
     case 'block': return <BlockSheet />;
+    case 'bookKind': return <BookKindSheet />;
   }
 }
 
@@ -110,6 +111,52 @@ function OptionRow({ label, on, onPress, color = colors.ink, note, last, height 
 }
 
 const input = { borderRadius: 14, borderWidth: 2, borderColor: colors.ink, paddingHorizontal: 14, fontSize: 16, color: colors.ink, backgroundColor: colors.white, outlineStyle: 'none' } as object;
+
+// ---------- Book now: in person or video date ----------
+
+/**
+ * "Book now" on a profile that offers both: in person or a video date first. The booking then asks the day and start
+ * time itself (nothing is picked for you). A kind with nothing free this week can't be chosen.
+ */
+function BookKindSheet() {
+  const ask = useStore((s) => s.bookAsk);
+  const c = useStore((s) => (s.bookAsk ? s.byId[s.bookAsk.cid] : undefined));
+  if (!ask || !c) return <Pad><View /></Pad>;
+  const inPerson = c.acts.filter((x) => kindOf(x) === 'meet').map((x) => t(AM[x].label)).join(', ');
+  const options: { k: Kind; icon: string; label: string; sub: string; none: string }[] = [
+    { k: 'meet', icon: 'map-pin', label: 'In person', sub: inPerson, none: 'No in-person time free in the next 7 days.' },
+    { k: 'video', icon: 'video', label: 'Video date', sub: 'Video call in the app', none: 'No video date free in the next 7 days.' },
+  ];
+  const pick = (k: Kind) => {
+    useStore.getState().closeSheet();
+    openBooking(c.id, undefined, k);
+  };
+  return (
+    <Pad>
+      <BigTitle>{`How would you like to meet ${c.name}?`}</BigTitle>
+      <Txt size={14} lh={1.45} color={colors.gray600} style={{ marginBottom: 14 }}>Then you pick the day and start time.</Txt>
+      <View style={{ gap: 12 }}>
+        {options.map((o) => {
+          const f = ask.free[o.k];
+          return (
+            <PressBox key={o.k} shadow={f !== null ? 4 : 0} fx="push" disabled={f === null} onPress={() => pick(o.k)} accessibilityLabel={o.label}
+              style={{ padding: 14, borderRadius: 18, borderWidth: 2, borderColor: f !== null ? colors.ink : colors.gray300, backgroundColor: colors.white, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: f !== null ? 1 : 0.6 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: o.k === 'video' ? colors.lilac : colors.blush, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name={o.icon} size={20} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                <Txt size={16} weight={700}>{o.label}</Txt>
+                {o.sub ? <Txt size={12.5} lh={1.4} color={colors.gray600} numberOfLines={2}>{o.sub}</Txt> : null}
+                <Txt size={12.5} lh={1.4} weight={600} color={f !== null ? colors.greenDeep : colors.gray600}>{f !== null ? `Next free: ${whenAt(f)}` : o.none}</Txt>
+              </View>
+              {f !== null ? <Icon name="chevron-right" size={20} /> : null}
+            </PressBox>
+          );
+        })}
+      </View>
+    </Pad>
+  );
+}
 
 // ---------- Search ----------
 

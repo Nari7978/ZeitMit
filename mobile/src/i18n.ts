@@ -744,6 +744,8 @@ const DE: Record<string, string> = {
   'That time is too close now: a new time has to be agreed at least 3 hours before. Suggest another one.': 'Diese Zeit ist jetzt zu nah: Eine neue Zeit muss spätestens 3 Stunden vorher feststehen. Schlag eine andere vor.',
   'You already asked for this time. Wait for the answer, or cancel that request first.': 'Du hast diese Zeit schon angefragt. Warte auf die Antwort oder storniere die Anfrage zuerst.',
   'Too late to accept: a request has to be accepted at least 3 hours before its start, and within 24 hours. It has expired and the customer was refunded.': 'Zu spät zum Annehmen: Eine Anfrage muss spätestens 3 Stunden vor Beginn und innerhalb von 24 Stunden angenommen werden. Sie ist abgelaufen, die Kund*in bekommt das Geld zurück.',
+  // Book now: in person or video date first
+  'Then you pick the day and start time.': 'Danach wählst du Tag und Startzeit.', 'Any start in 15-minute steps. Green is free.': 'Jede Startzeit in 15-Minuten-Schritten. Grün ist frei.',
   // Short notice: how soon a companion can be booked, short-notice answers
   'How soon can people book you?': 'Wie kurzfristig kann man dich buchen?', 'At least this long before the start:': 'Mindestens so lange vor Beginn:',
   'Requests less than 3 hours away need your answer within 10 minutes (video) or 30 minutes (in person), and your phone rings for them. Requests further ahead: within 24 hours, at least 3 hours before the start.': 'Anfragen, die in weniger als 3 Stunden beginnen, beantwortest du innerhalb von 10 Minuten (Video) oder 30 Minuten (vor Ort), und dein Handy klingelt dafür. Anfragen mit mehr Vorlauf: innerhalb von 24 Stunden, spätestens 3 Stunden vor Beginn.',
@@ -1130,6 +1132,9 @@ const PATTERNS: [RegExp, string][] = [
   ...Object.entries({ Jan: 'Jan.', Feb: 'Feb.', Mar: 'März', Apr: 'Apr.', May: 'Mai', Jun: 'Juni', Jul: 'Juli', Aug: 'Aug.', Sep: 'Sept.', Oct: 'Okt.', Nov: 'Nov.', Dec: 'Dez.' })
     .map(([en, de]): [RegExp, string] => [new RegExp(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) (\\d{1,2}) ${en}$`), `{$1}., $2. ${de}`]),
   [/^((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)) · (.+)$/, '{$1} · {$2}'],
+  // Book now: in person or video date first
+  [/^How would you like to meet (.+)\?$/, 'Wie möchtest du $1 treffen?'],
+  [/^Next free: (.+)$/, 'Als Nächstes frei: {$1}'],
   // Short notice
   [/^Answer within (\d+) min: new request$/, 'Antworte innerhalb von $1 Min.: neue Anfrage'],
   [/^Answer within (\d+) min \(by (.+)\)$/, 'Antworte innerhalb von $1 Min. (bis {$2})'],

@@ -340,8 +340,10 @@ export default function Profile() {
           <Txt size={12} color={colors.gray600} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>+10% fee</Txt>
         </View>
         <SecondaryButton label={narrow ? '' : 'Message'} accessibilityLabel={t('Message')} icon={chatOpen ? 'message-circle' : 'lock'} iconSize={17} height={50} radius={15} size={15} style={{ paddingHorizontal: 14 }} onPress={() => messageCompanion(c.id, c.name)} />
-        {/* Step by step: what to do, then the day and start time (never a time picked for you; the "Next free" cards do that). */}
-        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" onPress={() => openBooking(c.id)} accessibilityLabel="Book now" style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
+        {/* First in person or video date (when they offer both), then the booking step by step: the day and start time are
+            yours to pick (only the "Next free" cards book a time in one step). */}
+        <PressBox shadow={3} shadowColor={colors.pink} fx="scale" accessibilityLabel="Book now"
+          onPress={() => (kinds.length > 1 ? useStore.getState().openSheet('bookKind', { bookAsk: { cid: c.id, free } }) : openBooking(c.id, undefined, kinds[0]))} style={{ height: 50, paddingHorizontal: 18, borderRadius: 15, backgroundColor: colors.ink, justifyContent: 'center' }}>
           <Txt size={15} weight={600} color={colors.white}>Book now</Txt>
         </PressBox>
       </Row>

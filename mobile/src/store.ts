@@ -89,7 +89,7 @@ export type Hours = {
 const NOTICE_FALLBACK = { notice: { video: 20, meet: 90 }, noticeOptions: { video: [20, 60, 240], meet: [90, 240, 1440] } };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'hours' | 'block';
+  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'hours' | 'block' | 'bookKind';
 
 /** Private answers after a meet-up: only the safety team sees them. `about` is the other person's user id. */
 export type Feedback = {
@@ -161,6 +161,8 @@ type State = {
   sheetChat: string | null;
   sheet: SheetKind | null;
   otpFor: string | null;
+  /** "Book now" on a profile: in person or video date? For which companion, with when each kind is next free (unix). */
+  bookAsk: { cid: string; free: Record<Kind, number | null> } | null;
   /** Draft for the cancel sheet: which booking, from whose side, and the reason picked. */
   cancel: { bid: string | null; side: 'customer' | 'companion'; reason: string | null; busy: boolean };
   /** The hours sheet: one weekday's weekly hours (`day`, 0 = Mon) or one date's (`date`), a day off or these ranges. */
@@ -349,6 +351,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     feedback: EMPTY_FEEDBACK,
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
+    bookAsk: null,
     cancel: { bid: null, side: 'customer', reason: null, busy: false },
     hoursEdit: { day: null, date: null, off: false, ranges: [], busy: false },
     blockEdit: { id: null, date: null, from: '12:00', until: null, to: '13:00', note: '', busy: false },
