@@ -11,10 +11,16 @@ const ok = (c, l) => { console.log(`${c ? '✓' : '✗'} ${l}`); if (!c) failure
 const call = async (m, p, t, b) => { const r = await fetch(BASE + p, { method: m, headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: b ? JSON.stringify(b) : undefined }); return { status: r.status, data: await r.json().catch(() => null) }; };
 const login = async (e) => { const r = await call('POST', '/auth/request-code', null, { email: e }); return (await call('POST', '/auth/verify', null, { email: e, code: r.data.devCode })).data; };
 const sql = (q) => execSync(`npx wrangler d1 execute DB --local --command "${q}"`, { stdio: 'pipe' });
-const pay = (url) => fetch(MOCK + new URL(url).pathname).then((r) => r.json());
+/** A GET to the mock, tried again if its idle connection had just closed (Node closes them after 5 seconds). */
+const mockGet = async (path) => {
+  for (let i = 0; ; i++) {
+    try { return await fetch(MOCK + path).then((r) => r.json()); } catch (e) { if (i >= 2) throw e; await new Promise((r) => setTimeout(r, 200)); }
+  }
+};
+const pay = (url) => mockGet(new URL(url).pathname);
 const intent = async (bookingId) => {
   const ref = JSON.parse(execSync(`npx wrangler d1 execute DB --local --json --command "SELECT payment_ref FROM bookings WHERE id = '${bookingId}'"`, { stdio: 'pipe' }).toString())[0].results[0].payment_ref;
-  return (await fetch(MOCK + '/state').then((x) => x.json())).intents[ref];
+  return (await mockGet('/state')).intents[ref];
 };
 const admin = (userId) => {
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -156,6 +162,27 @@ const told = (await call3('GET', '/me/notifications', T)).data;
 ok(told.some((n) => n.title === 'Too late for that time' && /starts too soon for Lena to answer, so .+ is refunded in full\. Pick a later time\.$/.test(n.body)), 'the customer is told to pick a later time');
 ok(!(await call3('GET', '/companion/bookings', L)).data.requests.some((x) => x.id === tooLate.id), 'Lena never sees it');
 sql(`DELETE FROM hours_days WHERE companion_id = 'demo_lena'`);
+
+// 10) Free now with a card: the 2 minutes to answer start once the payment goes through, and declining releases the hold
+const Y = (await login('yuki@demo.zeitmit.app')).token;
+const yl = (await call3('GET', '/companion/bookings', Y)).data;
+for (const x of [...yl.requests, ...yl.upcoming]) await call3('POST', `/companion/bookings/${x.id}/cancel`, Y, { reason: 'Something else' });
+sql(`UPDATE bookings SET starts_at = starts_at - 30 * 86400 WHERE companion_id = 'demo_yuki' AND status IN ('confirmed', 'completed') AND starts_at < unixepoch() + 9 * 3600 AND starts_at > unixepoch() - 9 * 3600`);
+await call3('PUT', '/companion/free-now', Y, { hours: 1 });
+const nowPaid = (await call3('POST', '/bookings', T, { companionId: 'demo_yuki', act: 'call', instant: true, minutes: 30, place: '', boundariesAgreed: true })).data;
+ok(!!nowPaid?.checkoutUrl, `a video date now with Yuki goes to checkout (${nowPaid?.error ?? 'ok'})`);
+ok(!(await call3('GET', '/companion/bookings', Y)).data.requests.some((x) => x.id === nowPaid.id), 'Yuki’s phone doesn’t ring before it’s paid');
+sql(`UPDATE bookings SET created_at = created_at - 100 WHERE id = '${nowPaid.id}'`); // 100 seconds on the checkout page
+await pay(nowPaid.checkoutUrl);
+await call3('POST', `/bookings/${nowPaid.id}/confirm-payment`, T);
+s = rowOf(nowPaid.id);
+ok(s.status === 'pending' && s.instant === 1 && Math.abs(s.created_at - Date.now() / 1000) < 10 && s.expires_at === s.created_at + 120 && s.starts_at === s.created_at,
+  'paid after 100 seconds: Yuki still has the full 2 minutes, counted from the payment');
+ok((await call3('GET', '/companion/bookings', Y)).data.requests.some((x) => x.id === nowPaid.id && x.instant === true), 'now it’s in Yuki’s requests');
+await call3('POST', `/companion/bookings/${nowPaid.id}/decline`, Y);
+s = rowOf(nowPaid.id);
+ok(s.status === 'rejected' && s.pay_status === 'refunded' && (await intent(nowPaid.id)).status === 'canceled', 'Yuki declines: refunded, the card hold is released');
+await call3('DELETE', '/companion/free-now', Y);
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll payment checks passed');
 process.exit(failures ? 1 : 0);

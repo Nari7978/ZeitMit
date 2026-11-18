@@ -20,6 +20,8 @@ export type Filters = {
   type: 'all' | 'date';
   acts: ActId[];
   when: 'any' | 'today' | 'tomorrow' | 'weekend';
+  /** Only companions free now for a video date (it starts as soon as they accept). */
+  now?: boolean;
   max: number;
   langs: string[];
   rating: number;
@@ -50,6 +52,8 @@ export type Booking = When & {
    * the start), after which it expires and is refunded. A confirmed booking: until when cancelling is free.
    */
   expiresAt?: number; freeUntil?: number;
+  /** A video date now (Free now): 2 minutes for the companion to answer, and it starts when they accept. */
+  instant?: boolean;
 };
 export type Convo = {
   id: string; cid: string; customerId: string; name: string; hue: number; photoUrl?: string | null; bookingId: string | null; act: ActId | null; startsAt: number | null;
@@ -67,6 +71,8 @@ export type CompBooking = When & {
   resched?: Resched | null; reschedLeft?: number;
   /** A request: accept it by then (within 24 hours, at least 3 hours before the start), or it expires and is refunded. */
   expiresAt?: number;
+  /** A video date now (you're free now): 2 minutes to answer, and it starts as soon as you accept. */
+  instant?: boolean;
   /** A request: how many other requests want time that overlaps it (accepting one of them ends the others). */
   overlaps?: number;
   /** Cancelled bookings: who cancelled, and the note shown for it. */
@@ -89,7 +95,7 @@ export type Hours = {
 const NOTICE_FALLBACK = { notice: { video: 20, meet: 90 }, noticeOptions: { video: [20, 60, 240], meet: [90, 240, 1440] } };
 export type SheetKind =
   | 'filter' | 'sort' | 'city' | 'chatmenu' | 'report' | 'review' | 'edit' | 'saved' | 'gift'
-  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'hours' | 'block' | 'bookKind';
+  | 'safety' | 'sos' | 'checkinShare' | 'cancel' | 'otp' | 'otpin' | 'delete' | 'redeem' | 'feedback' | 'hours' | 'block' | 'bookKind' | 'instant';
 
 /** Private answers after a meet-up: only the safety team sees them. `about` is the other person's user id. */
 export type Feedback = {
@@ -120,7 +126,10 @@ export type IdStatus = 'none' | 'pending' | 'approved' | 'rejected';
 export type CompanionStatus = 'none' | 'pending' | 'approved' | 'rejected';
 
 /** A request: start (unix) and length in minutes. */
-export type NewBooking = { cid: string; act: ActId; startsAt: number; minutes: number; place: string; note: string; boundariesAgreed: boolean };
+/** `instant`: a video date now with a companion who is free now (no start: it starts when they accept). */
+export type NewBooking = { cid: string; act: ActId; startsAt: number; minutes: number; place: string; note: string; boundariesAgreed: boolean; instant?: boolean };
+/** Free now for video dates, as a companion sees it: on until (null: off), switched off after missed requests at, the choices (hours). */
+export type FreeNowState = { until: number | null; paused: number | null; hours: number[] };
 export type CompanionApplication = {
   name: string; showAge: boolean; about: string; interests: string[]; acts: ActId[]; ok: string[]; okVideo?: string[]; langs: string[];
   rate: number; days: string[]; wins: string[]; adult: boolean; rules: boolean; idPhotoId?: string; photoId?: string; tagline?: string;
@@ -150,7 +159,7 @@ type State = {
   toast: string | null;
   /** `gallery`: how many photos the listing has besides the profile photo (null until loaded). */
   /** `history`: past meet-ups and bookings that didn't happen, newest first; `hours`: the calendar (null until loaded). */
-  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; gallery: number | null; hours: Hours | null };
+  comp: { requests: CompBooking[]; upcoming: CompBooking[]; done: CompBooking[]; history: CompBooking[]; earnings: { held: number; released: number; releasedCount: number; available: number; pending: number; requested: number; paidOut: number }; rate: number; acts: ActId[]; gallery: number | null; hours: Hours | null; freeNow: FreeNowState | null };
   edit: ProfileEdit | null;
   review: { bid: string | null; stars: number; text: string };
   feedback: Feedback;
@@ -163,6 +172,8 @@ type State = {
   otpFor: string | null;
   /** "Book now" on a profile: in person or video date? For which companion, with when each kind is next free (unix). */
   bookAsk: { cid: string; free: Record<Kind, number | null> } | null;
+  /** "Video date now" with a companion who is free now: who, and the length picked (minutes). */
+  instantAsk: { cid: string; max: number; minutes: number | null; agree: boolean; busy: boolean } | null;
   /** Draft for the cancel sheet: which booking, from whose side, and the reason picked. */
   cancel: { bid: string | null; side: 'customer' | 'companion'; reason: string | null; busy: boolean };
   /** The hours sheet: one weekday's weekly hours (`day`, 0 = Mon) or one date's (`date`), a day off or these ranges. */
@@ -213,6 +224,10 @@ type Actions = {
   setCompanionTz: (tz: string) => Promise<boolean>;
   /** How far ahead customers can book this kind of date with you (minutes, one of the options). */
   setNotice: (kind: Kind, minutes: number) => Promise<boolean>;
+  /** Free now for video dates: on for 1, 2 or 3 hours, or off (null). */
+  setFreeNow: (hours: number | null) => Promise<boolean>;
+  /** Your open app checks in while Free now is on (it only counts while it does). */
+  freeNowSeen: () => Promise<void>;
   closeSheet: () => void;
   addBooking: (b: NewBooking) => Promise<Booking | null>;
   /** Frees the time held by an unpaid checkout, e.g. after the customer cancelled or closed it. */
@@ -227,7 +242,8 @@ type Actions = {
   readNotif: (id: string) => void;
   markAllRead: () => void;
   submitReview: () => Promise<void>;
-  acceptRequest: (id: string) => Promise<void>;
+  /** Accepts a request; true when it's confirmed. */
+  acceptRequest: (id: string) => Promise<boolean>;
   declineRequest: (id: string) => Promise<void>;
   verifyOtp: () => Promise<void>;
   submitCompanion: (a: CompanionApplication) => Promise<boolean>;
@@ -253,7 +269,7 @@ type Actions = {
 
 export const priceOf = (b: Pick<Booking, 'total'>) => b.total / 100;
 
-const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], gallery: null, hours: null };
+const EMPTY_COMP: State['comp'] = { requests: [], upcoming: [], done: [], history: [], earnings: { held: 0, released: 0, releasedCount: 0, available: 0, pending: 0, requested: 0, paidOut: 0 }, rate: 25, acts: [], gallery: null, hours: null, freeNow: null };
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let bumpTimer: ReturnType<typeof setTimeout> | undefined;
@@ -352,6 +368,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     reportReason: null, reportTarget: null, sheetChat: null,
     sheet: null,
     bookAsk: null,
+    instantAsk: null,
     cancel: { bid: null, side: 'customer', reason: null, busy: false },
     hoursEdit: { day: null, date: null, off: false, ranges: [], busy: false },
     blockEdit: { id: null, date: null, from: '12:00', until: null, to: '13:00', note: '', busy: false },
@@ -470,7 +487,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
         api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'history' | 'earnings'>>('GET', '/companion/bookings'),
-        api<Companion & { timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[]; notice?: Hours['notice']; noticeOptions?: Hours['noticeOptions'] }>('GET', '/companion'),
+        api<Companion & { timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[]; notice?: Hours['notice']; noticeOptions?: Hours['noticeOptions']; freeNow?: FreeNowState }>('GET', '/companion'),
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
@@ -483,6 +500,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
               tz: profile.value.timezone ?? 'Europe/Berlin', week: profile.value.week ?? [], days: profile.value.days ?? [], blocks: profile.value.blocks ?? [],
               notice: profile.value.notice ?? NOTICE_FALLBACK.notice, noticeOptions: profile.value.noticeOptions ?? NOTICE_FALLBACK.noticeOptions,
             },
+            freeNow: profile.value.freeNow ?? null,
           } : {}),
         }),
         compConvos: convos.status === 'fulfilled' ? keep(s.compConvos, convos.value) : s.compConvos,
@@ -508,11 +526,11 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     // ---------- bookings ----------
     addBooking: async (b) => {
       // Retrying after an unfinished payment reuses the same checkout (it stays open for ~30 min).
-      const key = `${b.cid}|${b.act}|${b.startsAt}|${b.minutes}`;
+      const key = `${b.cid}|${b.act}|${b.instant ? 'now' : b.startsAt}|${b.minutes}`;
       let pending = get().pendingCheckout;
       if (!pending || pending.key !== key) {
         const bk = await attempt(() => api<Booking & { checkoutUrl?: string }>('POST', '/bookings', {
-          companionId: b.cid, act: b.act, startsAt: b.startsAt, minutes: b.minutes, place: b.place, note: b.note, boundariesAgreed: b.boundariesAgreed,
+          companionId: b.cid, act: b.act, ...(b.instant ? { instant: true } : { startsAt: b.startsAt }), minutes: b.minutes, place: b.place, note: b.note, boundariesAgreed: b.boundariesAgreed,
         }));
         if (!bk) return null;
         if (!bk.checkoutUrl) {
@@ -672,10 +690,15 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       const r = get().comp.requests.find((x) => x.id === id);
       const ok = await attempt(() => api('POST', `/companion/bookings/${id}/accept`));
       // Not accepted (too late, or that time was just taken): it's ended now, so the lists change either way.
-      if (!ok) return void (await get().loadCompanionSide());
+      if (!ok) {
+        await get().loadCompanionSide();
+        return false;
+      }
       const others = r?.overlaps ?? 0;
-      get().showToast(`Accepted. ${r?.who ?? 'The customer'} has been notified.${others ? ` ${others === 1 ? 'The other request' : `The ${others} other requests`} for that time ended and ${others === 1 ? 'was' : 'were'} refunded.` : ''}`);
+      if (r?.instant) get().showToast('Accepted. The video date starts now.');
+      else get().showToast(`Accepted. ${r?.who ?? 'The customer'} has been notified.${others ? ` ${others === 1 ? 'The other request' : `The ${others} other requests`} for that time ended and ${others === 1 ? 'was' : 'were'} refunded.` : ''}`);
       await get().loadCompanionSide();
+      return true;
     },
     declineRequest: async (id) => {
       const r = get().comp.requests.find((x) => x.id === id);
@@ -751,6 +774,18 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       set((s) => ({ comp: { ...s.comp, hours: s.comp.hours && { ...s.comp.hours, blocks: s.comp.hours.blocks.filter((x) => x.id !== id) } } }));
       get().showToast('Unblocked. That time is open again where your hours are.');
       return true;
+    },
+    setFreeNow: async (hours) => {
+      const r = await attempt(() => api<FreeNowState>(hours ? 'PUT' : 'DELETE', '/companion/free-now', hours ? { hours } : undefined));
+      if (!r) return false;
+      set((s) => ({ comp: { ...s.comp, freeNow: r } }));
+      return true;
+    },
+    freeNowSeen: async () => {
+      try {
+        const r = await api<FreeNowState>('POST', '/companion/free-now/seen');
+        set((s) => ({ comp: { ...s.comp, freeNow: r } }));
+      } catch { /* next time */ }
     },
     setNotice: async (kind, minutes) => {
       const before = get().comp.hours;
@@ -918,6 +953,7 @@ export function filtered(list: Companion[], query: string, f: Filters, sort: Sor
     }
     if (f.type === 'date' && !c.acts.some((a) => ['date', 'plusone', 'family', 'call'].includes(a))) return false;
     if (f.acts.length && !f.acts.some((a) => c.acts.includes(a))) return false;
+    if (f.now && !c.freeNow) return false;
     // "When" follows the kind of date picked: video dates only, in person only, or either.
     const free = f.when !== 'any' ? freeOf(c, f.acts) : null;
     if (f.when === 'today' && !free!.today) return false;

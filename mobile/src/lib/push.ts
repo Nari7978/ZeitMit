@@ -21,6 +21,11 @@ if (Platform.OS !== 'web') {
         if (!inCall) showRing(d);
         return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: !inCall, shouldSetBadge: false };
       }
+      // A free-now request while the app is open: the app shows it full screen and rings itself.
+      if (d.kind === 'instant') {
+        useStore.getState().onLive('comp:requests');
+        return { shouldShowBanner: false, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false };
+      }
       return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
     },
   });

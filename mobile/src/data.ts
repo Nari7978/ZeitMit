@@ -8,6 +8,8 @@ export type ActId =
   | 'date' | 'plusone' | 'family' | 'call' | 'coffee' | 'dinner' | 'walks'
   | 'movies' | 'gaming' | 'shopping' | 'sports' | 'culture' | 'language';
 
+/** Free now for a video date: switched on until `until` (unix); `max`: the longest video date that fits now, in minutes. */
+export type FreeNow = { until: number; max: number };
 export type Companion = {
   id: string;
   name: string;
@@ -26,6 +28,8 @@ export type Companion = {
   next?: number | null;
   /** The same per kind they offer (null for a kind they don't offer): in person and video dates have their own hours. */
   free?: Record<Kind, Free | null>;
+  /** Free now for a video date that starts as soon as they accept: until when, and the longest that fits (minutes). */
+  freeNow?: FreeNow | null;
   lgbtq: boolean;
   hue: number;
   photo: string;

@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_BOUNDARY_OPTIONS, WINDOWS } from '../types';
+import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_ACT, VIDEO_BOUNDARY_OPTIONS, WINDOWS } from '../types';
 import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
 import {
-  changeCoverage, cleanRanges, dayJson, DEFAULT_NOTICE, normalize, NOTICE_OPTIONS, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson,
+  changeCoverage, cleanRanges, dayJson, DEFAULT_NOTICE, FREE_NOW_AWAY_S, FREE_NOW_HOURS, normalize, NOTICE_OPTIONS, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson,
   type Range, type WeekRange,
 } from '../lib/hours';
 import { slotsChanged } from '../lib/live';
@@ -70,7 +70,60 @@ companionProfile.get('/', async (c) => {
     notice: { video: NOTICE_OPTIONS.video.includes(row.notice_video) ? row.notice_video : DEFAULT_NOTICE.video, meet: NOTICE_OPTIONS.meet.includes(row.notice_meet) ? row.notice_meet : DEFAULT_NOTICE.meet },
     noticeOptions: NOTICE_OPTIONS,
     avail: windows(1), dates: datesOf(1), availVideo: windows(2), datesVideo: datesOf(2),
+    freeNow: freeNowState(row),
   });
+});
+
+/**
+ * Free now for video dates, as the companion sees it: on until when (null: off), when it switched itself off after
+ * missed requests (for the notice), and the choices of how long.
+ */
+const freeNowState = (row: Pick<CompanionRow, 'free_now_until' | 'free_now_paused'>) => ({
+  until: row.free_now_until && row.free_now_until > now() ? row.free_now_until : null,
+  paused: row.free_now_until && row.free_now_until > now() ? null : row.free_now_paused,
+  hours: FREE_NOW_HOURS,
+});
+
+/**
+ * Switches Free now on for video dates, for 1, 2 or 3 hours ({ hours }): customers can then start a video date with
+ * you right away, and your phone rings. Only for an approved listing that offers video dates.
+ */
+companionProfile.put('/free-now', async (c) => {
+  const id = c.get('user').id;
+  const { hours } = await c.req.json<{ hours?: number }>().catch(() => ({}) as { hours?: number });
+  if (!FREE_NOW_HOURS.includes(hours ?? -1)) fail(400, 'Choose 1, 2 or 3 hours.');
+  const row = await c.env.DB.prepare('SELECT status, activities FROM companions WHERE user_id = ?').bind(id).first<{ status: string; activities: string }>();
+  if (!row) fail(404, 'You don’t have a companion profile yet.');
+  if (row!.status !== 'approved') fail(409, 'Your profile has to be approved first.');
+  if (!parseJson<string[]>(row!.activities, []).includes(VIDEO_ACT)) fail(409, 'Add video dates to your activities first.');
+  await c.env.DB.prepare(
+    'UPDATE companions SET free_now_until = unixepoch() + ?, free_now_seen = unixepoch(), free_now_misses = 0, free_now_paused = NULL WHERE user_id = ?',
+  ).bind(hours! * 3600, id).run();
+  void slotsChanged(c.env, id, c.executionCtx); // open profiles show Free now
+  const fresh = await c.env.DB.prepare('SELECT free_now_until, free_now_paused FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
+  return c.json(freeNowState(fresh!));
+});
+
+/** Switches Free now off. */
+companionProfile.delete('/free-now', async (c) => {
+  const id = c.get('user').id;
+  await c.env.DB.prepare('UPDATE companions SET free_now_until = NULL, free_now_misses = 0, free_now_paused = NULL WHERE user_id = ?').bind(id).run();
+  void slotsChanged(c.env, id, c.executionCtx);
+  return c.json(freeNowState({ free_now_until: null, free_now_paused: null }));
+});
+
+/**
+ * The companion's open app checks in while Free now is on (every couple of minutes): it only counts while it has
+ * within the last 10 minutes, so customers never start a video date with someone who has closed the app.
+ */
+companionProfile.post('/free-now/seen', async (c) => {
+  const id = c.get('user').id;
+  const before = await c.env.DB.prepare('SELECT free_now_until, free_now_seen, free_now_paused FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
+  if (!before?.free_now_until || before.free_now_until <= now()) return c.json(freeNowState(before ?? { free_now_until: null, free_now_paused: null }));
+  await c.env.DB.prepare('UPDATE companions SET free_now_seen = unixepoch() WHERE user_id = ?').bind(id).run();
+  // Back after a while away: open profiles show Free now again.
+  if (!before.free_now_seen || before.free_now_seen < now() - FREE_NOW_AWAY_S) void slotsChanged(c.env, id, c.executionCtx);
+  return c.json(freeNowState(before));
 });
 
 /** The companion's stored hours, tidied: the week per day, dates from today on (in their zone), blocks that haven't ended. */

@@ -13,6 +13,7 @@ import { locale } from '../i18n';
 import { GENDERS } from '../screens/Become';
 import { filtered, FREE_CANCEL_HOURS, priceOf, toggleIn, useStore, type SheetKind } from '../store';
 import { goBack, openBooking, openProfile } from '../nav';
+import { router } from 'expo-router';
 import { Icon } from '../ui/Icon';
 import { Box, Chip, Confetti, Enter, H, PressBox, Row, Stripes, Toggle, Txt, Photo } from '../ui/primitives';
 import { CircleButton, PrimaryButton, SecondaryButton, TextButton, useKeyboardShown, useKeyboardTop } from '../ui/common';
@@ -86,6 +87,7 @@ function SheetBody({ kind }: { kind: SheetKind }) {
     case 'hours': return <HoursSheet />;
     case 'block': return <BlockSheet />;
     case 'bookKind': return <BookKindSheet />;
+    case 'instant': return <InstantSheet />;
   }
 }
 
@@ -154,6 +156,70 @@ function BookKindSheet() {
           );
         })}
       </View>
+    </Pad>
+  );
+}
+
+// ---------- Video date now (Free now) ----------
+
+const INSTANT_LENGTHS = [30, 45, 60, 90];
+
+/**
+ * A video date now with a companion who is free now: how long (what fits before they're busy), their boundaries, the
+ * total, pay. It starts as soon as they accept; they have 2 minutes, or everything comes back.
+ */
+function InstantSheet() {
+  const ask = useStore((s) => s.instantAsk);
+  const c = useStore((s) => (s.instantAsk ? s.byId[s.instantAsk.cid] : undefined));
+  const credit = useStore((s) => s.user?.credit ?? 0);
+  if (!ask || !c) return <Pad><View /></Pad>;
+  const set = (o: Partial<NonNullable<typeof ask>>) => useStore.setState({ instantAsk: { ...ask, ...o } });
+  const options = INSTANT_LENGTHS.filter((m) => m <= ask.max);
+  const minutes = ask.minutes && options.includes(ask.minutes) ? ask.minutes : options[0] ?? null;
+  const sub = minutes ? Math.round((c.rate * 100 * minutes) / 60) : 0;
+  const fee = Math.round(sub * 0.1);
+  const total = Math.max(0, sub + fee - Math.min(credit, sub + fee));
+  const pay = async () => {
+    if (!minutes || !ask.agree || ask.busy) return;
+    set({ busy: true });
+    const bk = await useStore.getState().addBooking({ cid: c.id, act: 'call', startsAt: 0, minutes, place: '', note: '', boundariesAgreed: true, instant: true });
+    useStore.setState((s) => ({ instantAsk: s.instantAsk && { ...s.instantAsk, busy: false } }));
+    if (!bk) return;
+    useStore.getState().closeSheet();
+    router.push(`/instant/${bk.id}`);
+  };
+  const lengthOf = (m: number) => (m === 30 ? '30 min' : m === 45 ? '45 min' : m === 60 ? '1 hour' : '1½ hours');
+  return (
+    <Pad scroll>
+      <BigTitle>{`Video date with ${c.name}, now`}</BigTitle>
+      <Txt size={14} lh={1.45} color={colors.gray600}>{`${c.name} has 2 minutes to accept. If ${c.name} doesn’t, you get everything back.`}</Txt>
+      <Txt size={15} weight={700} style={{ marginTop: 16, marginBottom: 10 }}>How long?</Txt>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        {options.map((m) => {
+          const on = m === minutes;
+          return (
+            <Pressable key={m} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => set({ minutes: m })}
+              style={{ width: '47.5%', flexGrow: 1, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: on ? colors.butter : colors.white, gap: 2 }}>
+              <Txt size={16} weight={700}>{lengthOf(m)}</Txt>
+              <Txt size={14} color={colors.gray600}>{eur(Math.round(c.rate * m / 60 * 100) / 100)}</Txt>
+            </Pressable>
+          );
+        })}
+      </View>
+      {c.okVideo?.length ? (
+        <Txt size={12.5} lh={1.45} color={colors.gray600} style={{ marginTop: 12 }}>{`${c.name} is fine with: ${c.okVideo.map((x) => t(x)).join(', ')}.`}</Txt>
+      ) : null}
+      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: ask.agree }} onPress={() => set({ agree: !ask.agree })} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 }}>
+        <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 1.5, borderColor: ask.agree ? colors.ink : colors.ink, backgroundColor: ask.agree ? colors.ink : colors.white, alignItems: 'center', justifyContent: 'center' }}>
+          {ask.agree ? <Icon name="check" size={15} color={colors.white} /> : null}
+        </View>
+        <Txt size={14} style={{ flex: 1 }}>{`I’ll respect ${c.name}’s boundaries`}</Txt>
+      </Pressable>
+      <Row style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 14 }}>
+        <Txt size={14} color={colors.gray600}>Total incl. fees</Txt>
+        <H size={28}>{eur(total / 100)}</H>
+      </Row>
+      <PrimaryButton label={ask.busy ? 'Sending…' : `Pay ${eur(total / 100)} & call ${c.name}`} icon="video" dim={!minutes || !ask.agree || ask.busy} onPress={() => void pay()} style={{ marginTop: 12 }} />
     </Pad>
   );
 }

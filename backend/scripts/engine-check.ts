@@ -82,6 +82,8 @@ ok(expiryOf(far) === far.created_at + 86400 && !canAccept(far, far.created_at + 
   ok(at('meet', 3 * 3600 + 600) === T + 1800 && at('video', 3 * 3600 + 300) === T + 600, 'S5 just over 3 hours away: the short window, not 5 or 10 minutes');
   ok(at('meet', 4 * 3600) === T + 3600 && at('video', 4 * 3600) === T + 3600, 'S6 4 hours away: as before, until 3 hours before the start');
   ok(!canAccept({ created_at: T, starts_at: T + 3600, kind: 'video' }, T + 601), 'S7 a short-notice video request can’t be accepted after its 10 minutes');
+  ok(at('video', 3600) === T + 600 && expiryOf({ created_at: T, starts_at: T, kind: 'video', instant: 1 }) === T + 120, 'F1 a free-now video date (it starts when accepted): 2 minutes to answer');
+  ok(canAccept({ created_at: T, starts_at: T, kind: 'video', instant: 1 }, T + 120) && !canAccept({ created_at: T, starts_at: T, kind: 'video', instant: 1 }, T + 121), 'F2 at 2 minutes still, a second later not');
   ok(noticeS('video', 60) === 3600 && noticeS('meet', 1440) === 86400 && noticeS('video', 7) === 1200 && noticeS('meet', null) === 5400, 'S8 a companion’s notice: one of the options, else 20 minutes (video) / 1½ hours (in person)');
 }
 

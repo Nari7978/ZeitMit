@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { colors } from '../../theme';
-import { AM, eur, isVideo, memberSince, placeFor } from '../../data';
+import { AM, eur, hours, isVideo, memberSince, placeFor } from '../../data';
 import { untilLabel } from '../../lib/dates';
 import { hueOf, useStore } from '../../store';
 import { Icon } from '../../ui/Icon';
@@ -57,10 +57,14 @@ export default function Requests() {
                 <TextButton label="View full profile" icon="user-round" size={13} weight={700} onPress={() => openCustomer(r.customerId)} style={{ alignSelf: 'flex-start', paddingVertical: 4 }} />
               </View>
             ) : null}
-            <Row style={{ gap: 16, flexWrap: 'wrap' }}>
-              <Row style={{ gap: 6 }}><Icon name="calendar" size={15} color={colors.gray600} /><Txt size={13}>{r.day}</Txt></Row>
-              <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{`${r.time}–${r.end}`}</Txt></Row>
-            </Row>
+            {r.instant ? (
+              <Row style={{ gap: 6 }}><Icon name="zap" size={15} color={colors.greenDeep} /><Txt size={13} weight={700} color={colors.greenDeep}>{`Video date now · ${hours(r.dur)} · starts when you accept`}</Txt></Row>
+            ) : (
+              <Row style={{ gap: 16, flexWrap: 'wrap' }}>
+                <Row style={{ gap: 6 }}><Icon name="calendar" size={15} color={colors.gray600} /><Txt size={13}>{r.day}</Txt></Row>
+                <Row style={{ gap: 6 }}><Icon name="clock" size={15} color={colors.gray600} /><Txt size={13}>{`${r.time}–${r.end}`}</Txt></Row>
+              </Row>
+            )}
             <Row style={{ gap: 6 }}><Icon name={isVideo(r.act) ? 'video' : 'map-pin'} size={15} color={colors.gray600} /><Txt size={13} numberOfLines={1} style={{ flex: 1 }} color={r.place || isVideo(r.act) ? colors.ink : colors.gray600}>{placeFor(r.act, r.place)}</Txt></Row>
             {r.note ? (
               <View style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.sun }}>
@@ -73,7 +77,7 @@ export default function Requests() {
               <SecondaryButton label="Decline" height={44} radius={12} style={{ flex: 1 }} onPress={() => void declineRequest(r.id)} />
               <PrimaryButton label="Accept" height={44} radius={12} size={14} shadowColor="transparent" style={{ flex: 1 }} onPress={() => void acceptRequest(r.id)} />
             </Row>
-            {!r.resched && (r.reschedLeft ?? 1) > 0 ? (
+            {!r.instant && !r.resched && (r.reschedLeft ?? 1) > 0 ? (
               <TextButton label="Suggest another time" icon="calendar-clock" size={13} weight={700} onPress={() => openReschedule(r.id)} style={{ alignSelf: 'center', marginTop: -4 }} />
             ) : null}
           </Box>

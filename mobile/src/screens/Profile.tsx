@@ -8,7 +8,7 @@ import { colors } from '../theme';
 import { AM, ageStr, boundariesOf, eur, kindsOf, LEVEL, ratingStr, reviewsStr, slotDay, type Companion, type Kind } from '../data';
 import { api, ApiError } from '../api';
 import { useStore } from '../store';
-import { canMessage, goBack, messageCompanion, openBooking, openQuickBook } from '../nav';
+import { canMessage, goBack, messageCompanion, openBooking, openInstant, openQuickBook } from '../nav';
 import { daysOf, firstStart, timeOf, useAvailability, type Availability } from '../lib/avail';
 import { whenAt } from '../lib/dates';
 import { Icon } from '../ui/Icon';
@@ -233,6 +233,25 @@ export default function Profile() {
             {/* Takes the room beside the title and wraps there (German is longer). */}
             <Txt size={12} color={colors.gray600} align="right" style={{ flex: 1, marginLeft: 12 }}>Or tap a day to pick a time</Txt>
           </Row>
+          {/* Free now: a video date that starts as soon as they accept (live: it goes when they're booked or switch it off). */}
+          {avail?.freeNow && kinds.includes('video') ? (
+            <View testID="free-now-card" style={{ marginBottom: 14 }}>
+              <View pointerEvents="none" style={{ position: 'absolute', top: 4, left: 4, right: -4, bottom: -4, borderRadius: 22, backgroundColor: colors.mint }} />
+              <View style={{ padding: 18, borderRadius: 22, backgroundColor: colors.ink, gap: 8 }}>
+                <Row style={{ gap: 8 }}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.mint }} />
+                  <Txt size={12} weight={700} color={colors.mint} ls={0.06}>FREE NOW</Txt>
+                </Row>
+                <H size={22} color={colors.white}>{`Video date with ${c.name}, right now`}</H>
+                <Txt size={13} lh={1.45} color={colors.gray300}>{`Starts as soon as ${c.name} accepts. You pay by the minute.`}</Txt>
+                <PressBox shadow={4} fx="push" onPress={() => openInstant(c.id, avail.freeNow!.max)} accessibilityLabel="Video date now"
+                  style={{ marginTop: 6, height: 54, borderRadius: 16, backgroundColor: colors.mint, borderWidth: 2, borderColor: colors.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
+                  <Icon name="video" size={19} />
+                  <Txt size={16} weight={700}>Video date now</Txt>
+                </PressBox>
+              </View>
+            </View>
+          ) : null}
           {/* When they're next free, live, for each kind they offer: once someone books it, it moves on to the next free time. */}
           {kinds.map((k) => {
             const f = free[k];

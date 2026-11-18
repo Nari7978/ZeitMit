@@ -73,7 +73,10 @@ const startedAgo = (id, ago) => sql(`UPDATE bookings SET starts_at = unixepoch()
 // 1) Booking a video date: a request, like any booking, until Yuki accepts
 const id = await book(false);
 let mine = (await call('GET', '/bookings', C.token)).data.find((b) => b.id === id);
-ok(mine.status === 'pending' && mine.expiresAt <= mine.startsAt - 3 * 3600, 'a video date is a request too: Yuki has to accept at least 3 hours before');
+// Its deadline: 3 hours before the start (within 24 hours), or within 10 minutes when it's that soon (short notice).
+const r1 = row(id);
+const due = Math.max(Math.min(r1.created_at + 86400, r1.starts_at - 10800), Math.min(r1.created_at + 600, r1.starts_at - 600));
+ok(mine.status === 'pending' && mine.expiresAt === due && r1.expires_at === due, `a video date is a request too: Yuki has to accept by ${new Date(due * 1000).toISOString().slice(11, 16)} UTC`);
 let r = await call('POST', `/calls/${id}`, C.token);
 ok(r.status === 409 && r.data?.error === 'Your video date opens once Yuki accepts.', 'it has no call until then');
 r = await call('POST', `/companion/bookings/${id}/accept`, Y.token);

@@ -15,6 +15,7 @@ import { useNavBottom } from '../ui/chrome';
 import { useAppWidth } from '../ui/layout';
 import { oklch } from '../lib/oklch';
 import { localAt, freeTag } from '../lib/dates';
+import { FreeNowPill } from '../ui/FreeNowPill';
 import { feedbackDue, useFeedbackPopup } from '../lib/feedbackPrompt';
 
 /** "Rent …" — the headline's last word keeps changing. */
@@ -475,6 +476,7 @@ function Faces({ people }: { people: Companion[] }) {
 
 /** When they're next free on a card: in person when they're free that day, otherwise a video date ("Video today · 21:00"). */
 function FreeLine({ c }: { c: Companion }) {
+  if (c.freeNow) return <FreeNowPill />;
   const f = freeOf(c);
   if (!f.next) return null;
   const at = localAt(f.next);
@@ -486,7 +488,8 @@ function FeaturedCard({ c, i, wide }: { c: Companion; i: number; wide?: number }
   // A sticker that says what's special: free today, the rating, or that they're new.
   const f = freeOf(c);
   const free = f.today && f.next ? localAt(f.next).time : null;
-  const badge = free ? { text: f.video ? `Video from ${free}` : `Free from ${free}`, bg: colors.mint, fg: colors.ink }
+  const badge = c.freeNow ? { text: 'Free now · video', bg: colors.mint, fg: colors.ink }
+    : free ? { text: f.video ? `Video from ${free}` : `Free from ${free}`, bg: colors.mint, fg: colors.ink }
     : c.rating ? { text: `★ ${ratingStr(c)}`, bg: colors.sun, fg: colors.ink }
       : { text: 'New', bg: colors.pink, fg: colors.white };
   return (

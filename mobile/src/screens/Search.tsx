@@ -12,10 +12,12 @@ import { EmptyState, SaveButton, SecondaryButton, StatusCover, TextButton, useTo
 import { useNavBottom } from '../ui/chrome';
 import { t } from '../i18n';
 import { localAt, freeTag } from '../lib/dates';
+import { FreeNowPill } from '../ui/FreeNowPill';
 
 export function activeChips(f: Filters): [string, Partial<Filters>][] {
   const chips: [string, Partial<Filters>][] = [];
   if (f.type === 'date') chips.push(['Date-style', { type: 'all' }]);
+  if (f.now) chips.push(['Free now', { now: false }]);
   if (f.when !== 'any') chips.push([WHEN[f.when], { when: 'any' }]);
   if (f.max < 60) chips.push(['Up to ' + eur(f.max) + '/h', { max: 60 }]);
   f.langs.forEach((l) => chips.push([l, { langs: f.langs.filter((x) => x !== l) }]));
@@ -101,6 +103,8 @@ export default function Search() {
           </View>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 14, paddingHorizontal: 20, paddingBottom: 2 }}>
+            {/* Free now: companions who can start a video date right away. */}
+            <Chip label="Free now" icon="zap" on={!!f.now} padL={12} padR={14} onPress={() => setF({ now: !useStore.getState().f.now })} />
             {A.map((a) => (
               <Chip key={a.id} label={a.label} icon={a.icon} on={f.acts.includes(a.id)} padL={12} padR={14} onPress={() => setF({ acts: toggleIn(useStore.getState().f.acts, a.id) })} />
             ))}
@@ -162,11 +166,12 @@ export default function Search() {
                       {/* When they're next free (bookings counted), on its own line so the price never gets cut. */}
                       {/* Follows the kind of date picked in the filters: video dates only, in person only, or either. */}
                       {(() => {
+                        if (c.freeNow) return <FreeNowPill style={{ marginTop: 'auto' }} />;
                         const fr = freeOf(c, f.acts);
                         const at = fr.next ? localAt(fr.next) : null;
                         return at ? <Txt size={12} weight={600} color={colors.green} numberOfLines={1} style={{ marginTop: 'auto', paddingTop: 6 }}>{freeTag(at.date, at.time, fr.video)}</Txt> : null;
                       })()}
-                      <Row style={{ marginTop: freeOf(c, f.acts).next ? 2 : 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                      <Row style={{ marginTop: c.freeNow ? 6 : freeOf(c, f.acts).next ? 2 : 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                         <Txt size={13} color={colors.gray600} numberOfLines={1}>
                           <Txt size={17} weight={700}>{eur(c.rate)}</Txt> / hour
                         </Txt>

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { NEVER_OFFERED, VIDEO_NEVER_OFFERED } from '../types';
 import { toCompanion, type CompanionRow } from '../lib/companions';
-import { availabilityOf, legacyViews, nextFreeAll } from '../lib/hours';
+import { availabilityOf, freeNowAll, legacyViews, nextFreeAll } from '../lib/hours';
 import { fail } from '../lib/util';
 
 export const companions = new Hono<AppEnv>();
@@ -10,15 +10,17 @@ export const companions = new Hono<AppEnv>();
 /**
  * Approved companions. Filtering and sorting happen client-side for this catalogue size. Each comes with when they're
  * next free (`next`, unix), whether that's today, and the weekdays with a free start, counting bookings and blocks:
- * for each kind they offer in `free` (in person, video), and for either at the top level.
+ * for each kind they offer in `free` (in person, video), and for either at the top level. `freeNow`: free for a video
+ * date right now (until when, and the longest that fits), or null.
  */
 companions.get('/', async (c) => {
-  const [r, freeOf] = await Promise.all([
+  const [r, freeOf, freeNow] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM companions WHERE status = 'approved' ORDER BY rating IS NULL, rating DESC, review_count DESC LIMIT 500").all<CompanionRow>(),
     nextFreeAll(c.env),
+    freeNowAll(c.env),
   ]);
   c.header('Cache-Control', 'no-store'); // free times change with every booking
-  return c.json(r.results.map((row) => ({ ...toCompanion(row), ...freeOf(row.user_id) })));
+  return c.json(r.results.map((row) => ({ ...toCompanion(row), ...freeOf(row.user_id), freeNow: freeNow.get(row.user_id) ?? null })));
 });
 
 companions.get('/:id', async (c) => {

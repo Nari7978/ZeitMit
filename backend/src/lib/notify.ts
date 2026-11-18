@@ -5,8 +5,12 @@ import { newId, now } from './util';
 /**
  * `urgent`: needs an answer within minutes (a short-notice request): a high-priority push with sound that goes out
  * whatever the booking-update setting says, like a video date ringing, and is dropped once `until` (unix) has passed.
+ * `data`: more for the app with the push (a free-now request: `kind: 'instant'` and its booking).
  */
-type Note = { icon: string; tone: 'violet' | 'success' | 'warning' | 'error' | 'neutral'; title: string; body: string; go?: string; urgent?: { until: number } };
+type Note = {
+  icon: string; tone: 'violet' | 'success' | 'warning' | 'error' | 'neutral'; title: string; body: string; go?: string; urgent?: { until: number };
+  data?: Record<string, string | number>;
+};
 
 /** Stores an in-app notification, refreshes the person's open apps and sends an Expo push if they have a push token. */
 export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUntil(p: Promise<unknown>): void }) {
@@ -26,7 +30,7 @@ export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUnti
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
-      to: row.push_token, title: n.title, body: n.body, data: { go: n.go ?? '' }, sound: 'default',
+      to: row.push_token, title: n.title, body: n.body, data: { ...n.data, go: n.go ?? '' }, sound: 'default',
       ...(n.urgent ? { priority: 'high', ttl: Math.max(30, n.urgent.until - now()) } : {}),
     }),
   }).catch(() => undefined);

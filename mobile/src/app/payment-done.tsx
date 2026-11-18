@@ -29,6 +29,8 @@ export default function PaymentDone() {
         }
       }
       await s.refresh();
+      // A video date now has its own waiting screen; other requests are under Bookings.
+      if (kind === 'booking' && id && useStore.getState().bookings.some((b) => b.id === id && b.instant && b.status === 'pending')) return router.replace(`/instant/${id}`);
       if (kind === 'booking') useStore.setState({ btab: 'pending' });
       router.replace(kind === 'booking' ? '/bookings' : '/');
     })();

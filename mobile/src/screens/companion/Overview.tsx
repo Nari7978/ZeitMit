@@ -14,6 +14,7 @@ import { historyLine } from './History';
 import { t } from '../../i18n';
 import { feedbackDue, useFeedbackPopup } from '../../lib/feedbackPrompt';
 import { usePushAccess } from '../../lib/push';
+import { FreeNowCard } from './FreeNowCard';
 
 export default function Overview() {
   // Only what this screen shows (the whole store would redraw it on every change anywhere in the app).
@@ -124,6 +125,7 @@ export default function Overview() {
           <Icon name="chevron-right" size={18} color={colors.gray600} />
         </PressBox>
       ) : null}
+      {live ? <FreeNowCard /> : null}
       <Row style={{ gap: 12 }}>
         <StatTile n={requests.length} label="New requests" onPress={() => router.navigate('/companion/requests')} />
         <StatTile n={upcoming.length} label="Upcoming" onPress={() => router.navigate('/companion/calendar')} />

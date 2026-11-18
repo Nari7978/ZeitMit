@@ -23,6 +23,8 @@ export type Availability = {
   /** The companion's time zone (their hours are set in it). */
   tz: string; now: number; earliest: number; latest: number; step: number;
   kinds: Record<Kind, KindFree | null>;
+  /** Free now for a video date (servers from before Free now send none). */
+  freeNow?: { until: number; max: number } | null;
 };
 
 /**

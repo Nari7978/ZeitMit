@@ -48,6 +48,15 @@ export const LEAD_S = ACCEPT_BEFORE_S + 30 * 60;
 export const noticeS = (kind: Kind, minutes?: number | null) => (NOTICE_OPTIONS[kind].includes(minutes ?? -1) ? minutes! : DEFAULT_NOTICE[kind]) * 60;
 /** Customers book up to 7 days ahead. */
 export const HORIZON_S = 7 * 86400;
+/**
+ * Free now: a companion who switched it on (for one of FREE_NOW_HOURS) can be booked for a video date that starts as
+ * soon as they accept. They have INSTANT_REPLY_S to answer; it counts only while their app checked in within
+ * FREE_NOW_AWAY_S; FREE_NOW_MISSES requests in a row left unanswered switch it off.
+ */
+export const FREE_NOW_HOURS = [1, 2, 3];
+export const INSTANT_REPLY_S = 120;
+export const FREE_NOW_AWAY_S = 600;
+export const FREE_NOW_MISSES = 3;
 /** Companions plan specific dates and blocks up to 60 days ahead. */
 export const PLAN_DAYS = 60;
 export const MAX_RANGES = 6;
@@ -60,12 +69,12 @@ export const floorStep = (u: number) => Math.floor(u / STEP_S) * STEP_S;
  * Short notice: within SHORT_REPLY's window and before its gap to the start. The later of the two, so the rules meet
  * without a jump. The database works out the same (bookings.expires_at, migration 0022).
  */
-export const expiryOf = (b: { created_at: number; starts_at: number; kind: Kind }) => Math.max(
+export const expiryOf = (b: { created_at: number; starts_at: number; kind: Kind; instant?: number | boolean }) => (b.instant ? b.created_at + INSTANT_REPLY_S : Math.max(
   Math.min(b.created_at + EXPIRE_AFTER_S, b.starts_at - ACCEPT_BEFORE_S),
   Math.min(b.created_at + SHORT_REPLY[b.kind].window, b.starts_at - SHORT_REPLY[b.kind].before),
-);
+));
 /** Whether a request can still be accepted at moment `t` (up to and including its expiry). */
-export const canAccept = (b: { created_at: number; starts_at: number; kind: Kind }, t: number) => t <= expiryOf(b);
+export const canAccept = (b: { created_at: number; starts_at: number; kind: Kind; instant?: number | boolean }, t: number) => t <= expiryOf(b);
 
 /** "1 hour", "2½ hours", "1 hour 15 minutes", "45 minutes": the same wording as the app. */
 export function lengthText(min: number) {
@@ -281,7 +290,59 @@ export type KindFree = { min: number; max: number; lead: number; earliest: numbe
 export type Availability = {
   tz: string; now: number; earliest: number; latest: number; step: number;
   kinds: Record<Kind, KindFree | null>;
+  /** Free now for a video date: until when, and the longest one that fits (minutes); null when not. */
+  freeNow: FreeNow | null;
 };
+export type FreeNow = { until: number; max: number };
+
+/** What the free-now state is worked out from, per companion (see freeNowRows). */
+type FreeNowRow = { user_id: string; free_now_until: number | null; free_now_seen: number | null; activities: string; next_start: number | null; busy: number };
+
+/**
+ * Free now for a video date, from the companion's switch: on, their app checked in lately, they offer video dates, and
+ * they aren't busy (in a booking now, or answering another free-now request). The longest video date fits before the
+ * switch ends and before their next booking, after the 2 minutes to answer, in 15-minute steps; under 30 minutes, no.
+ */
+function freeNowFrom(r: FreeNowRow, t: number): FreeNow | null {
+  if (!r.free_now_until || r.free_now_until <= t || !r.free_now_seen || r.free_now_seen < t - FREE_NOW_AWAY_S || r.busy) return null;
+  if (!parseJson<string[]>(r.activities, []).includes(VIDEO_ACT)) return null;
+  const end = Math.min(r.free_now_until, r.next_start ?? Infinity) - INSTANT_REPLY_S;
+  const max = Math.min(MAX_MINUTES, Math.floor((end - t) / 60 / STEP_MIN) * STEP_MIN);
+  return max >= MIN_MINUTES.video ? { until: r.free_now_until, max } : null;
+}
+
+/**
+ * The rows freeNowFrom needs: one companion (`id`), or everyone with the switch on. `except`: a free-now request that
+ * doesn't count as keeping them busy (the one being sent), along with any sent after it.
+ */
+async function freeNowRows(env: Env, t: number, id?: string, except?: { id: string; created_at: number }) {
+  const r = await env.DB.prepare(
+    `SELECT c.user_id, c.free_now_until, c.free_now_seen, c.activities,
+       (SELECT MIN(b.starts_at) FROM bookings b WHERE b.companion_id = c.user_id AND b.status IN ${HOLDING} AND b.starts_at > ?1) AS next_start,
+       EXISTS (SELECT 1 FROM bookings b WHERE b.companion_id = c.user_id AND (
+         (b.status IN ${HOLDING} AND b.starts_at <= ?1 AND b.ends_at > ?1)
+         OR (b.status = 'pending' AND b.paid = 1 AND b.instant = 1 AND b.expires_at >= ?1 AND b.id <> ?3
+             AND (b.created_at < ?4 OR (b.created_at = ?4 AND b.id < ?3))))) AS busy
+     FROM companions c WHERE c.status = 'approved' AND c.free_now_until > ?1 ${id ? 'AND c.user_id = ?2' : ''}`,
+  ).bind(t, id ?? '', except?.id ?? '', except?.created_at ?? Number.MAX_SAFE_INTEGER).all<FreeNowRow>();
+  return r.results;
+}
+
+/** Whether one companion is free now for a video date (and for how long). */
+export async function freeNowOf(env: Env, companionId: string, t = now(), except?: { id: string; created_at: number }) {
+  const [r] = await freeNowRows(env, t, companionId, except);
+  return r ? freeNowFrom(r, t) : null;
+}
+
+/** Everyone free now for a video date, by companion id (for the list). */
+export async function freeNowAll(env: Env, t = now()) {
+  const out = new Map<string, FreeNow>();
+  for (const r of await freeNowRows(env, t)) {
+    const f = freeNowFrom(r, t);
+    if (f) out.set(r.user_id, f);
+  }
+  return out;
+}
 
 /**
  * What a customer can book with a companion: for each kind they offer, the free intervals (bookings start from that
@@ -292,7 +353,7 @@ export async function availabilityOf(env: Env, companionId: string, except = '',
   const t = now();
   const latest = t + HORIZON_S;
   const to = latest + MAX_MINUTES * 60;
-  const [h, busy] = await Promise.all([loadHours(env, companionId, t, to), busyOf(env, companionId, t, to, except)]);
+  const [h, busy, freeNow] = await Promise.all([loadHours(env, companionId, t, to), busyOf(env, companionId, t, to, except), freeNowOf(env, companionId, t)]);
   if (!h) return null;
   const kinds: Record<Kind, KindFree | null> = { meet: null, video: null };
   for (const k of kindsOf(h.acts)) {
@@ -302,7 +363,7 @@ export async function availabilityOf(env: Env, companionId: string, except = '',
   }
   // The soonest of the kinds (what app versions from before per-kind notice go by; they ask 3½ hours themselves).
   const earliest = Math.min(...KINDS.map((k) => kinds[k]?.earliest ?? Infinity), ceilStep(t + LEAD_S));
-  return { tz: h.tz, now: t, earliest, latest, step: STEP_MIN, kinds };
+  return { tz: h.tz, now: t, earliest, latest, step: STEP_MIN, kinds, freeNow };
 }
 
 /** "20 minutes", "1½ hours", "1 day": how far ahead, for messages. */

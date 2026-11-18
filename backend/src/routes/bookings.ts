@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from '../types';
 import { ACT_LABEL, ACTIVITIES, FEEDBACK_CONCERNS, FEEDBACK_GOOD, FREE_CANCEL_HOURS, ROMANTIC, SERVICE_FEE, VIDEO_ACT, type ActId } from '../types';
 import {
-  ACCEPT_BEFORE_S, availabilityOf, canAccept, fitAt, fits, HOLDING, LEAD_S, legacyDays, lengthText, noticeS, ruleProblem, type Kind,
+  ACCEPT_BEFORE_S, availabilityOf, canAccept, fitAt, fits, FREE_NOW_MISSES, freeNowOf, HOLDING, LEAD_S, legacyDays, lengthText, MAX_MINUTES, MIN_MINUTES, noticeS,
+  ruleProblem, STEP_MIN, type Kind,
 } from '../lib/hours';
 import { slotsChanged } from '../lib/live';
 import { alertAdmins, notify } from '../lib/notify';
@@ -37,6 +38,8 @@ export type BookingRow = {
   call_customer_at: number | null; call_companion_at: number | null; call_together_s: number; call_closed: number | null;
   /** What went back to the customer (cents), and the minutes a video date was paid for when less than booked (0020). */
   refunded: number; billed_minutes: number | null;
+  /** A free-now video date (0023): 2 minutes to answer, starting when it's accepted. */
+  instant: number;
   // Worked out by the database (migration 0018)
   ends_at: number; expires_at: number; kind: Kind; decided_at: number | null; conflict_with: string | null;
 };
@@ -85,6 +88,7 @@ const refundedOf = (b: BookingRow) => b.refunded || (b.pay_status === 'refunded'
 /** Booking as the customer sees it (includes the meet code). */
 const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; photo_id?: string | null }, m: boolean, tz: string) => ({
   id: b.id, cid: b.companion_id, companionName: b.companion_name, hue: b.hue, photoUrl: b.photo_id ? `/photos/${b.photo_id}` : null, act: b.activity, kind: b.kind,
+  instant: b.instant ? true : undefined,
   ...timeOf(b, tz), place: b.place, note: b.cancel_note ?? undefined, status: shown(b.status, m),
   // Video dates have no meet code: the call itself confirms them.
   pay: b.pay_status, total: b.total, creditUsed: b.credit_used, otp: b.status === 'confirmed' && b.activity !== VIDEO_ACT ? b.meet_code : undefined, reviewed: !!b.reviewed,
@@ -102,6 +106,7 @@ const forCustomer = (b: BookingRow & { companion_name?: string; hue?: number; ph
 type CustomerInfo = { customer_name?: string; avatar_id?: string | null; customer_bio?: string | null; customer_id_status?: string; customer_since?: number };
 const forCompanion = (b: BookingRow & CustomerInfo, m: boolean, tz: string) => ({
   id: b.id, who: b.customer_name || 'Customer', customerId: b.customer_id, avatarUrl: b.avatar_id ? `/photos/${b.avatar_id}` : null, act: b.activity, kind: b.kind,
+  instant: b.instant ? true : undefined,
   // What a companion may know about who is booking: never the email or documents.
   customer: { bio: b.customer_bio ?? '', verified: b.customer_id_status === 'approved', since: b.customer_since ?? null },
   ...timeOf(b, tz), place: b.place, note: b.note, status: shown(b.status, m), pay: b.pay_status,
@@ -173,8 +178,9 @@ async function closeBooking(env: Env, b: BookingRow, to: Closing, o: { note: (am
   }
   await endCheckins(env, b.id);
   await endThread(env, b.id);
-  // A confirmed booking held its time: it's free again for everyone (if it's in the companion's hours). Requests held nothing.
-  if (b.status === 'confirmed') await slotsChanged(env, b.companion_id);
+  // A confirmed booking held its time: it's free again for everyone (if it's in the companion's hours). Requests held
+  // nothing, except a free-now one: while it waits, the companion isn't free now for anyone else.
+  if (b.status === 'confirmed' || b.instant) await slotsChanged(env, b.companion_id);
   return true;
 }
 
@@ -274,10 +280,34 @@ async function conflictOverlapping(env: Env, w: Pick<BookingRow, 'id' | 'compani
 async function expireRequest(env: Env, b: BookingRow) {
   if (!(await closeBooking(env, b, 'expired', { note: (amt) => `No reply in time · ${amt} refunded in full`, by: 'system' }))) return false;
   const p = await peopleOf(env, b);
+  if (b.instant) {
+    await notify(env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: `${p.companion} couldn’t answer in time`, body: `${euros(b.total)} is refunded in full. Try someone else who’s free now.`, go: 'tab:cancelled' });
+    await notify(env, b.companion_id, { icon: 'hourglass', tone: 'neutral', title: 'Missed video date request', body: `${p.customer}’s request wasn’t answered within 2 minutes, so it was cancelled.`, go: 'comp:requests' });
+    await missedFreeNow(env, b.companion_id);
+    return true;
+  }
   await notify(env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: 'Request expired', body: `${p.companion} didn’t reply in time, so ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' });
   await notify(env, b.companion_id, { icon: 'hourglass', tone: 'neutral', title: 'Request expired', body: `${p.customer}’s request for ${whenIn(b.starts_at, p.companionTz).full} wasn’t answered in time, so it was cancelled.`, go: 'comp:calendar' });
   return true;
 }
+
+/**
+ * A free-now request ran out unanswered: after FREE_NOW_MISSES in a row, Free now switches itself off (and the
+ * companion is told), so customers don't wait for someone who isn't there. Answering one starts the count again.
+ */
+async function missedFreeNow(env: Env, companionId: string) {
+  await env.DB.prepare('UPDATE companions SET free_now_misses = free_now_misses + 1 WHERE user_id = ?').bind(companionId).run();
+  const off = await env.DB.prepare(
+    'UPDATE companions SET free_now_until = NULL, free_now_misses = 0, free_now_paused = unixepoch() WHERE user_id = ? AND free_now_misses >= ? AND free_now_until IS NOT NULL',
+  ).bind(companionId, FREE_NOW_MISSES).run();
+  if (!off.meta.changes) return;
+  await notify(env, companionId, {
+    icon: 'info', tone: 'warning', title: 'Free now is off',
+    body: `You missed ${FREE_NOW_MISSES} video date requests in a row, so customers can’t book you right now. Turn it on again when you’re ready.`, go: 'comp:overview',
+  });
+  await slotsChanged(env, companionId);
+}
+const answeredFreeNow = (env: Env, companionId: string) => env.DB.prepare('UPDATE companions SET free_now_misses = 0 WHERE user_id = ?').bind(companionId).run();
 
 /**
  * Requests past their expiry (24 hours after they were sent or 3 hours before the start; for short notice 10 or 30
@@ -360,7 +390,32 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
     }
     return;
   }
+  // Free now: the video date starts on acceptance, so the companion has to be free now for this one still (a free-now
+  // request sent before it, a booking or the switch going off means it can't happen: refunded at once).
+  if (b.instant) {
+    const f = await freeNowOf(env, b.companion_id, now(), { id: b.id, created_at: b.created_at });
+    if (!f || lengthOf(b) > f.max) {
+      if (await closeBooking(env, b, 'conflicted', { note: (amt) => `Not free right now any more · ${amt} refunded in full`, by: 'system' })) {
+        await notify(env, b.customer_id, {
+          icon: 'receipt', tone: 'neutral', title: `${p.companion} isn’t free right now`,
+          body: `${p.companion} just became busy, so ${euros(b.total)} is refunded in full. Try someone else who’s free now.`, go: 'tab:cancelled',
+        }, ctx);
+      }
+      return;
+    }
+  }
   await ensureThread(env, b);
+  if (b.instant) {
+    // Rings like a call: a high-priority push with sound (the open app shows the request full screen) for 2 minutes.
+    await notify(env, b.companion_id, {
+      icon: 'video', tone: 'violet', title: `Video date request from ${p.customer}`,
+      body: `${lengthText(lengthOf(b))} · You earn ${euros(b.subtotal)} · Answer within 2 minutes.`,
+      go: 'comp:requests', urgent: { until: b.expires_at }, data: { kind: 'instant', bookingId: b.id },
+    }, ctx);
+    void slotsChanged(env, b.companion_id, ctx); // answering this one: not free now for anyone else meanwhile
+    await inBackground(ctx, () => sendBookingInvoice(env, b.id));
+    return;
+  }
   const forThem = whenIn(b.starts_at, p.customerTz);
   const forHer = whenIn(b.starts_at, p.companionTz);
   await notify(env, b.customer_id, {
@@ -385,7 +440,10 @@ async function settleCheckout(env: Env, b: BookingRow, ctx?: { waitUntil(p: Prom
   const pi = intentOf(await getSession(env, b.payment_ref));
   if (!pi || !['requires_capture', 'succeeded'].includes(pi.status)) return false;
   // The request is sent now, so its time to answer starts now (created_at is what its expiry counts from).
-  const res = await env.DB.prepare('UPDATE bookings SET paid = 1, payment_ref = ?, checkout_url = NULL, created_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND paid = 0').bind(pi.id, b.id).run();
+  const res = await env.DB.prepare(
+    `UPDATE bookings SET paid = 1, payment_ref = ?, checkout_url = NULL, created_at = unixepoch(), updated_at = unixepoch(),
+       starts_at = CASE WHEN instant = 1 THEN unixepoch() ELSE starts_at END WHERE id = ? AND paid = 0`,
+  ).bind(pi.id, b.id).run();
   if (res.meta.changes) await announceBooking(env, b.id, ctx);
   return true;
 }
@@ -423,12 +481,15 @@ bookings.get('/', async (c) => {
 /**
  * Sends a booking request (payment held by ZeitMit). Body: { companionId, act, startsAt (unix), minutes, place, note?,
  * boundariesAgreed?, useCredit? }; older apps send { date, time, dur (hours) } instead of startsAt and minutes.
+ * `instant: true` (with act 'call' and minutes, no start): a video date now with a companion who is free now. They
+ * have 2 minutes to answer, and it starts when they accept. One at a time, for the customer and for the companion.
  * Any start time and length in 15-minute steps that fit the companion's free time for that kind of date. Requests
  * don't take the time (several people can ask for overlapping times): accepting one does, atomically.
  */
 bookings.post('/', async (c) => {
   const u = c.get('user');
-  const b = await c.req.json<{ companionId: string; act: ActId; startsAt?: number; minutes?: number; date?: string; time?: string; dur?: number; place?: string; note?: string; boundariesAgreed?: boolean; useCredit?: boolean }>();
+  const b = await c.req.json<{ companionId: string; act: ActId; startsAt?: number; minutes?: number; date?: string; time?: string; dur?: number; place?: string; note?: string; boundariesAgreed?: boolean; useCredit?: boolean; instant?: boolean }>();
+  const instant = b.instant === true;
   const age = await c.env.DB.prepare('SELECT age_confirmed, name, id_status FROM users WHERE id = ?').bind(u.id).first<{ age_confirmed: number; name: string; id_status: string }>();
   if (!age?.age_confirmed) fail(403, 'Confirm you’re 18 or older before booking.');
   if (age!.id_status !== 'approved') fail(403, 'Verify your ID before your first booking.');
@@ -443,10 +504,22 @@ bookings.post('/', async (c) => {
   if (blocked) fail(403, 'You can’t book this companion.');
   if (!ACTIVITIES.includes(b.act) || !parseJson<string[]>(comp!.activities, []).includes(b.act)) fail(400, `${comp!.display_name} doesn’t offer that activity.`);
   const kind: Kind = b.act === VIDEO_ACT ? 'video' : 'meet';
-  const { start, length } = startAndLength(b, comp!.timezone || DEFAULT_TZ);
-  // As far ahead as this companion asks for this kind of date (20 minutes for a video date at the soonest).
-  const problem = ruleProblem(kind, start, length, noticeS(kind, kind === 'video' ? comp!.notice_video : comp!.notice_meet));
-  if (problem) fail(400, problem);
+  if (instant && kind !== 'video') fail(400, 'Only video dates can start right away.');
+  // A video date now starts when it's accepted (its start is set then); any other booking at the time picked.
+  const { start, length } = instant ? { start: now(), length: Number(b.minutes) } : startAndLength(b, comp!.timezone || DEFAULT_TZ);
+  if (instant) {
+    if (!Number.isInteger(length) || length % STEP_MIN || length < MIN_MINUTES.video || length > MAX_MINUTES) fail(400, 'Choose 30 minutes to 8 hours, in 15-minute steps.');
+    const f = await freeNowOf(c.env, comp!.user_id);
+    if (!f) fail(409, `${comp!.display_name} isn’t free right now. Pick a time instead.`);
+    if (length > f!.max) fail(409, `${comp!.display_name} is free for up to ${lengthText(f!.max)} right now.`);
+    const waiting = await c.env.DB.prepare("SELECT 1 FROM bookings WHERE customer_id = ? AND status = 'pending' AND paid = 1 AND instant = 1 AND expires_at >= unixepoch()")
+      .bind(u.id).first();
+    if (waiting) fail(409, 'You already have a video date request waiting. Wait for the answer first.');
+  } else {
+    // As far ahead as this companion asks for this kind of date (20 minutes for a video date at the soonest).
+    const problem = ruleProblem(kind, start, length, noticeS(kind, kind === 'video' ? comp!.notice_video : comp!.notice_meet));
+    if (problem) fail(400, problem);
+  }
   // Optional: the two can agree on a place in the chat after the request is accepted. Video dates happen in the app.
   const place = b.act === VIDEO_ACT ? '' : (b.place ?? '').trim();
   if (ROMANTIC.includes(b.act) && !b.boundariesAgreed) fail(400, `Please agree to respect ${comp!.display_name}’s boundaries.`);
@@ -455,19 +528,22 @@ bookings.post('/', async (c) => {
   const left = await c.env.DB.prepare('SELECT * FROM bookings WHERE customer_id = ? AND companion_id = ? AND paid = 0').bind(u.id, comp!.user_id).all<BookingRow>();
   for (const old of left.results) await releaseHold(c.env, old, c.executionCtx).catch((e) => console.error('Release failed', old.id, e));
 
-  // The whole interval has to be free for that kind: inside the companion's open hours, outside their blocks and confirmed bookings.
-  const a = await availabilityOf(c.env, comp!.user_id);
-  const free = a?.kinds[kind]?.open ?? [];
-  const end = start + length * 60;
-  if (!fits(free, start, end)) {
-    const room = fitAt(free, start);
-    fail(409, room
-      ? `From ${whenIn(start, u.tz).time}, ${comp!.display_name} is only free for ${lengthText(room)}. Choose a shorter time or another start.`
-      : 'That time isn’t free. Pick another time.');
+  // The whole interval has to be free for that kind: inside the companion's open hours, outside their blocks and
+  // confirmed bookings. (Free now was checked above: it's the companion's own word that they're free.)
+  if (!instant) {
+    const a = await availabilityOf(c.env, comp!.user_id);
+    const free = a?.kinds[kind]?.open ?? [];
+    const end = start + length * 60;
+    if (!fits(free, start, end)) {
+      const room = fitAt(free, start);
+      fail(409, room
+        ? `From ${whenIn(start, u.tz).time}, ${comp!.display_name} is only free for ${lengthText(room)}. Choose a shorter time or another start.`
+        : 'That time isn’t free. Pick another time.');
+    }
+    const mine = await c.env.DB.prepare("SELECT 1 FROM bookings WHERE customer_id = ? AND companion_id = ? AND status = 'pending' AND paid = 1 AND starts_at < ? AND ends_at > ?")
+      .bind(u.id, comp!.user_id, end, start).first();
+    if (mine) fail(409, 'You already asked for this time. Wait for the answer, or cancel that request first.');
   }
-  const mine = await c.env.DB.prepare("SELECT 1 FROM bookings WHERE customer_id = ? AND companion_id = ? AND status = 'pending' AND paid = 1 AND starts_at < ? AND ends_at > ?")
-    .bind(u.id, comp!.user_id, end, start).first();
-  if (mine) fail(409, 'You already asked for this time. Wait for the answer, or cancel that request first.');
 
   // Priced by the minute: the hourly rate × length (15-minute steps keep it to whole cents), plus the service fee.
   const subtotal = Math.round((comp!.rate * 100 * length) / 60);
@@ -485,9 +561,9 @@ bookings.post('/', async (c) => {
     }
   }
   await c.env.DB.prepare(
-    `INSERT INTO bookings (id, customer_id, companion_id, activity, starts_at, duration_h, place, note, boundaries_agreed, rate, subtotal, fee, total, meet_code, credit_used)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, u.id, comp!.user_id, b.act, start, length / 60, place.slice(0, 160), (b.note ?? '').slice(0, 240), b.boundariesAgreed ? 1 : 0, comp!.rate * 100, subtotal, fee, total, newMeetCode(), creditUsed).run();
+    `INSERT INTO bookings (id, customer_id, companion_id, activity, starts_at, duration_h, place, note, boundaries_agreed, rate, subtotal, fee, total, meet_code, credit_used, instant)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, u.id, comp!.user_id, b.act, start, length / 60, place.slice(0, 160), (b.note ?? '').slice(0, 240), b.boundariesAgreed ? 1 : 0, comp!.rate * 100, subtotal, fee, total, newMeetCode(), creditUsed, instant ? 1 : 0).run();
   const m = modern(c);
   // Card part goes through Stripe Checkout; the request reaches the companion once it's paid.
   const due = total - creditUsed;
@@ -588,6 +664,7 @@ bookings.post('/:id/reschedule', async (c) => {
   const b = await load(c.env, c.req.param('id'));
   const side = sideOf(b, u.id);
   if (!b.paid || (b.status !== 'pending' && b.status !== 'confirmed') || b.pay_status !== 'held') fail(409, 'This booking can’t be moved any more.');
+  if (b.instant && b.status === 'pending') fail(409, 'A video date now can’t be moved. Cancel it and pick a time instead.');
   if (b.resched_count >= MAX_RESCHEDULES) fail(409, `A booking can be moved ${MAX_RESCHEDULES} times. Cancel it and book again instead.`);
   if (b.resched_at && b.resched_by !== side) fail(409, 'Answer the suggested time first.');
   if (side === 'customer' && b.status === 'confirmed' && b.starts_at - now() < FREE_CANCEL_HOURS * 3600) {
@@ -875,12 +952,21 @@ companionBookings.post('/:id/accept', async (c) => {
     fail(409, TOO_LATE);
   }
   const t = now();
-  const res = await c.env.DB.prepare(
-    `UPDATE bookings SET status = 'confirmed', decided_at = ?2, ${NO_RESCHED}, updated_at = ?2
-     WHERE id = ?1 AND status = 'pending' AND paid = 1 AND ?2 <= expires_at
-       AND NOT EXISTS (SELECT 1 FROM bookings o WHERE o.companion_id = bookings.companion_id AND o.id <> bookings.id
-         AND o.status IN ${HOLDING} AND o.starts_at < bookings.ends_at AND o.ends_at > bookings.starts_at)`,
-  ).bind(b.id, t).run();
+  // A free-now video date starts now, so it has to fit from now on; any other booking at its own time.
+  const len = Math.round(b.duration_h * 3600);
+  const res = b.instant
+    ? await c.env.DB.prepare(
+      `UPDATE bookings SET status = 'confirmed', starts_at = ?2, decided_at = ?2, ${NO_RESCHED}, updated_at = ?2
+       WHERE id = ?1 AND status = 'pending' AND paid = 1 AND ?2 <= expires_at
+         AND NOT EXISTS (SELECT 1 FROM bookings o WHERE o.companion_id = bookings.companion_id AND o.id <> bookings.id
+           AND o.status IN ${HOLDING} AND o.starts_at < ?2 + ?3 AND o.ends_at > ?2)`,
+    ).bind(b.id, t, len).run()
+    : await c.env.DB.prepare(
+      `UPDATE bookings SET status = 'confirmed', decided_at = ?2, ${NO_RESCHED}, updated_at = ?2
+       WHERE id = ?1 AND status = 'pending' AND paid = 1 AND ?2 <= expires_at
+         AND NOT EXISTS (SELECT 1 FROM bookings o WHERE o.companion_id = bookings.companion_id AND o.id <> bookings.id
+           AND o.status IN ${HOLDING} AND o.starts_at < bookings.ends_at AND o.ends_at > bookings.starts_at)`,
+    ).bind(b.id, t).run();
   if (!res.meta.changes) {
     const fresh = await load(c.env, b.id);
     if (fresh.status !== 'pending') fail(409, 'This request was already handled.');
@@ -891,16 +977,24 @@ companionBookings.post('/:id/accept', async (c) => {
     await conflictRequest(c.env, fresh, await takenBy(c.env, fresh));
     fail(409, 'You already have a confirmed booking at that time, so this request can’t be accepted. The customer was refunded.');
   }
-  await conflictOverlapping(c.env, b);
+  const won = b.instant ? { ...b, starts_at: t, ends_at: t + len } : b;
+  await conflictOverlapping(c.env, won);
+  if (b.instant) await answeredFreeNow(c.env, b.companion_id);
   void slotsChanged(c.env, b.companion_id, c.executionCtx);
   const p = await peopleOf(c.env, b);
-  const when = whenIn(b.starts_at, p.customerTz);
-  await notify(c.env, b.customer_id, {
-    icon: 'calendar-check', tone: 'success', title: 'Booking accepted',
-    body: `${p.companion} accepted your ${ACT_LABEL[b.activity].toLowerCase()} request: ${when.full}–${whenIn(b.ends_at, p.customerTz).time}.`, go: 'tab:upcoming',
-  }, c.executionCtx);
+  if (b.instant) {
+    await notify(c.env, b.customer_id, {
+      icon: 'video', tone: 'success', title: `${p.companion} accepted`, body: `Your video date starts now (${lengthText(lengthOf(b))}). Join it in the app.`, go: `call:${b.id}`,
+    }, c.executionCtx);
+  } else {
+    const when = whenIn(b.starts_at, p.customerTz);
+    await notify(c.env, b.customer_id, {
+      icon: 'calendar-check', tone: 'success', title: 'Booking accepted',
+      body: `${p.companion} accepted your ${ACT_LABEL[b.activity].toLowerCase()} request: ${when.full}–${whenIn(b.ends_at, p.customerTz).time}.`, go: 'tab:upcoming',
+    }, c.executionCtx);
+  }
   await inBackground(c.executionCtx, () => sendBookingConfirmation(c.env, b.id));
-  return c.json({ ok: true, status: 'confirmed' });
+  return c.json({ ok: true, status: 'confirmed', startsAt: won.starts_at });
 });
 
 companionBookings.post('/:id/decline', async (c) => {
@@ -908,7 +1002,12 @@ companionBookings.post('/:id/decline', async (c) => {
   if (b.status !== 'pending') fail(409, 'This request was already handled.');
   if (!(await closeBooking(c.env, b, 'rejected', { note: (amt) => `Declined · ${amt} refunded in full`, by: 'companion' }))) fail(409, 'This request was already handled.');
   const p = await peopleOf(c.env, b);
-  await notify(c.env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: `${p.companion} can’t make it`, body: `Your request was declined. ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' }, c.executionCtx);
+  if (b.instant) {
+    await answeredFreeNow(c.env, b.companion_id);
+    await notify(c.env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: `${p.companion} can’t take it right now`, body: `${euros(b.total)} is refunded in full. Try someone else who’s free now.`, go: 'tab:cancelled' }, c.executionCtx);
+  } else {
+    await notify(c.env, b.customer_id, { icon: 'receipt', tone: 'neutral', title: `${p.companion} can’t make it`, body: `Your request was declined. ${euros(b.total)} is refunded in full.`, go: 'tab:cancelled' }, c.executionCtx);
+  }
   return c.json({ ok: true, status: 'rejected' });
 });
 

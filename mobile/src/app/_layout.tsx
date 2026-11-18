@@ -15,6 +15,8 @@ import { onNotificationTap, pushAccess, pushAsked, registerForPush } from '../li
 import { useLive } from '../lib/live';
 import { endRing, showRing } from '../lib/ring';
 import { RingBanner } from '../ui/RingBanner';
+import { InstantRequest } from '../ui/InstantRequest';
+import { useFreeNowCheckIn } from '../lib/freeNow';
 import { followGo } from '../nav';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
@@ -140,6 +142,7 @@ export default function RootLayout() {
           <Stack.Screen name="history" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="customer/[id]" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="reschedule/[id]" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="instant/[id]" options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: colors.sun } }} />
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="turn-on-notifications" options={{ animation: 'fade', gestureEnabled: false }} />
@@ -154,8 +157,16 @@ export default function RootLayout() {
       </Stack>
       {signedIn ? <SheetHost /> : null}
       {signedIn ? <RingBanner /> : null}
+      {signedIn ? <InstantRequest /> : null}
+      {signedIn ? <FreeNowCheckIn /> : null}
       <Toast bottom={toastBottom} />
       </View>
     </View>
   );
+}
+
+/** Free now: the open app checks in while it's on (see useFreeNowCheckIn). */
+function FreeNowCheckIn() {
+  useFreeNowCheckIn();
+  return null;
 }

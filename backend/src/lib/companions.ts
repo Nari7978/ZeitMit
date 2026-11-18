@@ -9,6 +9,8 @@ export type CompanionRow = {
   gallery: string; timezone: string | null;
   /** How far ahead they can be booked, per kind (minutes; migration 0022). */
   notice_video: number; notice_meet: number;
+  /** Free now for video dates (migration 0023): on until, last check-in from their app, missed in a row, switched off for that at. */
+  free_now_until: number | null; free_now_seen: number | null; free_now_misses: number; free_now_paused: number | null;
 };
 
 /** Besides the profile photo, companions show this many more photos (the application needs the minimum). */

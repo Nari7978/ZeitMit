@@ -39,6 +39,12 @@ export function openQuickBook(cid: string, kind: Kind = 'meet') {
   router.push({ pathname: '/book/[cid]', params: { cid, quick: '1', kind } });
 }
 
+/** A video date now with a companion who is free now: pick how long and pay (they have 2 minutes to accept). */
+export function openInstant(cid: string, max: number) {
+  if (useStore.getState().user?.idStatus !== 'approved') return openVerify(cid);
+  useStore.getState().openSheet('instant', { instantAsk: { cid, max, minutes: 30, agree: false, busy: false } });
+}
+
 export function openVerify(next?: string) {
   useStore.getState().closeSheet();
   router.push({ pathname: '/verify', params: next ? { next } : {} });

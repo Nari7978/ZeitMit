@@ -95,7 +95,7 @@ function BookingCard({ b }: { b: Booking }) {
   // Moving to another time: up to 24 h before a confirmed booking (a request can move any time), never while
   // the companion's own suggestion waits for an answer, and at most a few times per booking.
   const open = b.status === 'pending' || b.status === 'confirmed';
-  const canMove = open && (b.reschedLeft ?? 1) > 0 && b.resched?.by !== 'companion';
+  const canMove = open && !b.instant && (b.reschedLeft ?? 1) > 0 && b.resched?.by !== 'companion';
   const move = () => (b.status === 'confirmed' && Date.now() / 1000 >= moveUntil
     ? useStore.getState().showToast(`You can change the time up to ${FREE_CANCEL_HOURS} hours before. Send ${c.name} a message instead.`)
     : openReschedule(b.id));
@@ -115,10 +115,13 @@ function BookingCard({ b }: { b: Booking }) {
         { label: 'Check-in', fn: () => openSheet('safety', { safety: { ...safety, bid: b.id, name: b.companionName } }) },
         { label: 'Meet code', fn: () => openSheet('otp', { otpFor: b.id }), primary: true },
       ],
-    pending: [
-      { label: 'Message', fn: msg },
-      { label: 'Cancel request', fn: cancel },
-    ],
+    // A video date now: its own screen shows the answer as it comes.
+    pending: b.instant
+      ? [{ label: 'Cancel request', fn: cancel }, { label: 'See status', fn: () => router.push(`/instant/${b.id}`), primary: true }]
+      : [
+        { label: 'Message', fn: msg },
+        { label: 'Cancel request', fn: cancel },
+      ],
     // First the private “How did it go?” for the safety team, then the public review. A video date confirmed by the
     // call keeps its call open until the booked end, so you can get back in.
     completed: video && Date.now() / 1000 < b.endsAt
