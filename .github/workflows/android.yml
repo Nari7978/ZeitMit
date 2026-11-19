@@ -46,7 +46,8 @@ jobs:
       - name: Show the errors
         if: failure()
         working-directory: mobile/android
-        run: grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -80 || true
+        run: |
+          grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -80 || true
       - uses: actions/upload-artifact@v4
         with:
           name: zeitmit-android-apk
