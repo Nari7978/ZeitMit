@@ -14,9 +14,10 @@ import { SheetHost } from '../sheets/SheetHost';
 import { onNotificationTap, pushAccess, pushAsked, registerForPush } from '../lib/push';
 import { useLive } from '../lib/live';
 import { endRing, showRing } from '../lib/ring';
-import { RingBanner } from '../ui/RingBanner';
+import { IncomingRing } from '../ui/IncomingRing';
 import { InstantRequest } from '../ui/InstantRequest';
 import { useFreeNowCheckIn } from '../lib/freeNow';
+import { useIncomingCalls } from '../lib/calls';
 import { followGo } from '../nav';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
@@ -156,9 +157,10 @@ export default function RootLayout() {
         </Stack.Protected>
       </Stack>
       {signedIn ? <SheetHost /> : null}
-      {signedIn ? <RingBanner /> : null}
+      {signedIn ? <IncomingRing /> : null}
       {signedIn ? <InstantRequest /> : null}
       {signedIn ? <FreeNowCheckIn /> : null}
+      {signedIn ? <IncomingCalls /> : null}
       <Toast bottom={toastBottom} />
       </View>
     </View>
@@ -168,5 +170,11 @@ export default function RootLayout() {
 /** Free now: the open app checks in while it's on (see useFreeNowCheckIn). */
 function FreeNowCheckIn() {
   useFreeNowCheckIn();
+  return null;
+}
+
+/** Android: the incoming video date the app was opened for, and what its notifications did (see useIncomingCalls). */
+function IncomingCalls() {
+  useIncomingCalls();
   return null;
 }

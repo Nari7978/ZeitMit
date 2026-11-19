@@ -4,16 +4,27 @@ import { useEffect } from 'react';
 import { AppState, Vibration } from 'react-native';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import { useStore } from '../store';
+import { nativeCalls } from '../../modules/zeitmit-calls';
 
 /** How often the open app checks in while Free now is on (the server lets it count for 10 minutes after). */
 const SEEN_EVERY_MS = 2 * 60 * 1000;
 
 /**
  * Checks in now and every couple of minutes while Free now is on and the app is in front; once more each time the app
- * comes back to the front. Closed or in the background, it stops, so after 10 minutes customers stop seeing it.
+ * comes back to the front. Closed or in the background it stops, so after 10 minutes customers stop seeing it, except
+ * on Android, where the background service behind the ongoing "Free now" notification checks in instead.
  */
 export function useFreeNowCheckIn() {
   const on = useStore((s) => !!s.comp.freeNow?.until && s.comp.freeNow.until > Date.now() / 1000);
+  // Android: with the app closed too, an ongoing "Free now" notification keeps the phone reachable and checks in by
+  // itself until the end time (once the companion side has loaded, so a cold start doesn't stop it in between).
+  const known = useStore((s) => s.comp.freeNow !== null);
+  const until = useStore((s) => s.comp.freeNow?.until ?? null);
+  useEffect(() => {
+    if (!nativeCalls.available || !known) return;
+    if (until && until > Date.now() / 1000) nativeCalls.startFreeNow(until);
+    else nativeCalls.stopFreeNow();
+  }, [known, until]);
   useEffect(() => {
     if (!on) return;
     const { freeNowSeen } = useStore.getState();

@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, wsUrl } from '../api';
 import { callAudio, candidate, description, newPeer, openMedia, tuneVideo, type IceServer, type Peer, type Stream } from './rtc';
+import { nativeCalls } from '../../modules/zeitmit-calls';
 
 export type CallInfo = {
   bookingId: string; side: 'customer' | 'companion'; peer: string; peerId: string;
@@ -50,7 +51,7 @@ export function useVideoCall(bookingId: string) {
     session: '', offerer: false,
     /** Their network addresses that came before their description, and ours before we sent our description. */
     pending: [] as object[], outbox: [] as object[], described: false,
-    muted: false, camOff: false, done: false, retry: undefined as ReturnType<typeof setTimeout> | undefined,
+    muted: false, camOff: false, done: false,
   });
 
   /** Ends our side of the call (set by the effect below, which owns the connection). */
@@ -155,12 +156,12 @@ export function useVideoCall(bookingId: string) {
         try { m = JSON.parse(String(e.data)); } catch { return; }
         void onMessage(m).catch(() => {});
       };
-      ws.onclose = () => { if (c.ws === ws && !c.done) c.retry = setTimeout(connect, 2000); };
+      // Back in 2 seconds, also while the app is in the background on Android (its JavaScript timers pause there).
+      ws.onclose = () => { if (c.ws === ws && !c.done) void nativeCalls.delay(2000).then(() => { if (c.ws === ws && !c.done) connect(); }); };
     };
     const stop = (p: Phase | null, msg = '') => {
       if (c.done) return;
       c.done = true;
-      clearTimeout(c.retry);
       send({ type: 'bye' });
       try { c.ws?.close(); } catch { /* closed */ }
       closePeer();

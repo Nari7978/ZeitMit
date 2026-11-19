@@ -14,12 +14,12 @@ if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async (n) => {
       const d = (n.request.content.data ?? {}) as Record<string, unknown>;
-      // A video date ringing while the app is open: the app shows the call itself (RingBanner), with the sound. Not
-      // at all while you're in that call already.
+      // A video date ringing while the app is open: the app shows the call full screen itself (IncomingRing), with its
+      // own ringtone. Not at all while you're in that call already.
       if (d.kind === 'ring') {
         const inCall = useRing.getState().inCall === d.bookingId;
         if (!inCall) showRing(d);
-        return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: !inCall, shouldSetBadge: false };
+        return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
       }
       // A free-now request while the app is open: the app shows it full screen and rings itself.
       if (d.kind === 'instant') {

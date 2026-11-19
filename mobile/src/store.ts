@@ -7,6 +7,8 @@ import { welcomeStore } from './lib/welcome';
 import { askLocation, currentLocation } from './lib/location';
 import { runCheckout } from './lib/checkout';
 import { resolveLang, setLang } from './i18n';
+import { syncCallTexts } from './lib/callTexts';
+import { nativeCalls } from '../modules/zeitmit-calls';
 import { TZ } from './lib/tz';
 import type { Range, WeekRange } from './lib/dates';
 import { localWeekday, eur, firstOpen, freeOf, type ActId, type BookingStatus, type BTab, type Companion, type Gender, type Kind, type SORT, type Tone } from './data';
@@ -334,6 +336,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
   const applyMe = (me: MeResponse) => {
     const shown = resolveLang(me.language);
     setLang(shown);
+    syncCallTexts();
     if (me.uiLang !== shown) api('PATCH', '/me', { uiLanguage: shown }).catch(() => {});
     // Times in notifications and emails follow this phone's time zone.
     if (me.timezone !== TZ) api('PATCH', '/me', { timezone: TZ }).catch(() => {});
@@ -438,6 +441,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     logout: async () => {
       // Stop pushes to this phone before forgetting the session.
       if (tokenStore.get()) await api('PATCH', '/me', { pushToken: null }).catch(() => {});
+      nativeCalls.stopFreeNow();
       await tokenStore.save(null);
       set({ session: 'out', user: null, bookings: [], convos: [], compConvos: [], notifs: [], saved: [], comp: EMPTY_COMP, companionStatus: 'none', checkin: null, sheet: null });
     },
@@ -925,6 +929,7 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     setLanguage: (lang) => {
       const shown = resolveLang(lang);
       setLang(shown);
+      syncCallTexts();
       set((s) => ({ user: s.user ? { ...s.user, language: lang } : s.user }));
       api('PATCH', '/me', { language: lang, uiLanguage: shown }).catch(() => {});
     },
@@ -936,7 +941,8 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
       return true;
     },
     setPushToken: (token) => {
-      api('PATCH', '/me', { pushToken: token }).catch(() => {});
+      // pushCalls: this phone rings incoming video dates full screen by itself (Android 1.3.8+).
+      api('PATCH', '/me', { pushToken: token, pushCalls: nativeCalls.available }).catch(() => {});
     },
   };
 }));

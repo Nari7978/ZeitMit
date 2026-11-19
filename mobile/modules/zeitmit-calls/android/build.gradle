@@ -1,0 +1,32 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.zeitmit'
+version = '1.0.0'
+
+android {
+  namespace "app.zeitmit.calls"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+// expo-notifications comes prebuilt (from its local Maven folder) unless it's built from source: the same version
+// either way, since this module's push service extends its own.
+def notificationsVersion = new groovy.json.JsonSlurper()
+  .parse(new File(projectDir, '../../../node_modules/expo-notifications/package.json')).version
+
+dependencies {
+  def notifications = rootProject.findProject(':expo-notifications')
+  if (notifications != null) {
+    implementation notifications
+  } else {
+    implementation "host.exp.exponent:expo.modules.notifications:${notificationsVersion}"
+  }
+  implementation 'com.google.firebase:firebase-messaging:25.0.1'
+  implementation 'androidx.core:core:1.17.0'
+  implementation 'androidx.lifecycle:lifecycle-process:2.9.3'
+}

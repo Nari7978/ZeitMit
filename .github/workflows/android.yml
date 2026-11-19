@@ -1,0 +1,54 @@
+name: Android build check
+
+# Compiles the Android app (native code included) the way an EAS preview build does, so a mistake in native code
+# shows here first. The APK it makes is signed with a test key: install it on a test phone after uninstalling an
+# EAS-built ZeitMit (the two keys differ).
+on:
+  push:
+    branches: [claude/awesome-knuth-6avmg9, main]
+    paths: ['mobile/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - name: Generate the Android project
+        run: CI=1 npx expo prebuild -p android --no-install
+      - name: Build the APK (arm64 phones)
+        working-directory: mobile/android
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease --no-daemon \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
+            -Pkotlin.daemon.jvmargs=-Xmx2g 2>&1 | tee build.log
+      - name: Show the errors
+        if: failure()
+        working-directory: mobile/android
+        run: grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -80 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeitmit-android-apk
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7

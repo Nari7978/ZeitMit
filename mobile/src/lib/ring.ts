@@ -1,5 +1,5 @@
 // Incoming video date calls: the other person is waiting in the call (they joined alone, or pinged you from it). The
-// server rings over the live socket and by push; while the app is open, RingBanner shows the call over any screen.
+// server rings over the live socket and by push; while the app is open, IncomingRing shows the call full screen.
 import { create } from 'zustand';
 
 /** Who's waiting, in which video date, when the server rang (`at`, unix) and until when the banner shows. */

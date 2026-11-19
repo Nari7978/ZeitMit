@@ -1,0 +1,42 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- A video date keeps running in the background (camera and microphone), and Free now stays online. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- Incoming video dates: full screen over the lock screen, and over other apps when allowed. -->
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <application>
+    <!-- Sees every push before expo-notifications (priority -1) does: incoming video dates ring here. -->
+    <service
+      android:name="app.zeitmit.calls.CallMessagingService"
+      android:exported="false">
+      <intent-filter android:priority="10">
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+
+    <service
+      android:name="app.zeitmit.calls.CallService"
+      android:exported="false"
+      android:foregroundServiceType="camera|microphone" />
+
+    <service
+      android:name="app.zeitmit.calls.FreeNowService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Keeps a companion reachable for video date requests while they have switched on Free now, until the time they chose" />
+    </service>
+
+    <receiver
+      android:name="app.zeitmit.calls.ActionReceiver"
+      android:exported="false" />
+  </application>
+</manifest>

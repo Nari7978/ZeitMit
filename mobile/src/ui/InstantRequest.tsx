@@ -10,6 +10,7 @@ import { colors } from '../theme';
 import { eur, hours } from '../data';
 import { hueOf, useStore, type CompBooking } from '../store';
 import { startRinging, stopRinging } from '../lib/freeNow';
+import { nativeCalls } from '../../modules/zeitmit-calls';
 import { Initial } from '../screens/companion/Shell';
 import { Icon } from './Icon';
 import { H, PressBox, Row, Txt } from './primitives';
@@ -18,6 +19,8 @@ const NIGHT = '#101012';
 const REPLY_S = 120;
 /** Requests answered (or let go) on this phone: they stay out while the lists catch up. */
 const handled = new Set<string>();
+/** Answered elsewhere on this phone (its notification's Accept or Decline). */
+export const markInstantHandled = (id: string) => { handled.add(id); };
 
 /** The open free-now request, if any (the oldest, with time left). */
 const pick = (requests: CompBooking[], t: number) => requests.find((r) => r.instant && !handled.has(r.id) && (r.expiresAt ?? 0) > t) ?? null;
@@ -38,6 +41,8 @@ export function InstantRequest() {
   }, [id]);
   useEffect(() => {
     if (!id) return;
+    // Shown here now: the phone's own ringing (Android, when the app was opened for it) stops, this one takes over.
+    nativeCalls.endIncoming(id);
     startRinging();
     return () => stopRinging();
   }, [id]);
@@ -45,6 +50,7 @@ export function InstantRequest() {
     if (req || !requests.some((r) => r.instant && (r.expiresAt ?? 0) <= t && !handled.has(r.id))) return;
     // The time is up for one still listed: ask again, so it shows as missed and the customer gets their money back.
     for (const r of requests) if (r.instant && (r.expiresAt ?? 0) <= t) handled.add(r.id);
+    nativeCalls.lockScreen(false);
     void useStore.getState().loadCompanionSide();
   }, [req, requests, t]);
   if (!req) return null;
@@ -61,6 +67,7 @@ export function InstantRequest() {
     handled.add(req.id);
     setBusy(null);
     if (ok) router.push(`/call/${req.id}`);
+    else nativeCalls.lockScreen(false);
   };
   const decline = async () => {
     if (busy) return;
@@ -68,6 +75,7 @@ export function InstantRequest() {
     stopRinging();
     handled.add(req.id);
     await useStore.getState().declineRequest(req.id);
+    nativeCalls.lockScreen(false);
     setBusy(null);
   };
   const R = 74, C = 2 * Math.PI * R;

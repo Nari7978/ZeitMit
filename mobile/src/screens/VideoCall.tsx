@@ -1,7 +1,7 @@
 // The video date itself: the other person full screen, yourself in a corner, mute / camera / switch / end, report.
 // Nothing is recorded; screenshots and screen recording are blocked on phones while it's open.
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
@@ -18,6 +18,7 @@ import { useVideoCall, type Phase, type PingState } from '../lib/videoCall';
 import { localAt } from '../lib/dates';
 import { setInCall } from '../lib/ring';
 import { t } from '../i18n';
+import { nativeCalls } from '../../modules/zeitmit-calls';
 
 const NIGHT = '#101012';
 /** "21:00", in this phone's time zone like every other time in the app. */
@@ -45,6 +46,29 @@ export default function VideoCall() {
     };
   }, []);
   const leave = () => { call.hangUp(); goBack(); };
+  // Android: once the camera is on, the video date keeps running when you leave the app (an ongoing notification
+  // with Hang up), and leaving shrinks it into a floating window. Over the lock screen too, like a phone call.
+  const media = !!call.local;
+  const peerName = info?.peer ?? '';
+  const over = phase === 'error' || phase === 'denied' || phase === 'ended';
+  useEffect(() => {
+    if (!media || over) return;
+    nativeCalls.startCall(id, peerName);
+    return () => nativeCalls.stopCall();
+  }, [media, over, id, peerName]);
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  useEffect(() => {
+    const sub = nativeCalls.onAction((e) => { if (e.type === 'hangUp') leaveRef.current(); });
+    return () => sub.remove();
+  }, []);
+  const [floating, setFloating] = useState(() => nativeCalls.isInPip());
+  useEffect(() => {
+    const sub = nativeCalls.onPip(setFloating);
+    return () => sub.remove();
+  }, []);
+  const { width } = useWindowDimensions();
+  const pip = nativeCalls.available && (floating || width < 300);
 
   if (phase === 'error' || phase === 'denied' || phase === 'ended') {
     const done = phase === 'ended';
@@ -72,6 +96,22 @@ export default function VideoCall() {
 
   const peer = info?.peer ?? '';
   const showThem = !!call.remote && !call.peerCamOff && phase === 'live';
+  // In the floating window: only them (or who it is and what's happening), no buttons.
+  if (pip) {
+    return (
+      <View style={{ flex: 1, backgroundColor: NIGHT, alignItems: 'center', justifyContent: 'center' }}>
+        {showThem ? <VideoView stream={call.remote} style={StyleSheet.absoluteFill} /> : (
+          <View style={{ alignItems: 'center', gap: 8, paddingHorizontal: 10 }}>
+            <View style={{ width: 56, height: 56, borderRadius: 20, backgroundColor: colors.lilac, alignItems: 'center', justifyContent: 'center' }}>
+              <Txt raw size={24} weight={700}>{peer.slice(0, 1).toUpperCase()}</Txt>
+            </View>
+            <Txt raw size={13} weight={700} color={colors.white} numberOfLines={1}>{peer}</Txt>
+            {info ? <Status phase={phase} startsAt={info.startsAt} endsAt={info.endsAt} /> : null}
+          </View>
+        )}
+      </View>
+    );
+  }
   return (
     <View style={{ flex: 1, backgroundColor: NIGHT }}>
       <StatusBar style="light" />

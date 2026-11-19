@@ -1,6 +1,7 @@
 // Thin client for the ZeitMit API (backend/). Base URL can be overridden with EXPO_PUBLIC_API_URL.
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { nativeCalls } from '../modules/zeitmit-calls';
 
 export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'https://zeitmit-api.zeitmit.workers.dev').replace(/\/$/, '');
 
@@ -14,10 +15,13 @@ export const tokenStore = {
     } catch {
       token = null;
     }
+    // Android: notifications can decline a request or turn Free now off without opening the app.
+    nativeCalls.configure(API_URL, token);
     return token;
   },
   async save(t: string | null) {
     token = t;
+    nativeCalls.configure(API_URL, t);
     try {
       if (Platform.OS === 'web') {
         if (t) globalThis.localStorage?.setItem(TOKEN_KEY, t);
