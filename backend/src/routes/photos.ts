@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireAuth, verifySession } from '../lib/auth';
 import { fail, newId } from '../lib/util';
+import { propose, waitingOf } from '../lib/profileChanges';
 
 const MAX_B64 = 700_000; // ≈ 500 KB image; the app sends ~100 KB JPEGs
 const KINDS = ['avatar', 'companion', 'gallery', 'id'] as const;
@@ -10,7 +11,8 @@ export const photos = new Hono<AppEnv>();
 
 /**
  * Upload a photo. Body: { kind: 'avatar' | 'companion' | 'gallery' | 'id', data: base64, mime? }
- * avatar → becomes the user's picture; companion → the companion listing photo (if a listing exists);
+ * avatar → becomes the user's picture; companion → the companion listing photo (if a listing exists; on an approved
+ * listing it waits for review first: `review: true`);
  * gallery → one of a companion's extra photos (attached with the application or PUT /companion/gallery);
  * id → kept private for the admin review and deleted after the decision.
  */
@@ -31,7 +33,12 @@ photos.post('/', requireAuth, async (c) => {
       c.env.DB.prepare('DELETE FROM photos WHERE id = ? AND owner_id = ?').bind(old?.avatar_id ?? '', u.id),
     ]);
   } else if (kind === 'companion') {
-    const old = await c.env.DB.prepare('SELECT photo_id FROM companions WHERE user_id = ?').bind(u.id).first<{ photo_id: string | null }>();
+    const old = await c.env.DB.prepare('SELECT photo_id, status FROM companions WHERE user_id = ?').bind(u.id).first<{ photo_id: string | null; status: string }>();
+    if (old?.status === 'approved') {
+      // An approved listing's new photo waits for review (admin → Profile changes); the current one stays until then.
+      await c.env.DB.batch(propose(c.env, u.id, 'photo', id, old.photo_id, (await waitingOf(c.env, u.id)).get('photo')));
+      return c.json({ id, url: `/photos/${id}`, review: true }, 201);
+    }
     if (old) {
       await c.env.DB.batch([
         c.env.DB.prepare('UPDATE companions SET photo_id = ? WHERE user_id = ?').bind(id, u.id),

@@ -9,6 +9,7 @@ import {
 import { slotsChanged } from '../lib/live';
 import { addDays, clock, dateIn, DEFAULT_TZ, localToUnix, minutes, realDate, validTz, weekdayOf, whenIn } from '../lib/time';
 import { CONTACT_MSG, fail, hasContactDetails, newId, now, parseJson } from '../lib/util';
+import { dropUnusedGallery, propose, reviewState, waitingOf, withdrawAll, type Field } from '../lib/profileChanges';
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** The fixed windows of older app versions, in minutes of the day. */
@@ -71,6 +72,8 @@ companionProfile.get('/', async (c) => {
     noticeOptions: NOTICE_OPTIONS,
     avail: windows(1), dates: datesOf(1), availVideo: windows(2), datesVideo: datesOf(2),
     freeNow: freeNowState(row),
+    // New texts and photos of an approved listing wait for review (lib/profileChanges.ts): what's waiting, and notes.
+    review: row.status === 'approved' ? await reviewState(c.env, id, parseJson<string[]>(row.gallery, [])) : undefined,
   });
 });
 
@@ -210,6 +213,7 @@ companionProfile.post('/apply', async (c) => {
       b.photoId!, b.idPhotoId!, JSON.stringify(gallery),
     ),
     dropUnusedGallery(c.env, u.id, gallery),
+    ...withdrawAll(c.env, u.id, b.photoId!),
     // The days and times of day picked are the weekly hours to start with, for both kinds of date.
     c.env.DB.prepare(
       'INSERT INTO hours_week (companion_id, ranges) VALUES (?, ?) ON CONFLICT (companion_id) DO UPDATE SET ranges = excluded.ranges, updated_at = unixepoch()',
@@ -236,29 +240,40 @@ async function ownGallery(env: AppEnv['Bindings'], userId: string, ids: unknown)
   return want.filter((id) => mine.has(id));
 }
 
-/** Gallery photos the person uploaded but no longer uses (removed, or left from an earlier try) are deleted. */
-const dropUnusedGallery = (env: AppEnv['Bindings'], userId: string, keep: string[]) =>
-  env.DB.prepare(`DELETE FROM photos WHERE owner_id = ? AND kind = 'gallery'${keep.length ? ` AND id NOT IN (${keep.map(() => '?').join(',')})` : ''}`).bind(userId, ...keep);
-
 /**
  * Replaces the gallery (ids in display order, up to 6). Photos can be added one by one, but a gallery that has
- * the minimum never drops below it: add the new photo first, then remove the old one.
+ * the minimum never drops below it: add the new photo first, then remove the old one. On an approved listing, new
+ * photos wait for review (the live gallery stays as it is until then; `review`: the ids waiting); removing and
+ * reordering apply straight away, and withdraw a change still waiting.
  */
 companionProfile.put('/gallery', async (c) => {
   const u = c.get('user');
   const { ids } = await c.req.json<{ ids?: unknown }>();
   if (!Array.isArray(ids) || ids.length > GALLERY_MAX) fail(400, `Add up to ${GALLERY_MAX} photos.`);
-  const row = await c.env.DB.prepare('SELECT gallery FROM companions WHERE user_id = ?').bind(u.id).first<{ gallery: string }>();
+  const row = await c.env.DB.prepare('SELECT gallery, status FROM companions WHERE user_id = ?').bind(u.id).first<{ gallery: string; status: string }>();
   if (!row) fail(404, 'You don’t have a companion profile yet.');
   const gallery = await ownGallery(c.env, u.id, ids);
   if (gallery.length !== (ids as unknown[]).length) fail(400, 'One of those photos isn’t yours or was removed. Pull down to refresh.');
-  const had = JSON.parse(row!.gallery || '[]') as string[];
+  const live = parseJson<string[]>(row!.gallery, []);
+  const waiting = row!.status === 'approved' ? (await waitingOf(c.env, u.id)).get('gallery') : undefined;
+  // What the companion was looking at: the gallery waiting for review, if there is one.
+  const had = waiting ? parseJson<string[]>(waiting.value, live) : live;
   if (gallery.length < GALLERY_MIN && gallery.length < had.length) fail(409, `Keep at least ${GALLERY_MIN} photos. Add a new one before removing this one.`);
+  const added = gallery.filter((id) => !live.includes(id));
+  const urls = gallery.map((id) => `/photos/${id}`);
+  if (row!.status === 'approved' && added.length) {
+    await c.env.DB.batch([
+      ...propose(c.env, u.id, 'gallery', JSON.stringify(gallery), JSON.stringify(live), waiting),
+      dropUnusedGallery(c.env, u.id, [...new Set([...live, ...gallery])]),
+    ]);
+    return c.json({ gallery: urls, ids: gallery, review: added });
+  }
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE companions SET gallery = ? WHERE user_id = ?').bind(JSON.stringify(gallery), u.id),
+    ...(waiting ? propose(c.env, u.id, 'gallery', JSON.stringify(gallery), JSON.stringify(gallery), waiting) : []),
     dropUnusedGallery(c.env, u.id, gallery),
   ]);
-  return c.json({ gallery: gallery.map((id) => `/photos/${id}`), ids: gallery });
+  return c.json({ gallery: urls, ids: gallery, review: [] });
 });
 
 /** "Your listing": everything except name/age/verification can be edited after applying. */
@@ -270,6 +285,22 @@ companionProfile.patch('/', async (c) => {
   if (b.interests && b.interests.length > 12) fail(400, 'Pick up to 12 interests.');
   if (b.area !== undefined && (!b.area.trim() || b.area.length > 40)) fail(400, 'Add your area, e.g. Kreuzberg.');
   const langs = b.langs ? JSON.stringify(b.langs.map((l) => [l, LEVELS.includes(b.levels?.[l] ?? '') ? b.levels![l] : 'Fluent'])) : null;
+  const cur = await c.env.DB.prepare('SELECT status, bio, tagline FROM companions WHERE user_id = ?').bind(u.id).first<{ status: string; bio: string; tagline: string }>();
+  if (!cur) fail(404, 'You don’t have a companion profile yet.');
+  // An approved listing's new About and tagline wait for review; customers see the live ones until then.
+  let about = b.about?.trim() ?? null, tagline = b.tagline?.trim() ?? null;
+  const held: D1PreparedStatement[] = [];
+  const review: Field[] = [];
+  if (cur!.status === 'approved') {
+    const waiting = await waitingOf(c.env, u.id);
+    for (const [field, next, live] of [['about', about, cur!.bio], ['tagline', tagline, cur!.tagline]] as const) {
+      if (next === null) continue;
+      held.push(...propose(c.env, u.id, field, next, live, waiting.get(field)));
+      if (next !== live && next !== waiting.get(field)?.value) review.push(field);
+    }
+    about = null;
+    tagline = null;
+  }
   const res = await c.env.DB.prepare(
     `UPDATE companions SET rate = COALESCE(?, rate), activities = COALESCE(?, activities), boundaries = COALESCE(?, boundaries), video_boundaries = COALESCE(?, video_boundaries),
        bio = COALESCE(?, bio), tagline = COALESCE(?, tagline), interests = COALESCE(?, interests), languages = COALESCE(?, languages),
@@ -277,17 +308,19 @@ companionProfile.patch('/', async (c) => {
        age = COALESCE(?, age), gender = COALESCE(?, gender), pronouns = CASE WHEN ? THEN ? ELSE pronouns END, timezone = COALESCE(?, timezone),
        notice_video = COALESCE(?, notice_video), notice_meet = COALESCE(?, notice_meet) WHERE user_id = ?`,
   ).bind(
-    b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.okVideo ? JSON.stringify(b.okVideo) : null, b.about?.trim() ?? null,
-    b.tagline?.trim() ?? null, b.interests ? JSON.stringify(b.interests) : null, langs, b.area?.trim() ?? null,
+    b.rate ?? null, b.acts ? JSON.stringify(b.acts) : null, b.ok ? JSON.stringify(b.ok) : null, b.okVideo ? JSON.stringify(b.okVideo) : null, about,
+    tagline, b.interests ? JSON.stringify(b.interests) : null, langs, b.area?.trim() ?? null,
     b.showAge === undefined ? null : b.showAge ? 1 : 0, b.lgbtq === undefined ? null : b.lgbtq ? 1 : 0,
     b.age ?? null, b.gender ?? null, b.pronouns !== undefined ? 1 : 0, b.pronouns?.trim() || null, b.timezone ?? null,
     b.notice?.video ?? null, b.notice?.meet ?? null, u.id,
   ).run();
   if (!res.meta.changes) fail(404, 'You don’t have a companion profile yet.');
+  if (held.length) await c.env.DB.batch(held);
   // The kinds of date offered, the zone their hours are in or how far ahead they're bookable may have changed: open
   // profiles update at once.
   if (b.acts || b.timezone || b.notice) void slotsChanged(c.env, u.id, c.executionCtx);
-  return c.json({ ok: true });
+  // `review`: what this save sent for review (the app says it shows once approved).
+  return c.json({ ok: true, review });
 });
 
 // ---------- Hours: one calendar for in-person and video dates ----------

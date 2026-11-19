@@ -9,7 +9,7 @@ import { openProfile, toCustomerMode } from '../../nav';
 import { Icon } from '../../ui/Icon';
 import { Box, Chip, Photo, Row, Toggle, Txt } from '../../ui/primitives';
 import { PrimaryButton, SecondaryButton, TextButton } from '../../ui/common';
-import { PhotoGrid, type GalleryPhoto } from '../../ui/PhotoGrid';
+import { InReview, PhotoGrid, type GalleryPhoto } from '../../ui/PhotoGrid';
 import { GENDERS, RateStepper } from '../Become';
 import { CompShell } from './Shell';
 import { t } from '../../i18n';
@@ -20,6 +20,25 @@ type Draft = {
   photoUrl: string | null; tagline: string; about: string; interests: string[]; langs: Record<string, string>; ok: string[]; okVideo: string[];
   area: string; showAge: boolean; lgbtq: boolean; age: string; gender: 'w' | 'm' | 'nb'; pronouns: string;
 };
+type Part = 'about' | 'tagline' | 'photo' | 'gallery';
+/**
+ * An approved listing's new texts and photos wait for ZeitMit to approve them; customers see the live ones until then.
+ * What waits (the companion keeps editing their newest version) and the note on anything not approved.
+ */
+type Review = {
+  about?: string; tagline?: string; photoUrl?: string; gallery?: { ids: string[]; urls: string[]; added: string[] };
+  rejected?: { field: Part; note: string; at: number }[];
+};
+
+/** A short note under a part of the listing: waiting for review, or not approved (with ZeitMit's note). */
+function ReviewNote({ no, text }: { no?: boolean; text: string }) {
+  return (
+    <Row style={{ gap: 10, padding: 12, borderRadius: 14, backgroundColor: no ? colors.redSoft : colors.butter, alignItems: 'flex-start' }}>
+      <Icon name={no ? 'circle-alert' : 'hourglass'} size={17} color={no ? colors.redDeep : colors.ink} />
+      <Txt size={12.5} lh={1.45} color={no ? colors.redDeep : colors.ink} style={{ flex: 1 }}>{text}</Txt>
+    </Row>
+  );
+}
 
 export default function Listing() {
   const cRate = useStore((s) => s.comp.rate);
@@ -31,17 +50,26 @@ export default function Listing() {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<'photo' | 'gallery' | 'save' | null>(null);
   const [gallery, setGallery] = useState<GalleryPhoto[] | null>(null);
+  // What customers see now (to tell whether a saved text waits for review), what waits, and notes on what didn't pass.
+  const [live, setLive] = useState<{ about: string; tagline: string } | null>(null);
+  const [waiting, setWaiting] = useState<{ about: boolean; tagline: boolean; photo: boolean; gallery: string[] }>({ about: false, tagline: false, photo: false, gallery: [] });
+  const [rejected, setRejected] = useState<Partial<Record<Part, string>>>({});
   const upd = (o: Partial<Draft>) => { setD((x) => (x ? { ...x, ...o } : x)); setDirty(true); };
+  const clearNote = (...parts: Part[]) => setRejected((x) => { const n = { ...x }; for (const p of parts) delete n[p]; return n; });
 
   useEffect(() => {
-    api<Companion & { bio: string; showAge: boolean; ageValue: number | null; galleryIds: string[]; gallery: string[] }>('GET', '/companion')
+    api<Companion & { bio: string; showAge: boolean; ageValue: number | null; galleryIds: string[]; gallery: string[]; review?: Review }>('GET', '/companion')
       .then((c) => {
+        const r = c.review;
         setD({
-          photoUrl: c.photoUrl ?? null, tagline: c.tagline, about: c.bio, interests: c.interests, ok: c.ok, okVideo: c.okVideo ?? [], area: c.area,
+          photoUrl: r?.photoUrl ?? c.photoUrl ?? null, tagline: r?.tagline ?? c.tagline, about: r?.about ?? c.bio, interests: c.interests, ok: c.ok, okVideo: c.okVideo ?? [], area: c.area,
           langs: Object.fromEntries(c.langs), showAge: c.showAge, lgbtq: c.lgbtq,
           age: c.ageValue ? String(c.ageValue) : '', gender: c.g, pronouns: c.pron ?? '',
         });
-        setGallery(c.galleryIds.map((id, i) => ({ id, url: c.gallery[i] })));
+        setGallery(r?.gallery ? r.gallery.ids.map((id, i) => ({ id, url: r.gallery!.urls[i] })) : c.galleryIds.map((id, i) => ({ id, url: c.gallery[i] })));
+        setLive({ about: c.bio, tagline: c.tagline });
+        setWaiting({ about: r?.about !== undefined, tagline: r?.tagline !== undefined, photo: !!r?.photoUrl, gallery: r?.gallery?.added ?? [] });
+        setRejected(Object.fromEntries((r?.rejected ?? []).map((x) => [x.field, x.note])));
       })
       .catch((e) => showToast(e.message));
   }, [showToast]);
@@ -50,7 +78,11 @@ export default function Listing() {
     setBusy('photo');
     try {
       const r = await pickAndUpload('companion');
-      if (r) { setD((x) => (x ? { ...x, photoUrl: r.url } : x)); showToast('Listing photo updated'); }
+      if (r) {
+        setD((x) => (x ? { ...x, photoUrl: r.url } : x));
+        if (r.review) { setWaiting((w) => ({ ...w, photo: true })); clearNote('photo'); }
+        showToast(r.review ? 'Sent for review. Customers see your current photo until it’s approved.' : 'Listing photo updated');
+      }
     } catch (e) {
       showToast((e as Error).message);
     } finally {
@@ -60,10 +92,13 @@ export default function Listing() {
 
   // The extra photos are saved straight away (the server keeps at least 3 once there are 3).
   const saveGallery = async (next: GalleryPhoto[], done: string) => {
-    const r = await api<{ ids: string[]; gallery: string[] }>('PUT', '/companion/gallery', { ids: next.map((p) => p.id) });
+    const r = await api<{ ids: string[]; gallery: string[]; review?: string[] }>('PUT', '/companion/gallery', { ids: next.map((p) => p.id) });
     setGallery(r.ids.map((id, i) => ({ id, url: r.gallery[i] })));
+    // New photos of an approved listing wait for review (`review`); removing and reordering apply at once.
+    setWaiting((w) => ({ ...w, gallery: r.review ?? [] }));
+    if (r.review?.length) clearNote('gallery');
     useStore.setState((s) => ({ comp: { ...s.comp, gallery: r.ids.length } }));
-    showToast(done);
+    showToast(r.review?.length && done === 'Photo added' ? 'Photo sent for review' : done);
   };
   const addPhoto = async () => {
     if (!gallery || busy) return;
@@ -97,13 +132,19 @@ export default function Listing() {
     if (!/^\d{2}$/.test(d.age) || +d.age < 18) return showToast('Enter your age. You must be 18 or older.');
     setBusy('save');
     try {
-      await api('PATCH', '/companion', {
+      const r = await api<{ ok: boolean; review?: string[] }>('PATCH', '/companion', {
         tagline: d.tagline, about: d.about, interests: d.interests, ok: d.ok, okVideo: d.okVideo, area: d.area, showAge: d.showAge, lgbtq: d.lgbtq,
         age: +d.age, gender: d.gender, pronouns: d.pronouns,
         langs: Object.keys(d.langs), levels: d.langs,
       });
       setDirty(false);
-      showToast('Listing saved');
+      // An approved listing: a text that differs from what customers see waits for review (back to it: withdrawn).
+      if (status === 'approved' && live) {
+        const about = d.about.trim() !== live.about, tagline = d.tagline.trim() !== live.tagline;
+        setWaiting((w) => ({ ...w, about, tagline }));
+        if (r.review?.length) clearNote(...(r.review as Part[]));
+      }
+      showToast(r.review?.length ? 'Saved. Your new text shows once it’s approved.' : 'Listing saved');
       void useStore.getState().refresh();
     } catch (e) {
       showToast((e as Error).message);
@@ -120,16 +161,20 @@ export default function Listing() {
       <Box shadow={4} style={[card, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
         <Pressable accessibilityRole="button" accessibilityLabel="Change listing photo" onPress={() => void changePhoto()} style={{ width: 84, height: 104, borderRadius: 16, overflow: 'hidden', borderWidth: 2, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
           {d?.photoUrl ? <Photo hue={0} url={d.photoUrl} /> : <Icon name={busy === 'photo' ? 'hourglass' : 'image-plus'} size={26} />}
+          {waiting.photo ? <InReview /> : null}
         </Pressable>
         <View style={{ flex: 1, gap: 4 }}>
           <Txt size={15} weight={700}>Listing photo</Txt>
-          <Txt size={12} lh={1.4} color={colors.gray600}>Shown on Discover, Search and your profile.</Txt>
+          <Txt size={12} lh={1.4} color={colors.gray600}>
+            {waiting.photo ? 'Your new photo waits for review. Customers see your current one until it’s approved.' : 'Shown on Discover, Search and your profile.'}
+          </Txt>
           <Row style={{ gap: 14 }}>
             <TextButton label={d?.photoUrl ? 'Change' : 'Add photo'} size={13} onPress={() => void changePhoto()} />
             {status === 'approved' && me ? <TextButton label="View as customer" size={13} onPress={() => openProfile(me)} /> : null}
           </Row>
         </View>
       </Box>
+      {rejected.photo ? <ReviewNote no text={`Your new photo wasn’t approved: ${rejected.photo}`} /> : null}
 
       {gallery ? (
         <Box shadow={4} style={card}>
@@ -140,7 +185,9 @@ export default function Listing() {
           <Txt size={12} lh={1.45} color={gallery.length >= GALLERY_MIN ? colors.gray600 : colors.red}>
             {gallery.length >= GALLERY_MIN ? 'Customers swipe through these on your profile. Keep at least 3.' : 'Add at least 3 photos besides your profile photo, ideally doing things you enjoy. Customers swipe through them on your profile.'}
           </Txt>
-          <PhotoGrid photos={gallery} adding={busy === 'gallery'} onAdd={() => void addPhoto()} onRemove={(id) => void removePhoto(id)} />
+          <PhotoGrid photos={gallery} adding={busy === 'gallery'} review={waiting.gallery} onAdd={() => void addPhoto()} onRemove={(id) => void removePhoto(id)} />
+          {waiting.gallery.length ? <ReviewNote text="New photos wait for review. Customers see them once they’re approved." /> : null}
+          {rejected.gallery && !waiting.gallery.length ? <ReviewNote no text={`Your new photos weren’t approved: ${rejected.gallery}`} /> : null}
         </Box>
       ) : null}
 
@@ -167,6 +214,13 @@ export default function Listing() {
             <Txt size={12} weight={600} color={colors.gray600}>About</Txt>
             <TextInput value={d.about} onChangeText={(t) => upd({ about: t.slice(0, 400) })} multiline textAlignVertical="top" accessibilityLabel="About" style={[...input, { height: 120, paddingTop: 12, lineHeight: 21 }]} />
             <Txt size={12} color={colors.gray600} align="right">{d.about.length}/400</Txt>
+            {waiting.about || waiting.tagline
+              ? <ReviewNote text="Your new text waits for review. Customers see the previous one until it’s approved." />
+              : null}
+            {/* A note on a text that was turned down (and hasn't been changed again since). */}
+            {(!waiting.about && rejected.about) || (!waiting.tagline && rejected.tagline)
+              ? <ReviewNote no text={`Your new text wasn’t approved: ${(!waiting.about && rejected.about) || rejected.tagline}`} />
+              : null}
             <Row style={{ gap: 10 }}>
               <View style={{ width: 80, gap: 6 }}>
                 <Txt size={12} weight={600} color={colors.gray600}>Age</Txt>

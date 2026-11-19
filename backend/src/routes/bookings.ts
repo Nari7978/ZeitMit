@@ -40,6 +40,8 @@ export type BookingRow = {
   refunded: number; billed_minutes: number | null;
   /** A free-now video date (0023): 2 minutes to answer, starting when it's accepted. */
   instant: number;
+  /** What ZeitMit paid the companion on top of `subtotal` (cents): a video date paid in part, paid in full by support (0025). */
+  topup: number;
   // Worked out by the database (migration 0018)
   ends_at: number; expires_at: number; kind: Kind; decided_at: number | null; conflict_with: string | null;
 };
@@ -110,7 +112,8 @@ const forCompanion = (b: BookingRow & CustomerInfo, m: boolean, tz: string) => (
   // What a companion may know about who is booking: never the email or documents.
   customer: { bio: b.customer_bio ?? '', verified: b.customer_id_status === 'approved', since: b.customer_since ?? null },
   ...timeOf(b, tz), place: b.place, note: b.note, status: shown(b.status, m), pay: b.pay_status,
-  payout: b.subtotal, minutesPaid: b.billed_minutes ?? undefined, resched: reschedOf(b, tz), reschedLeft: MAX_RESCHEDULES - b.resched_count,
+  // Paid in full by ZeitMit afterwards (topup): what they get, and no longer "paid for 52 of 60 min".
+  payout: b.subtotal + (b.topup ?? 0), minutesPaid: b.topup ? undefined : b.billed_minutes ?? undefined, resched: reschedOf(b, tz), reschedLeft: MAX_RESCHEDULES - b.resched_count,
   expiresAt: b.status === 'pending' ? b.expires_at : undefined, replyBy: b.status === 'pending' ? b.expires_at : undefined,
   feedback: !!(b as { my_feedback?: number }).my_feedback,
   cancelledBy: b.cancelled_by ?? undefined, cancelNote: b.status !== 'pending' && b.status !== 'confirmed' && b.status !== 'completed' ? b.cancel_note ?? undefined : undefined,
@@ -912,7 +915,7 @@ companionBookings.get('/', async (c) => {
     rows("b.status IN ('rejected', 'expired', 'conflicted', 'cancelled')", 'b.starts_at DESC', 60),
     c.env.DB.prepare(
       `SELECT COALESCE(SUM(CASE WHEN status = 'confirmed' AND pay_status = 'held' THEN subtotal END), 0) AS held,
-         COALESCE(SUM(CASE WHEN pay_status = 'released' THEN subtotal END), 0) AS released, COUNT(CASE WHEN pay_status = 'released' THEN 1 END) AS releasedCount
+         COALESCE(SUM(CASE WHEN pay_status = 'released' THEN subtotal + topup END), 0) AS released, COUNT(CASE WHEN pay_status = 'released' THEN 1 END) AS releasedCount
        FROM bookings WHERE companion_id = ? AND paid = 1`,
     ).bind(u.id).first<{ held: number; released: number; releasedCount: number }>(),
     balanceOf(c.env, u.id),

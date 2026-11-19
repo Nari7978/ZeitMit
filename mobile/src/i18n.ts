@@ -782,10 +782,32 @@ const DE: Record<string, string> = {
   'Make sure requests reach you': 'So erreichen dich Anfragen', 'So your phone rings even when ZeitMit is closed, allow this:': 'Damit dein Handy auch klingelt, wenn ZeitMit geschlossen ist, erlaube Folgendes:',
   'Ring full screen on the lock screen': 'Im Vollbild auf dem Sperrbildschirm klingeln', 'Show requests over other apps': 'Anfragen über anderen Apps zeigen',
   'Don’t limit ZeitMit to save battery': 'ZeitMit nicht zum Akkusparen einschränken', 'Allow': 'Erlauben', 'Requests ring even when ZeitMit is closed': 'Anfragen klingeln auch, wenn ZeitMit geschlossen ist',
+  // 1.3.9: an approved listing's new texts and photos are checked by ZeitMit before customers see them
+  'In review': 'In Prüfung', 'Photo sent for review': 'Foto zur Prüfung gesendet',
+  'Sent for review. Customers see your current photo until it’s approved.': 'Zur Prüfung gesendet. Kund*innen sehen dein aktuelles Foto, bis das neue freigegeben ist.',
+  'Saved. Your new text shows once it’s approved.': 'Gespeichert. Dein neuer Text erscheint, sobald er freigegeben ist.',
+  'Your new photo waits for review. Customers see your current one until it’s approved.': 'Dein neues Foto wird geprüft. Kund*innen sehen dein aktuelles, bis das neue freigegeben ist.',
+  'New photos wait for review. Customers see them once they’re approved.': 'Neue Fotos werden geprüft. Kund*innen sehen sie, sobald sie freigegeben sind.',
+  'Your new text waits for review. Customers see the previous one until it’s approved.': 'Dein neuer Text wird geprüft. Kund*innen sehen den bisherigen, bis der neue freigegeben ist.',
+  'Profile changes approved': 'Profiländerungen freigegeben', 'Your profile changes are live now.': 'Deine Profiländerungen sind jetzt sichtbar.',
+  'Some profile changes weren’t approved': 'Nicht alle Profiländerungen wurden freigegeben', 'Profile changes not approved': 'Profiländerungen nicht freigegeben',
+  'Your new text and photos weren’t approved': 'Dein neuer Text und deine neuen Fotos wurden nicht freigegeben', 'Your new text wasn’t approved': 'Dein neuer Text wurde nicht freigegeben',
+  'Your new photos weren’t approved': 'Deine neuen Fotos wurden nicht freigegeben', 'Your new profile photo wasn’t approved': 'Dein neues Profilfoto wurde nicht freigegeben',
+  'Some of your new photos weren’t approved': 'Einige deiner neuen Fotos wurden nicht freigegeben',
+  'The rest is live now.': 'Der Rest ist jetzt sichtbar.', 'Customers still see your previous version.': 'Kund*innen sehen weiter deine bisherige Version.',
+  // … and from the admin: Free now switched off, a video date paid in full
+  'ZeitMit switched off Free now for you. Turn it on again when you’re ready to answer video date requests right away.': 'ZeitMit hat „Jetzt frei“ für dich ausgeschaltet. Schalte es wieder ein, wenn du Video-Date-Anfragen sofort beantworten kannst.',
+  'Paid in full by ZeitMit': 'Von ZeitMit voll bezahlt',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
 const PATTERNS: [RegExp, string][] = [
+  // Profile review (first: the wider “…: …” patterns below would catch these)
+  [/^(Your new text and photos weren’t approved|Your new text wasn’t approved|Your new photos weren’t approved|Your new profile photo wasn’t approved|Some of your new photos weren’t approved): (.+) (The rest is live now\.|Customers still see your previous version\.)$/s, '{$1}: $2 {$3}'],
+  [/^Your new photo wasn’t approved: (.+)$/s, 'Dein neues Foto wurde nicht freigegeben: $1'],
+  [/^Your new photos weren’t approved: (.+)$/s, 'Deine neuen Fotos wurden nicht freigegeben: $1'],
+  [/^Your new text wasn’t approved: (.+)$/s, 'Dein neuer Text wurde nicht freigegeben: $1'],
+  [/^ZeitMit added (€[\d.]+) for your video date on (.+) with (.+), so you get the full (€[\d.]+)\.$/, 'ZeitMit hat $1 für dein Video-Date am {$2} mit $3 dazugegeben, du bekommst also die vollen $4.'],
   // Free now (first, so the wider “Video date with … now” and “…’s boundaries” below don't catch them)
   [/^Video date with (.+), right now$/, 'Video-Date mit $1, jetzt sofort'],
   [/^Video date with (.+), now$/, 'Video-Date mit $1, jetzt'],

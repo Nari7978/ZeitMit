@@ -5,15 +5,25 @@ import { Pressable, View } from 'react-native';
 import { colors } from '../theme';
 import { GALLERY_MAX, GALLERY_MIN } from '../store';
 import { Icon } from './Icon';
-import { Photo } from './primitives';
+import { Photo, Txt } from './primitives';
 import { t } from '../i18n';
 
 export type GalleryPhoto = { id: string; url: string };
 
 const GAP = 10;
 
-export function PhotoGrid({ photos, adding, error, onAdd, onRemove }: {
-  photos: GalleryPhoto[]; adding: boolean; error?: boolean; onAdd: () => void; onRemove: (id: string) => void;
+/** `review`: photos waiting for ZeitMit to approve them (marked "In review"). */
+/** A small "In review" label on a photo. */
+export function InReview() {
+  return (
+    <View style={{ position: 'absolute', left: 6, bottom: 6, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: colors.butter, borderWidth: 1.5, borderColor: colors.ink }}>
+      <Txt size={10.5} weight={700}>In review</Txt>
+    </View>
+  );
+}
+
+export function PhotoGrid({ photos, adding, error, review, onAdd, onRemove }: {
+  photos: GalleryPhoto[]; adding: boolean; error?: boolean; review?: string[]; onAdd: () => void; onRemove: (id: string) => void;
 }) {
   const [w, setW] = useState(0);
   const size = { width: (w - GAP * 2) / 3, height: ((w - GAP * 2) / 3) * 1.25, borderRadius: 16, borderWidth: 2, overflow: 'hidden' as const };
@@ -23,6 +33,7 @@ export function PhotoGrid({ photos, adding, error, onAdd, onRemove }: {
       {w ? photos.map((p, i) => (
         <View key={p.id} style={[size, { borderColor: colors.ink }]}>
           <Photo hue={0} url={p.url} />
+          {review?.includes(p.id) ? <InReview /> : null}
           <Pressable
             accessibilityRole="button" accessibilityLabel={t(`Remove photo ${i + 1}`)} hitSlop={8} onPress={() => onRemove(p.id)}
             style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(17,17,17,.78)', alignItems: 'center', justifyContent: 'center' }}

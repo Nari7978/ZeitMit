@@ -348,6 +348,23 @@ export async function freeNowAll(env: Env, t = now()) {
 }
 
 /**
+ * Everyone with the Free now switch on, for the admin's Live now page: until when, their last check-in (from the
+ * background or the open app), and whether customers see them now, or why not: their phone hasn't checked in lately
+ * (`away`), they're in a video date or answering a request (`busy`), or too little time is left before the switch
+ * ends or their next booking (`short`).
+ */
+export async function freeNowSwitchedOn(env: Env, t = now()) {
+  return (await freeNowRows(env, t)).map((r) => {
+    const shown = freeNowFrom(r, t);
+    const away = !r.free_now_seen || r.free_now_seen < t - (r.free_now_bg ? FREE_NOW_AWAY_BG_S : FREE_NOW_AWAY_S);
+    return {
+      id: r.user_id, until: r.free_now_until!, seen: r.free_now_seen, bg: !!r.free_now_bg, max: shown?.max ?? null,
+      hidden: shown ? null : away ? 'away' as const : r.busy ? 'busy' as const : 'short' as const,
+    };
+  });
+}
+
+/**
  * What a customer can book with a companion: for each kind they offer, the free intervals (bookings start from that
  * kind's `earliest`: the companion's notice for it, before `latest`, and can run up to 8 hours past it), plus the rules.
  * `except` leaves one booking out and `moving` asks for 3½ hours' notice at least (to move a booking).

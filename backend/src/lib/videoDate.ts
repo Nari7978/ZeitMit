@@ -13,6 +13,11 @@
 export type Side = 'customer' | 'companion';
 /** One side coming into the call or leaving it (a second phone taking over isn't either). */
 export type Presence = { s: Side; t: number; on: boolean };
+/**
+ * A stretch of the booked time, for the admin's call log: who was in the call, and whether the companion is paid for
+ * it (`unpaid`). Stretches next to each other with the same state are merged.
+ */
+export type Span = { from: number; to: number; customer: boolean; companion: boolean; unpaid: boolean };
 
 const other = (s: Side): Side => (s === 'customer' ? 'companion' : 'customer');
 
@@ -30,6 +35,7 @@ export function unpaidTime(log: Presence[], start: number, end: number, wait: nu
   /** When the one in the call began waiting for the other (never before the start). */
   let waitFrom: number | null = null;
   let unpaid = 0, overlap = 0, cursor = start;
+  const spans: Span[] = [];
 
   const count = (to: number) => {
     const from = cursor;
@@ -37,10 +43,15 @@ export function unpaidTime(log: Presence[], start: number, end: number, wait: nu
     const dt = cursor - from;
     if (dt <= 0) return;
     const c = here.customer, p = here.companion;
+    const before = unpaid;
     if (c && p) overlap += dt;
     else if (c) { if (covered !== 'companion') unpaid += dt; } // the customer waits for the companion
     else if (p) { if (covered === 'customer') unpaid += dt; } // back only after the customer had waited long enough
     else if (blame === 'companion') unpaid += dt;
+    const lost = unpaid > before;
+    const last = spans[spans.length - 1];
+    if (last && last.to === from && last.customer === c && last.companion === p && last.unpaid === lost) last.to = cursor;
+    else spans.push({ from, to: cursor, customer: c, companion: p, unpaid: lost });
   };
   const checkWait = (t: number) => {
     const c = here.customer, p = here.companion;
@@ -73,7 +84,7 @@ export function unpaidTime(log: Presence[], start: number, end: number, wait: nu
   }
   count(end);
   checkWait(end);
-  return { unpaid, overlap, customerAtEnd: here.customer, companionAtEnd: here.companion, covered };
+  return { unpaid, overlap, customerAtEnd: here.customer, companionAtEnd: here.companion, covered, spans };
 }
 
 /** What the companion earns (cents, never more than the booking's share) for the booked time minus the unpaid time. */

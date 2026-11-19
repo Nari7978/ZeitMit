@@ -25,5 +25,6 @@ export async function pickAndUpload(kind: PhotoKind, source: 'library' | 'camera
   const wide = (a.width ?? 0) >= (a.height ?? 0);
   const small = await manipulateAsync(a.uri, [{ resize: wide ? { width: SIZE[kind] } : { height: SIZE[kind] } }], { compress: 0.72, format: SaveFormat.JPEG, base64: true });
   if (!small.base64) throw new Error('Couldn’t read that photo. Try another one.');
-  return api<{ id: string; url: string }>('POST', '/photos', { kind, data: small.base64, mime: 'image/jpeg' });
+  // `review`: a new photo of an approved listing, waiting for ZeitMit to approve it.
+  return api<{ id: string; url: string; review?: boolean }>('POST', '/photos', { kind, data: small.base64, mime: 'image/jpeg' });
 }

@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, eur, photoSrc, session, when } from './api';
+import { CallLog } from './CallLog';
+import { LiveNow } from './Live';
+import { ProfileChanges } from './ProfileChanges';
+import type { Ctx } from './shared';
 
-type Page = 'overview' | 'ids' | 'companions' | 'bookings' | 'payouts' | 'safety' | 'feedback' | 'reviews' | 'users';
-type Stats = { users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number; pendingPayouts: number; openFeedback: number };
+type Page = 'overview' | 'live' | 'ids' | 'companions' | 'changes' | 'bookings' | 'payouts' | 'safety' | 'feedback' | 'reviews' | 'users' | 'call';
+type Stats = {
+  users: number; companions: number; pendingCompanions: number; bookings: number; heldCents: number; openReports: number; sos: number; pendingIds: number; pendingPayouts: number; openFeedback: number;
+  /** Companions with profile changes waiting for review; requests ringing plus video dates on now. */
+  pendingChanges: number; live: number;
+};
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -11,6 +19,8 @@ export function App() {
   const [page, setPage] = useState<Page>('overview');
   const [stats, setStats] = useState<Stats | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // A video date's call log, opened from Bookings or Live now (and back there).
+  const [call, setCall] = useState<{ id: string; from: Page } | null>(null);
   const say = useCallback((m: string) => {
     clearTimeout(toastTimer);
     setToast(m);
@@ -25,8 +35,10 @@ export function App() {
 
   const nav: [Page, string, number?][] = [
     ['overview', 'Overview'],
+    ['live', 'Live now', stats?.live],
     ['ids', 'ID checks', stats?.pendingIds],
     ['companions', 'Companion reviews', stats?.pendingCompanions],
+    ['changes', 'Profile changes', stats?.pendingChanges],
     ['bookings', 'Bookings & payments'],
     ['payouts', 'Payouts', stats?.pendingPayouts],
     ['safety', 'Reports & safety', (stats?.openReports ?? 0) + (stats?.sos ?? 0)],
@@ -35,12 +47,14 @@ export function App() {
     ['users', 'Users'],
   ];
   const ctx = { say, refresh: loadStats };
+  const openCall = (id: string) => { setCall({ id, from: page === 'call' ? call?.from ?? 'bookings' : page }); setPage('call'); window.scrollTo(0, 0); };
+  const shown = page === 'call' ? call?.from ?? 'bookings' : page;
   return (
     <div className="shell">
       <nav className="side">
         <div className="logo display">zeitmit<span>!</span> admin</div>
         {nav.map(([k, l, n]) => (
-          <button key={k} className={page === k ? 'on' : ''} onClick={() => setPage(k)}>
+          <button key={k} className={shown === k ? 'on' : ''} onClick={() => setPage(k)}>
             {l}
             {n ? <span className="badge">{n}</span> : null}
           </button>
@@ -52,9 +66,14 @@ export function App() {
       </nav>
       <main className="main">
         {page === 'overview' && <Overview stats={stats} go={setPage} />}
+        {page === 'live' && <LiveNow {...ctx} openCall={openCall} go={setPage} />}
+        {page === 'changes' && <ProfileChanges {...ctx} />}
+        {page === 'call' && call ? (
+          <CallLog key={call.id} {...ctx} id={call.id} back={() => setPage(call.from)} backLabel={nav.find(([k]) => k === call.from)?.[1] ?? 'Back'} />
+        ) : null}
         {page === 'ids' && <IdChecks {...ctx} />}
         {page === 'companions' && <Companions {...ctx} />}
-        {page === 'bookings' && <Bookings {...ctx} />}
+        {page === 'bookings' && <Bookings {...ctx} openCall={openCall} />}
         {page === 'payouts' && <Payouts {...ctx} />}
         {page === 'safety' && <Safety {...ctx} />}
         {page === 'feedback' && <Feedback {...ctx} />}
@@ -65,8 +84,6 @@ export function App() {
     </div>
   );
 }
-
-type Ctx = { say: (m: string) => void; refresh: () => void };
 
 function Login({ onIn }: { onIn: (token: string) => void }) {
   const [email, setEmail] = useState('');
@@ -110,7 +127,9 @@ function Login({ onIn }: { onIn: (token: string) => void }) {
 
 function Overview({ stats, go }: { stats: Stats | null; go: (p: Page) => void }) {
   const tiles: [string, ReactNode, Page][] = stats ? [
+    ['Ringing or on a video date now', stats.live, 'live'],
     ['ID checks waiting', stats.pendingIds, 'ids'],
+    ['Profile changes waiting', stats.pendingChanges, 'changes'],
     ['Payouts to send', stats.pendingPayouts, 'payouts'],
     ['Companions waiting for review', stats.pendingCompanions, 'companions'],
     ['Open reports', stats.openReports, 'safety'],
@@ -283,6 +302,8 @@ type BookingRow = {
   fee: number; subtotal: number; refunded: number;
   /** A video date: the minutes the companion was paid for, when less than booked. */
   billed_minutes: number | null;
+  /** What ZeitMit paid the companion on top (a video date paid in part, then paid in full). */
+  topup: number;
 };
 /** What went back to the customer (bookings refunded before the fee rule have 0 recorded: they got everything back). */
 const backOf = (b: BookingRow) => b.refunded || (b.pay_status === 'refunded' ? b.total : 0);
@@ -304,7 +325,7 @@ const span = (s: number, e: number, tz?: string | null) => {
   return `${d}, ${t(s)}–${t(e)}${zone !== 'Europe/Berlin' ? ` (${zone})` : ''}`;
 };
 
-function Bookings({ say, refresh }: Ctx) {
+function Bookings({ say, refresh, openCall }: Ctx & { openCall: (id: string) => void }) {
   const [status, setStatus] = useState<string>('');
   const [q, setQ] = useState('');
   const [list, setList] = useState<{ bookings: BookingRow[]; counts: Record<string, number> } | null>(null);
@@ -386,7 +407,7 @@ function Bookings({ say, refresh }: Ctx) {
                     {/* Settled: what came back, and what the companion earned (a video date paid in part: for how long). */}
                     {backOf(b) > 0 && backOf(b) < b.total ? <div className="small muted">{eur(backOf(b))} back · fee {eur(b.fee)} kept</div> : null}
                     {backOf(b) >= b.total && b.pay_status === 'refunded' ? <div className="small muted">all refunded</div> : null}
-                    {b.pay_status === 'released' && backOf(b) < b.total ? <div className="small muted">companion {eur(b.subtotal)}{b.billed_minutes !== null ? ` for ${b.billed_minutes} min` : ''}</div> : null}
+                    {b.pay_status === 'released' && backOf(b) < b.total ? <div className="small muted">companion {eur(b.subtotal)}{b.billed_minutes !== null ? ` for ${b.billed_minutes} min` : ''}{b.topup ? ` + ${eur(b.topup)} from ZeitMit` : ''}</div> : null}
                   </td>
                   <td className="small">
                     {b.cancelled_by ? <><b>by {b.cancelled_by}</b>{b.cancel_reason ? ` · ${b.cancel_reason}` : ''}</> : null}
@@ -396,6 +417,7 @@ function Bookings({ say, refresh }: Ctx) {
                     {!b.cancelled_by && !b.cancel_note && !b.conflict_with && !b.decided_at ? <span className="muted">—</span> : null}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>
+                    {b.kind === 'video' && ['confirmed', 'completed', 'cancelled'].includes(b.status) ? <><button className="btn" onClick={() => openCall(b.id)}>Call log</button>{' '}</> : null}
                     {b.status === 'pending' || b.status === 'confirmed' ? <button className="btn" onClick={() => void cancel(b)}>Cancel</button> : null}
                     {' '}
                     {b.pay_status !== 'refunded' ? <button className={`btn ${b.pay_status === 'released' ? '' : 'red'}`} onClick={() => void refund(b)}>Refund</button> : null}

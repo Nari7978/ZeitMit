@@ -11,6 +11,7 @@ import { callOff, ring } from './lib/notify';
 import { fail, now } from './lib/util';
 import { settleVideoDate, waitSeconds, type CallSummary } from './routes/bookings';
 import { unpaidTime, type Presence } from './lib/videoDate';
+import type { CallEvent } from './lib/callLog';
 
 type Side = 'customer' | 'companion';
 type Attachment = { uid: string; side: Side; media: boolean; gone?: boolean };
@@ -170,6 +171,7 @@ export class CallRoom extends DurableObject<Env> {
     const url = new URL(req.url);
     if (url.pathname === '/ping') return Response.json(await this.ping(url.searchParams.get('side') === 'companion' ? 'companion' : 'customer'));
     if (url.pathname === '/summary') return Response.json(await this.summary());
+    if (url.pathname === '/state') return Response.json(await this.state());
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
     const q = url.searchParams;
     const uid = q.get('uid') ?? '', side = q.get('side') === 'companion' ? 'companion' : 'customer';
@@ -212,12 +214,17 @@ export class CallRoom extends DurableObject<Env> {
     if (!me) return;
     const peer = this.live(otherSide(me.side));
     if (m.type === 'signal') this.send(peer, { type: 'signal', data: m.data });
-    else if (m.type === 'media') { ws.serializeAttachment({ ...me, media: !!m.on }); await this.recount(); }
+    else if (m.type === 'media') {
+      if (!!m.on !== !!me.media) await this.event(me.side, m.on ? 'video' : 'no-video');
+      ws.serializeAttachment({ ...me, media: !!m.on });
+      await this.recount();
+    }
     else if (m.type === 'bye') {
       // Hung up on purpose: the other phone can end its side of the call straight away.
       ws.serializeAttachment({ ...me, media: false, gone: true });
       if (!this.live(me.side, ws).length) {
         await this.note(me.side, false);
+        await this.event(me.side, 'bye');
         this.send(peer, { type: 'peer-left', bye: true });
         if (!peer.length) await this.ringOff(me.side);
       }
@@ -245,6 +252,7 @@ export class CallRoom extends DurableObject<Env> {
       // (The ringing goes on: they may be back in a moment. It stops by itself, or when they hang up.)
       if (!this.live(me.side, ws).length) {
         await this.note(me.side, false);
+        await this.event(me.side, 'drop');
         this.send(this.live(otherSide(me.side)), { type: 'peer-left', bye: false });
       }
     }
@@ -266,6 +274,7 @@ export class CallRoom extends DurableObject<Env> {
     const meta = await this.ctx.storage.get<Meta>('meta');
     const next = { at: now(), pings: last.pings + (why === 'ping' ? 1 : 0) };
     await this.ctx.storage.put(`rang:${side}`, next);
+    await this.event(side, why === 'ping' ? 'ping' : 'ring');
     if (meta) this.ctx.waitUntil(sendRing(this.env, meta.booking, side, why).catch((e) => console.error('Ring failed', e)));
     return next;
   }
@@ -289,6 +298,27 @@ export class CallRoom extends DurableObject<Env> {
     this.ctx.waitUntil(broadcast(this.env, `user:${to}`, { type: 'ring-off', bookingId: meta.booking, at: now() }));
     // And on a phone that rings full screen by itself (the app closed): the push that stops it.
     this.ctx.waitUntil(callOff(this.env, to, meta.booking).catch(() => undefined));
+  }
+
+  /** Notes something for the admin's call log (lib/callLog.ts; the latest 300). */
+  private async event(side: Side, e: CallEvent['e']) {
+    const ev = (await this.ctx.storage.get<CallEvent[]>('ev')) ?? [];
+    ev.push({ t: now(), s: side, e });
+    await this.ctx.storage.put('ev', ev.slice(-300));
+  }
+
+  /** Everything the room knows, for the admin: who is in the call now (and with video), the logs, rings and pings. */
+  private async state() {
+    const has = (side: Side) => this.live(side).length > 0;
+    const video = (side: Side) => this.live(side).some((w) => (w.deserializeAttachment() as Attachment | null)?.media === true);
+    return {
+      here: { customer: has('customer'), companion: has('companion') },
+      video: { customer: video('customer'), companion: video('companion') },
+      together: await this.together(),
+      log: (await this.ctx.storage.get<Presence[]>('log')) ?? [],
+      events: (await this.ctx.storage.get<CallEvent[]>('ev')) ?? [],
+      rang: { customer: await this.rang('customer'), companion: await this.rang('companion') },
+    };
   }
 
   /** Notes a side coming into the call or leaving it, for settling the payment at the end. */
@@ -348,6 +378,8 @@ export class CallRoom extends DurableObject<Env> {
       console.error('Settling the video date failed', meta.booking, e);
     }
     for (const w of this.ctx.getWebSockets()) {
+      // Ended by the room, not left or dropped (so it isn't noted as either).
+      try { w.serializeAttachment({ ...(w.deserializeAttachment() as Attachment), media: false, gone: true }); } catch { /* closed */ }
       try { w.send(JSON.stringify({ type: 'ended' })); w.close(1000, 'ended'); } catch { /* closed */ }
     }
   }

@@ -43,6 +43,9 @@ A local Expo module (Kotlin, linked automatically from `modules/`; `plugins/with
 - Texts on these notifications come from the app in its language (`src/lib/callTexts.ts`).
 - The GitHub Actions job `Android build check` compiles the Android app on every change under `mobile/`, so a mistake in native code shows up before an EAS build. Its APK is signed with a test key; install it only after uninstalling an EAS-built ZeitMit.
 
+### Listing changes wait for review (1.3.9)
+Once a companion is approved, a new About or tagline, listing photo or gallery photo is checked by ZeitMit before customers see it. "Your listing" shows the newest version with "In review" on new photos and a note on what waits; a text or photo that wasn't approved shows ZeitMit's note until it's changed again. Removing or reordering gallery photos, and every other field (rate, activities, hours, …), still apply at once.
+
 ## Layout note (Android)
 `Box`/`PressBox` draw the hard shadow by wrapping the face in a second view that grows to fill the wrapper. On Android, Yoga's compatibility errata stretch that face in a centred or start-aligned column (a box with a fixed width in `alignItems: 'center'`, like the customer profile's avatar), which web doesn't show. Give such boxes `fit` (or `alignSelf: 'center'`/`'flex-start'`/`'flex-end'` on the box itself) so the face keeps its size; rows and full-width cards don't need it.
 

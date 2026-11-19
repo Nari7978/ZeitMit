@@ -491,7 +491,10 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
     loadCompanionSide: async () => {
       const [bk, profile, convos] = await Promise.allSettled([
         api<Pick<State['comp'], 'requests' | 'upcoming' | 'done' | 'history' | 'earnings'>>('GET', '/companion/bookings'),
-        api<Companion & { timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[]; notice?: Hours['notice']; noticeOptions?: Hours['noticeOptions']; freeNow?: FreeNowState }>('GET', '/companion'),
+        api<Companion & {
+          timezone?: string; week?: WeekRange[]; days?: HoursDay[]; blocks?: Block[]; notice?: Hours['notice']; noticeOptions?: Hours['noticeOptions']; freeNow?: FreeNowState;
+          review?: { gallery?: { ids: string[] } };
+        }>('GET', '/companion'),
         api<Convo[]>('GET', '/conversations?side=companion'),
       ]);
       set((s) => ({
@@ -499,7 +502,8 @@ export const useStore = create<State & Actions>()(skipNoop((set, get) => {
           ...s.comp,
           ...(bk.status === 'fulfilled' ? bk.value : {}),
           ...(profile.status === 'fulfilled' && profile.value.rate ? {
-            rate: profile.value.rate, acts: profile.value.acts, gallery: profile.value.gallery?.length ?? 0,
+            // Photos waiting for review count too (the nudge to add photos is about what they've done).
+            rate: profile.value.rate, acts: profile.value.acts, gallery: profile.value.review?.gallery?.ids.length ?? profile.value.gallery?.length ?? 0,
             hours: {
               tz: profile.value.timezone ?? 'Europe/Berlin', week: profile.value.week ?? [], days: profile.value.days ?? [], blocks: profile.value.blocks ?? [],
               notice: profile.value.notice ?? NOTICE_FALLBACK.notice, noticeOptions: profile.value.noticeOptions ?? NOTICE_FALLBACK.noticeOptions,

@@ -35,14 +35,15 @@ export const maskIban = (iban: string) => `${iban.slice(0, 4)} •••• ${ib
 export const groupIban = (iban: string) => iban.replace(/(.{4})/g, '$1 ').trim();
 
 /**
- * A companion's money, in cents. Earned = released bookings (meet code entered, or cancelled late).
+ * A companion's money, in cents. Earned = released bookings (meet code entered, or cancelled late), with anything
+ * ZeitMit paid on top (`topup`: a video date paid in part, then paid in full by support).
  * Available = earned and past the hold, minus what's requested or paid. Refunds after a payout make it negative.
  */
 export async function balanceOf(env: Env, companionId: string) {
   const cut = now() - PAYOUT_HOLD_DAYS * 86400;
   const earned = await env.DB.prepare(
-    `SELECT COALESCE(SUM(CASE WHEN released_at <= ?1 THEN subtotal END), 0) AS ready,
-            COALESCE(SUM(CASE WHEN released_at > ?1 THEN subtotal END), 0) AS pending,
+    `SELECT COALESCE(SUM(CASE WHEN released_at <= ?1 THEN subtotal + topup END), 0) AS ready,
+            COALESCE(SUM(CASE WHEN released_at > ?1 THEN subtotal + topup END), 0) AS pending,
             MIN(CASE WHEN released_at > ?1 THEN released_at END) AS next_release
      FROM bookings WHERE companion_id = ?2 AND pay_status = 'released'`,
   ).bind(cut, companionId).first<{ ready: number; pending: number; next_release: number | null }>();

@@ -7,6 +7,8 @@ import {
 } from '../src/lib/hours';
 import { localMoments, localToUnix, offsetAt, whenIn, zoneName } from '../src/lib/time';
 import { earned, unpaidTime, type Presence } from '../src/lib/videoDate';
+import { callTimeline, explainCall, presenceBars, type CallEvent } from '../src/lib/callLog';
+import { reviewHints } from '../src/lib/reviewHints';
 
 let failures = 0;
 const ok = (cond: boolean, label: string) => { console.log(`${cond ? '✓' : '✗'} ${label}`); if (!cond) failures++; };
@@ -128,6 +130,65 @@ ok(firstStart(union([[t + 3600, t + 7200], [t + 5 * 3600, t + 9 * 3600]]), 60, t
     && cov(15, C(0), C(6, false), P(8), C(9)) === null && cov(3, C(-8)) === null,
     'V21 who is covered so far (for the call screen): whoever waited 5 minutes from the start, until they’re together again');
   ok(earned(1700, 1800, 600) === 1133 && earned(1700, 1800, 0) === 1700 && earned(1700, 1800, 1800) === 0 && earned(1700, 1800, 2400) === 0, 'V20 earnings in proportion to the time paid, never below 0 or above the share');
+}
+
+// ---- The admin's call log: who was in the call, why it was paid like that, what happened (60-minute date at 14:00 UTC)
+{
+  const S = Date.UTC(2026, 10, 18, 14) / 1000, E = S + 3600, W = 300, m = (x: number) => S + Math.round(x * 60);
+  const C = (x: number, on = true): Presence => ({ s: 'customer', t: m(x), on });
+  const P = (x: number, on = true): Presence => ({ s: 'companion', t: m(x), on });
+  const ev = (s: 'customer' | 'companion', x: number, e: CallEvent['e']): CallEvent => ({ s, t: m(x), e });
+  const clock = (t: number) => new Date(t * 1000).toISOString().slice(11, 16);
+  const names = { customer: 'Cora', companion: 'Lena' };
+  const why = (log: Presence[], events: CallEvent[] = [], at = E + 60) => explainCall({ log, events, start: S, end: E, wait: W, now: at, names, clock });
+  const same = (a: unknown, b: unknown, label: string) => { const ok_ = JSON.stringify(a) === JSON.stringify(b); ok(ok_, label); if (!ok_) console.log('   got', JSON.stringify(a)); };
+
+  // The mockup: Lena joins 2 minutes early and pings, Cora comes 6 minutes late, Lena drops out 14:38–14:46.
+  const log = [P(-2), C(6), P(38, false), P(46)];
+  const events = [ev('companion', -2, 'ring'), ev('companion', 3, 'ping'), ev('companion', 6.03, 'video'), ev('customer', 6.05, 'video'),
+    ev('companion', 38, 'drop'), ev('customer', 38.02, 'no-video'), ev('companion', 46.05, 'video'), ev('customer', 46.07, 'video')];
+  const bars = presenceBars(log, S - 600, E);
+  same(bars, { customer: [{ from: m(6), to: E }], companion: [{ from: m(-2), to: m(38) }, { from: m(46), to: E }] }, 'L1 who was in the call when, up to the booked end');
+  const w = why(log, events);
+  same(w.why, [
+    'Cora came 6 minutes late (14:06). Lena was there and waited, so that time is paid.',
+    'Lena’s connection dropped at 14:38 and was back at 14:46. Cora was in the call meanwhile, so 8 minutes aren’t paid.',
+    'Both were in the call at the booked end (15:00).',
+  ], 'L2 why: late customer paid, the companion’s 8-minute drop not paid');
+  same(w.unpaid, [{ from: m(38), to: m(46) }], 'L3 the unpaid stretch');
+  same(callTimeline(log, events, names, 10), [
+    { t: m(-2), text: 'Lena joined · Cora’s phone rang' },
+    { t: m(3), text: 'Lena pinged Cora (1 of 10)' },
+    { t: m(6), text: 'Cora joined · video connected', tone: 'ok' },
+    { t: m(38), text: 'Lena’s connection dropped', tone: 'warn' },
+    { t: m(46), text: 'Lena came back · video connected', tone: 'ok' },
+  ], 'L4 what happened, a join and its ring or video in one line');
+
+  same(why([C(0), P(6)]).why, ['Lena came 6 minutes late (14:06). Cora was waiting in the call, so 6 minutes aren’t paid.', 'Both were in the call at the booked end (15:00).'], 'L5 the companion is late');
+  same(why([C(0), P(0), P(50, false)], [ev('companion', 50, 'bye')]).why, ['Lena hung up at 14:50, 10 minutes before the end, while Cora stayed: 10 minutes aren’t paid.'], 'L6 the companion hangs up early');
+  same(why([C(0), P(0), C(40, false)], [ev('customer', 40, 'bye')]).why, ['Cora hung up at 14:40, 20 minutes before the end, while Lena stayed: still paid.'], 'L7 the customer hangs up early');
+  same(why([C(0), P(0), P(10, false), C(16, false), P(18)], [ev('companion', 10, 'drop')]).why, [
+    'Lena’s connection dropped at 14:10. Cora was in the call without them for 6 minutes (14:10–14:16): not paid.',
+    'Neither was in the call for 2 minutes (14:16–14:18): not paid, as Lena left first.',
+    'Cora had waited 5 minutes for Lena and left. Lena was in the call alone afterwards for 42 minutes (14:18–15:00): not paid.',
+  ], 'L8 the customer waits 5 minutes for the companion and goes: covered from then on');
+  same(why([C(0), P(0), C(10, false), P(16, false), C(18)]).why, [
+    'Cora left the call at 14:10. Lena was in the call without them for 6 minutes (14:10–14:16): paid.',
+    'Neither was in the call for 2 minutes (14:16–14:18): paid, as Cora left first.',
+    'Cora was in the call alone for 42 minutes (14:18–15:00), after Lena had waited 5 minutes for them: still paid.',
+  ], 'L9 the companion waits 5 minutes for the customer and goes: covered');
+  same(why([C(0)], [], m(20)).why, ['Cora has been waiting for Lena since 14:00: not paid while Lena isn’t there.'], 'L10 while it’s on: says what’s happening now');
+  same(why([P(-1), P(0.2, false), P(0.3), C(0.4)]).why, ['Both were in the call at the booked end (15:00).'], 'L11 blips under 30 seconds aren’t worth a sentence');
+  same(why([]).why, [], 'L12 nobody joined: nothing to explain from the call');
+}
+
+// ---- Profile changes: what the check points out in a new text (English and German)
+{
+  const h = (t: string) => reviewHints(t).map((x) => `${x.label}: ${x.words.join(', ')}`);
+  ok(JSON.stringify(h('Write me on Insta for more pics. I also do video dates in the evening.')) === JSON.stringify(['Social media or messenger: insta']), 'R1 social media');
+  ok(JSON.stringify(h('Ich nehme auch Barzahlung oder eine Überweisung, gern im Hotel.')) === JSON.stringify(['Payment outside ZeitMit: barzahlung, überweisung', 'Meeting at home or in private: hotel']), 'R2 German payment and place words (umlauts too)');
+  ok(JSON.stringify(h('Sexy evenings, overnight at my place')) === JSON.stringify(['Sexual content: sexy', 'Meeting at home or in private: overnight, my place']), 'R3 sexual content and private places');
+  ok(h('Melde dich bei mir! Ich liebe scharfes Essen, Signale im Wald, Cashews und Sussex.').length === 0, 'R4 everyday words aren’t flagged (bei mir, Cashews, Sussex)');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll engine checks passed');
