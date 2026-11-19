@@ -56,6 +56,8 @@ export default function VideoCall() {
     nativeCalls.startCall(id, peerName);
     return () => nativeCalls.stopCall();
   }, [media, over, id, peerName]);
+  // Can't join, or it's over (opened from the lock screen, say): the rest of the app needs the phone unlocked.
+  useEffect(() => { if (over) nativeCalls.lockScreen(false); }, [over]);
   const leaveRef = useRef(leave);
   leaveRef.current = leave;
   useEffect(() => {

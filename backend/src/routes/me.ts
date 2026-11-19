@@ -65,7 +65,7 @@ me.post('/verification', async (c) => {
 me.patch('/', async (c) => {
   const u = c.get('user');
   const b = await c.req.json<{
-    name?: string; bio?: string; ageConfirmed?: boolean; pushToken?: string | null; prefs?: Partial<Prefs>; language?: 'auto' | 'en' | 'de'; uiLanguage?: 'en' | 'de'; timezone?: string;
+    name?: string; bio?: string; ageConfirmed?: boolean; pushToken?: string | null; pushCalls?: boolean; prefs?: Partial<Prefs>; language?: 'auto' | 'en' | 'de'; uiLanguage?: 'en' | 'de'; timezone?: string;
     gender?: 'w' | 'm' | 'nb' | null; age?: number | null; languages?: string[]; interests?: string[];
   }>();
   if (b.language !== undefined && !['auto', 'en', 'de'].includes(b.language)) fail(400, 'Unknown language.');
@@ -109,8 +109,11 @@ me.patch('/', async (c) => {
   await c.env.DB.prepare(
     `UPDATE users SET name = COALESCE(?, name), bio = COALESCE(?, bio),
        age_confirmed = CASE WHEN ? THEN 1 ELSE age_confirmed END,
-       push_token = CASE WHEN ? THEN ? ELSE push_token END WHERE id = ?`,
-  ).bind(b.name?.trim() ?? null, b.bio ?? null, b.ageConfirmed ? 1 : 0, b.pushToken !== undefined ? 1 : 0, b.pushToken ?? null, u.id).run();
+       push_token = CASE WHEN ? THEN ? ELSE push_token END,
+       push_calls = CASE WHEN ? THEN ? ELSE push_calls END WHERE id = ?`,
+    // `pushCalls`: this phone's app rings incoming video dates full screen by itself (Android 1.3.8+); sent with the token.
+  ).bind(b.name?.trim() ?? null, b.bio ?? null, b.ageConfirmed ? 1 : 0, b.pushToken !== undefined ? 1 : 0, b.pushToken ?? null,
+    b.pushToken !== undefined ? 1 : 0, b.pushCalls === true && !!b.pushToken ? 1 : 0, u.id).run();
   return c.json({ ok: true });
 });
 

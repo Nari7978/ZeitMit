@@ -43,6 +43,17 @@ jobs:
             -PreactNativeArchitectures=arm64-v8a \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
             -Pkotlin.daemon.jvmargs=-Xmx2g 2>&1 | tee build.log
+      - name: Check the call features made it into the app
+        working-directory: mobile/android
+        run: |
+          m=$(find app/build/intermediates -name AndroidManifest.xml -path "*merged_manifest*" -path "*elease*" | head -1)
+          echo "Merged manifest: $m"
+          for want in 'android:supportsPictureInPicture="true"' 'app.zeitmit.calls.CallMessagingService' 'app.zeitmit.calls.CallService' \
+            'app.zeitmit.calls.FreeNowService' 'android.permission.SYSTEM_ALERT_WINDOW' 'android.permission.USE_FULL_SCREEN_INTENT' \
+            'android.permission.FOREGROUND_SERVICE_CAMERA' 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE'; do
+            if grep -q "$want" "$m"; then echo "ok: $want"; else echo "::error::Missing from the app's manifest: $want"; exit 1; fi
+          done
+          grep -A6 "CallMessagingService" "$m"
       - name: Show the errors
         if: failure()
         working-directory: mobile/android

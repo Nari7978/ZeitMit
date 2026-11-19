@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import type { AppEnv, Env } from './types';
 import { VIDEO_ACT } from './types';
 import { broadcast } from './lib/live';
-import { ring } from './lib/notify';
+import { callOff, ring } from './lib/notify';
 import { fail, now } from './lib/util';
 import { settleVideoDate, waitSeconds, type CallSummary } from './routes/bookings';
 import { unpaidTime, type Presence } from './lib/videoDate';
@@ -287,6 +287,8 @@ export class CallRoom extends DurableObject<Env> {
     const to = meta?.[otherSide(side)];
     if (!meta || !to || !(await this.rang(side)).at) return;
     this.ctx.waitUntil(broadcast(this.env, `user:${to}`, { type: 'ring-off', bookingId: meta.booking, at: now() }));
+    // And on a phone that rings full screen by itself (the app closed): the push that stops it.
+    this.ctx.waitUntil(callOff(this.env, to, meta.booking).catch(() => undefined));
   }
 
   /** Notes a side coming into the call or leaving it, for settling the payment at the end. */

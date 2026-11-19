@@ -73,7 +73,7 @@ internal object Pip {
   }
 
   private fun apply(a: Activity) {
-    if (!supported(a)) return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !supported(a)) return
     try {
       a.setPictureInPictureParams(params(a))
     } catch (e: Exception) {
@@ -83,7 +83,7 @@ internal object Pip {
 
   /** Android 8–11: leaving the app during a video date opens the floating window (12+ does it by itself). */
   fun onUserLeaveHint(a: Activity) {
-    if (!wanted || !supported(a) || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || !wanted || !supported(a)) return
     try {
       a.enterPictureInPictureMode(params(a))
     } catch (e: Exception) {

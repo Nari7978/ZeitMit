@@ -56,6 +56,8 @@ export const HORIZON_S = 7 * 86400;
 export const FREE_NOW_HOURS = [1, 2, 3];
 export const INSTANT_REPLY_S = 120;
 export const FREE_NOW_AWAY_S = 600;
+/** The same for a check-in from the background (Android, the app closed): a sleeping phone checks in less often. */
+export const FREE_NOW_AWAY_BG_S = 1800;
 export const FREE_NOW_MISSES = 3;
 /** Companions plan specific dates and blocks up to 60 days ahead. */
 export const PLAN_DAYS = 60;
@@ -296,7 +298,7 @@ export type Availability = {
 export type FreeNow = { until: number; max: number };
 
 /** What the free-now state is worked out from, per companion (see freeNowRows). */
-type FreeNowRow = { user_id: string; free_now_until: number | null; free_now_seen: number | null; activities: string; next_start: number | null; busy: number };
+type FreeNowRow = { user_id: string; free_now_until: number | null; free_now_seen: number | null; free_now_bg?: number; activities: string; next_start: number | null; busy: number };
 
 /**
  * Free now for a video date, from the companion's switch: on, their app checked in lately, they offer video dates, and
@@ -304,7 +306,8 @@ type FreeNowRow = { user_id: string; free_now_until: number | null; free_now_see
  * switch ends and before their next booking, after the 2 minutes to answer, in 15-minute steps; under 30 minutes, no.
  */
 function freeNowFrom(r: FreeNowRow, t: number): FreeNow | null {
-  if (!r.free_now_until || r.free_now_until <= t || !r.free_now_seen || r.free_now_seen < t - FREE_NOW_AWAY_S || r.busy) return null;
+  const away = r.free_now_bg ? FREE_NOW_AWAY_BG_S : FREE_NOW_AWAY_S;
+  if (!r.free_now_until || r.free_now_until <= t || !r.free_now_seen || r.free_now_seen < t - away || r.busy) return null;
   if (!parseJson<string[]>(r.activities, []).includes(VIDEO_ACT)) return null;
   const end = Math.min(r.free_now_until, r.next_start ?? Infinity) - INSTANT_REPLY_S;
   const max = Math.min(MAX_MINUTES, Math.floor((end - t) / 60 / STEP_MIN) * STEP_MIN);
@@ -317,7 +320,7 @@ function freeNowFrom(r: FreeNowRow, t: number): FreeNow | null {
  */
 async function freeNowRows(env: Env, t: number, id?: string, except?: { id: string; created_at: number }) {
   const r = await env.DB.prepare(
-    `SELECT c.user_id, c.free_now_until, c.free_now_seen, c.activities,
+    `SELECT c.user_id, c.free_now_until, c.free_now_seen, c.free_now_bg, c.activities,
        (SELECT MIN(b.starts_at) FROM bookings b WHERE b.companion_id = c.user_id AND b.status IN ${HOLDING} AND b.starts_at > ?1) AS next_start,
        EXISTS (SELECT 1 FROM bookings b WHERE b.companion_id = c.user_id AND (
          (b.status IN ${HOLDING} AND b.starts_at <= ?1 AND b.ends_at > ?1)

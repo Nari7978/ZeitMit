@@ -132,7 +132,7 @@ class ZeitmitCallsModule : Module() {
 
     /** A timer that also runs while the app is in the background (the call reconnects with it). */
     AsyncFunction("delay") { ms: Int, promise: Promise ->
-      Handler(Looper.getMainLooper()).postDelayed({ promise.resolve(null) }, ms.toLong())
+      Handler(Looper.getMainLooper()).postDelayed({ promise.resolve() }, ms.toLong())
     }
   }
 

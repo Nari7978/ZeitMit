@@ -6,7 +6,7 @@ import {
   ruleProblem, STEP_MIN, type Kind,
 } from '../lib/hours';
 import { slotsChanged } from '../lib/live';
-import { alertAdmins, notify } from '../lib/notify';
+import { alertAdmins, callOff, notify } from '../lib/notify';
 import { inBackground, sendBookingConfirmation, sendBookingInvoice } from '../lib/mail';
 import { dateIn, DEFAULT_TZ, localToUnix, minutes, realDate, whenIn } from '../lib/time';
 import { CONTACT_MSG, euros, fail, hasContactDetails, newId, now, parseJson, safeEqual } from '../lib/util';
@@ -181,6 +181,8 @@ async function closeBooking(env: Env, b: BookingRow, to: Closing, o: { note: (am
   // A confirmed booking held its time: it's free again for everyone (if it's in the companion's hours). Requests held
   // nothing, except a free-now one: while it waits, the companion isn't free now for anyone else.
   if (b.status === 'confirmed' || b.instant) await slotsChanged(env, b.companion_id);
+  // A free-now request still ringing on the companion's phone: it stops.
+  if (b.instant && b.status === 'pending') await callOff(env, b.companion_id, b.id);
   return true;
 }
 
@@ -410,7 +412,9 @@ async function announceBooking(env: Env, id: string, ctx?: { waitUntil(p: Promis
     await notify(env, b.companion_id, {
       icon: 'video', tone: 'violet', title: `Video date request from ${p.customer}`,
       body: `${lengthText(lengthOf(b))} · You earn ${euros(b.subtotal)} · Answer within 2 minutes.`,
-      go: 'comp:requests', urgent: { until: b.expires_at }, data: { kind: 'instant', bookingId: b.id },
+      go: 'comp:requests', urgent: { until: b.expires_at },
+      // For the phone's own incoming-call screen (Android): who, how long, what they earn, and until when it rings.
+      data: { kind: 'instant', bookingId: b.id, who: p.customer, minutes: lengthOf(b), earn: b.subtotal, expiresAt: b.expires_at },
     }, ctx);
     void slotsChanged(env, b.companion_id, ctx); // answering this one: not free now for anyone else meanwhile
     await inBackground(ctx, () => sendBookingInvoice(env, b.id));

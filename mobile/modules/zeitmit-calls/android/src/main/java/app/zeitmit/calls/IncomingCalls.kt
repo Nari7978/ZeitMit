@@ -152,7 +152,8 @@ internal object IncomingCalls {
 
   /** The app was opened for an incoming video date: over the lock screen, and the app picks it up (takeAction). */
   fun fromIntent(activity: Activity, intent: Intent?) {
-    val action = intent?.getStringExtra(EXTRA_ACTION) ?: return
+    if (intent == null) return
+    val action = intent.getStringExtra(EXTRA_ACTION) ?: return
     val data = intent.getStringExtra(EXTRA_CALL) ?: return
     intent.removeExtra(EXTRA_ACTION)
     intent.removeExtra(EXTRA_CALL)

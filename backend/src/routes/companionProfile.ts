@@ -3,7 +3,7 @@ import type { AppEnv } from '../types';
 import { ACTIVITIES, BOUNDARY_OPTIONS, LANGUAGES, VIDEO_ACT, VIDEO_BOUNDARY_OPTIONS, WINDOWS } from '../types';
 import { GALLERY_MAX, GALLERY_MIN, toCompanion, type CompanionRow } from '../lib/companions';
 import {
-  changeCoverage, cleanRanges, dayJson, DEFAULT_NOTICE, FREE_NOW_AWAY_S, FREE_NOW_HOURS, normalize, NOTICE_OPTIONS, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson,
+  changeCoverage, cleanRanges, dayJson, DEFAULT_NOTICE, FREE_NOW_AWAY_BG_S, FREE_NOW_AWAY_S, FREE_NOW_HOURS, normalize, NOTICE_OPTIONS, parseDay, parseWeek, PLAN_DAYS, rangesOn, span, STEP_S, weekJson,
   type Range, type WeekRange,
 } from '../lib/hours';
 import { slotsChanged } from '../lib/live';
@@ -97,7 +97,7 @@ companionProfile.put('/free-now', async (c) => {
   if (row!.status !== 'approved') fail(409, 'Your profile has to be approved first.');
   if (!parseJson<string[]>(row!.activities, []).includes(VIDEO_ACT)) fail(409, 'Add video dates to your activities first.');
   await c.env.DB.prepare(
-    'UPDATE companions SET free_now_until = unixepoch() + ?, free_now_seen = unixepoch(), free_now_misses = 0, free_now_paused = NULL WHERE user_id = ?',
+    'UPDATE companions SET free_now_until = unixepoch() + ?, free_now_seen = unixepoch(), free_now_bg = 0, free_now_misses = 0, free_now_paused = NULL WHERE user_id = ?',
   ).bind(hours! * 3600, id).run();
   void slotsChanged(c.env, id, c.executionCtx); // open profiles show Free now
   const fresh = await c.env.DB.prepare('SELECT free_now_until, free_now_paused FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
@@ -113,16 +113,20 @@ companionProfile.delete('/free-now', async (c) => {
 });
 
 /**
- * The companion's open app checks in while Free now is on (every couple of minutes): it only counts while it has
- * within the last 10 minutes, so customers never start a video date with someone who has closed the app.
+ * The companion's phone checks in while Free now is on (every couple of minutes): the open app, or on Android the
+ * background service behind the ongoing "Free now" notification (`{ bg: true }`). It only counts while it has within
+ * the last 10 minutes (30 from the background, where a sleeping phone checks in less often), so customers never start
+ * a video date with someone whose phone can't ring. Says whether it's still on (`until` null: off).
  */
 companionProfile.post('/free-now/seen', async (c) => {
   const id = c.get('user').id;
-  const before = await c.env.DB.prepare('SELECT free_now_until, free_now_seen, free_now_paused FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
+  const { bg } = await c.req.json<{ bg?: boolean }>().catch(() => ({}) as { bg?: boolean });
+  const before = await c.env.DB.prepare('SELECT free_now_until, free_now_seen, free_now_bg, free_now_paused FROM companions WHERE user_id = ?').bind(id).first<CompanionRow>();
   if (!before?.free_now_until || before.free_now_until <= now()) return c.json(freeNowState(before ?? { free_now_until: null, free_now_paused: null }));
-  await c.env.DB.prepare('UPDATE companions SET free_now_seen = unixepoch() WHERE user_id = ?').bind(id).run();
+  await c.env.DB.prepare('UPDATE companions SET free_now_seen = unixepoch(), free_now_bg = ? WHERE user_id = ?').bind(bg === true ? 1 : 0, id).run();
   // Back after a while away: open profiles show Free now again.
-  if (!before.free_now_seen || before.free_now_seen < now() - FREE_NOW_AWAY_S) void slotsChanged(c.env, id, c.executionCtx);
+  const away = before.free_now_bg ? FREE_NOW_AWAY_BG_S : FREE_NOW_AWAY_S;
+  if (!before.free_now_seen || before.free_now_seen < now() - away) void slotsChanged(c.env, id, c.executionCtx);
   return c.json(freeNowState(before));
 });
 

@@ -38,6 +38,23 @@ export async function notify(env: Env, userId: string, n: Note, ctx?: { waitUnti
   else await send;
 }
 
+/**
+ * Stops an incoming video date ringing on someone's phone (Android 1.3.8+, whose app rings full screen by itself):
+ * a free-now request that was answered, cancelled, ran out or can't happen any more, or a ring whose caller hung up.
+ * A silent push, only for phones that understand it (`users.push_calls`).
+ */
+export async function callOff(env: Env, userId: string, bookingId: string, ctx?: { waitUntil(p: Promise<unknown>): void }) {
+  const row = await env.DB.prepare('SELECT push_token, push_calls FROM users WHERE id = ?').bind(userId).first<{ push_token: string | null; push_calls: number }>();
+  if (!row?.push_token || !row.push_calls) return;
+  const send = fetch(env.EXPO_PUSH_URL ?? 'https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ to: row.push_token, data: { kind: 'call-off', bookingId }, priority: 'high', ttl: 300 }),
+  }).catch(() => undefined);
+  if (ctx) ctx.waitUntil(send);
+  else await send;
+}
+
 /** Why someone's phone rings for a video date: the other person joined the call alone, or pinged them from it. */
 export type Ring = { bookingId: string; who: string; why: 'join' | 'ping'; endsAt: number };
 

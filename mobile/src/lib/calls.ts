@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 import { router } from 'expo-router';
 import { nativeCalls, type CallAction, type LaunchedCall } from '../../modules/zeitmit-calls';
 import { useStore } from '../store';
-import { endRing, showRing } from './ring';
+import { endRing, showRing, useRing } from './ring';
 import { markInstantHandled } from '../ui/InstantRequest';
 import { syncCallTexts } from './callTexts';
 
@@ -20,12 +20,21 @@ async function acceptFromNotification(id: string) {
 function handleLaunch(c: LaunchedCall) {
   if (c.kind === 'instant') {
     if (c.action === 'accept') void acceptFromNotification(c.bookingId);
-    else void useStore.getState().loadCompanionSide(); // the request shows full screen, ringing in the app
+    else {
+      // The request shows full screen, ringing in the app. Already over: back behind the lock screen.
+      void useStore.getState().loadCompanionSide().then(() => {
+        const open = useStore.getState().comp.requests.some((r) => r.id === c.bookingId && (r.expiresAt ?? 0) > Date.now() / 1000);
+        if (!open) nativeCalls.lockScreen(false);
+      });
+    }
   } else if (c.kind === 'ring') {
     if (c.action === 'accept') {
       endRing(c.bookingId, c.at);
       router.push(`/call/${c.bookingId}`);
-    } else showRing({ ...c });
+    } else {
+      showRing({ ...c });
+      if (!useRing.getState().ring) nativeCalls.lockScreen(false); // it had stopped ringing meanwhile
+    }
   }
 }
 
@@ -51,8 +60,9 @@ export function useIncomingCalls() {
   useEffect(() => {
     if (!nativeCalls.available) return;
     syncCallTexts();
-    handleAction({ type: 'launch' });
+    // Opened from an incoming video date: once the screens exist (like a tap on a notification).
+    const launch = setTimeout(() => handleAction({ type: 'launch' }), 300);
     const sub = nativeCalls.onAction(handleAction);
-    return () => sub.remove();
+    return () => { clearTimeout(launch); sub.remove(); };
   }, []);
 }

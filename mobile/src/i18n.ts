@@ -772,6 +772,16 @@ const DE: Record<string, string> = {
   'Add video dates to your activities first.': 'Füge zuerst Video-Dates zu deinen Aktivitäten hinzu.', 'Only video dates can start right away.': 'Nur Video-Dates können sofort beginnen.',
   'You already have a video date request waiting. Wait for the answer first.': 'Du hast schon eine offene Video-Date-Anfrage. Warte zuerst auf die Antwort.',
   'A video date now can’t be moved. Cancel it and pick a time instead.': 'Ein Video-Date jetzt lässt sich nicht verschieben. Storniere es und wähle stattdessen eine Zeit.',
+  // Android: calls ring like phone calls with the app closed, video dates run in the background (notification texts)
+  'Video date request from {who}': 'Video-Date-Anfrage von {who}', '{length} · You earn {earn} · Answer within 2 minutes': '{length} · Du verdienst {earn} · Antworte innerhalb von 2 Minuten',
+  '{who} is waiting in your video date': '{who} wartet in eurem Video-Date', '{who} is pinging you': '{who} klingelt dich an', 'Join your video date now': 'Tritt jetzt eurem Video-Date bei',
+  'Incoming video dates': 'Eingehende Video-Dates', 'Video date in progress': 'Laufendes Video-Date', 'Video date with {who}': 'Video-Date mit {who}',
+  'Tap to go back to the call': 'Tippe, um zum Anruf zurückzukehren', 'Hang up': 'Auflegen', 'Until {time} · Your phone rings for requests': 'Bis {time} · Dein Handy klingelt bei Anfragen',
+  'Turn off': 'Ausschalten', '{n} min': '{n} Min.', '{n} hours': '{n} Std.', '{n}½ hours': '{n}½ Std.', '{h} h {m} min': '{h} Std. {m} Min.', '1 hour': '1 Std.',
+  // … and in the app: what the phone has to allow so requests ring with the app closed
+  'Make sure requests reach you': 'So erreichen dich Anfragen', 'So your phone rings even when ZeitMit is closed, allow this:': 'Damit dein Handy auch klingelt, wenn ZeitMit geschlossen ist, erlaube Folgendes:',
+  'Ring full screen on the lock screen': 'Im Vollbild auf dem Sperrbildschirm klingeln', 'Show requests over other apps': 'Anfragen über anderen Apps zeigen',
+  'Don’t limit ZeitMit to save battery': 'ZeitMit nicht zum Akkusparen einschränken', 'Allow': 'Erlauben', 'Requests ring even when ZeitMit is closed': 'Anfragen klingeln auch, wenn ZeitMit geschlossen ist',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */
@@ -1196,6 +1206,7 @@ const PATTERNS: [RegExp, string][] = [
   [/^Not free right now any more · (€[\d.]+) refunded in full$/, 'Gerade nicht mehr frei · $1 voll erstattet'],
   [/^(.+) isn’t free right now\. Pick a time instead\.$/, '$1 ist gerade nicht frei. Wähle stattdessen eine Zeit.'],
   [/^(.+) is free for up to (.+) right now\.$/, '$1 ist gerade bis zu {$2} frei.'],
+  [/^On (.+) phones, also allow Autostart for ZeitMit\.$/, 'Erlaube auf $1-Handys außerdem den Autostart für ZeitMit.'],
 ];
 
 /** Translates one string (whitespace around it is kept). */
