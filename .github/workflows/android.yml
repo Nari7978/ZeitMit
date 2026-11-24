@@ -49,9 +49,13 @@ jobs:
           m=$(find app/build/intermediates -name AndroidManifest.xml -path "*merged_manifest*" -path "*elease*" | head -1)
           echo "Merged manifest: $m"
           for want in 'android:supportsPictureInPicture="true"' 'app.zeitmit.calls.CallMessagingService' 'app.zeitmit.calls.CallService' \
-            'app.zeitmit.calls.FreeNowService' 'android.permission.SYSTEM_ALERT_WINDOW' 'android.permission.USE_FULL_SCREEN_INTENT' \
-            'android.permission.FOREGROUND_SERVICE_CAMERA' 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE'; do
+            'app.zeitmit.calls.BootReceiver' 'android.permission.SYSTEM_ALERT_WINDOW' 'android.permission.USE_FULL_SCREEN_INTENT' \
+            'android.permission.FOREGROUND_SERVICE_CAMERA' 'android.permission.RECEIVE_BOOT_COMPLETED'; do
             if grep -q "$want" "$m"; then echo "ok: $want"; else echo "::error::Missing from the app's manifest: $want"; exit 1; fi
+          done
+          # Free now shows no notification since 1.3.11: no background service for it any more.
+          for gone in 'FreeNowService' 'FOREGROUND_SERVICE_SPECIAL_USE'; do
+            if grep -q "$gone" "$m"; then echo "::error::Still in the app's manifest: $gone"; exit 1; else echo "gone: $gone"; fi
           done
           grep -A6 "CallMessagingService" "$m"
       - name: Show the errors

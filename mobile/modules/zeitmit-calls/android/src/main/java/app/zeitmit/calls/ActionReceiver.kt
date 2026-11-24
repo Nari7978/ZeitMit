@@ -4,12 +4,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 
-/** Buttons on the notifications: Decline / Not now, Hang up, Turn off (Free now), and the Free now check-in alarm. */
+/** Buttons on the notifications (Decline / Not now, Hang up), and the Free now check-in alarm. */
 class ActionReceiver : BroadcastReceiver() {
   companion object {
     const val DECLINE = "app.zeitmit.calls.DECLINE"
     const val HANG_UP = "app.zeitmit.calls.HANG_UP"
-    const val FREE_NOW_OFF = "app.zeitmit.calls.FREE_NOW_OFF"
     const val CHECK_IN = "app.zeitmit.calls.CHECK_IN"
   }
 
@@ -31,15 +30,9 @@ class ActionReceiver : BroadcastReceiver() {
         JsEvents.emit("onAction", mapOf("type" to "hangUp", "bookingId" to (intent.getStringExtra("bookingId") ?: "")))
         CallService.stop(ctx)
       }
-      FREE_NOW_OFF -> {
-        FreeNowService.stop(ctx)
-        JsEvents.emit("onAction", mapOf("type" to "freeNowOff"))
-        val pending = goAsync()
-        Http.inBackground(ctx, "DELETE", "/companion/free-now") { _, _ -> pending.finish() }
-      }
       CHECK_IN -> {
         val pending = goAsync()
-        FreeNowService.checkIn(ctx) { pending.finish() }
+        FreeNow.checkIn(ctx) { pending.finish() }
       }
     }
   }

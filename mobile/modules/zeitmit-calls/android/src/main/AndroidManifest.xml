@@ -1,9 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <!-- A video date keeps running in the background (camera and microphone), and Free now stays online. -->
+  <!-- A video date keeps running in the background (camera and microphone). -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- Free now carries on checking in after the phone restarts. -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
   <!-- Incoming video dates: full screen over the lock screen, and over other apps when allowed. -->
   <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -26,17 +27,18 @@
       android:exported="false"
       android:foregroundServiceType="camera|microphone" />
 
-    <service
-      android:name="app.zeitmit.calls.FreeNowService"
-      android:exported="false"
-      android:foregroundServiceType="specialUse">
-      <property
-        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-        android:value="Keeps a companion reachable for video date requests while they have switched on Free now, until the time they chose" />
-    </service>
-
     <receiver
       android:name="app.zeitmit.calls.ActionReceiver"
       android:exported="false" />
+
+    <!-- Only the system sends these two (protected broadcasts). -->
+    <receiver
+      android:name="app.zeitmit.calls.BootReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
   </application>
 </manifest>

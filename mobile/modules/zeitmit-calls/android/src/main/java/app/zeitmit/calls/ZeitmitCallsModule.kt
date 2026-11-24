@@ -88,11 +88,11 @@ class ZeitmitCallsModule : Module() {
     }
 
     Function("startFreeNow") { until: Double ->
-      FreeNowService.start(context, until.toLong())
+      FreeNow.start(context, until.toLong())
     }
 
     Function("stopFreeNow") {
-      FreeNowService.stop(context)
+      FreeNow.stop(context)
     }
 
     /** The app shows this incoming video date itself now: the phone's ringing stops. */

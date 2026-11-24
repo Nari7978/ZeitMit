@@ -1,6 +1,7 @@
 // ZeitMit's video dates on Android (native code in ./android): a call keeps running in the background with its
 // floating window, incoming video dates ring full screen like phone calls with the app closed, and Free now stays
-// online with an ongoing notification. Elsewhere (web, iPhone, older builds without it) every call here does nothing.
+// online with the app closed (check-ins from an alarm, no notification). Elsewhere (web, iPhone, older builds without
+// it) every call here does nothing.
 import { Platform } from 'react-native';
 import { requireOptionalNativeModule, type EventSubscription } from 'expo';
 
