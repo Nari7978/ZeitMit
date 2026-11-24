@@ -798,6 +798,16 @@ const DE: Record<string, string> = {
   // … and from the admin: Free now switched off, a video date paid in full
   'ZeitMit switched off Free now for you. Turn it on again when you’re ready to answer video date requests right away.': 'ZeitMit hat „Jetzt frei“ für dich ausgeschaltet. Schalte es wieder ein, wenn du Video-Date-Anfragen sofort beantworten kannst.',
   'Paid in full by ZeitMit': 'Von ZeitMit voll bezahlt',
+  // 1.3.10: asking, as the app opens, for what a phone needs so requests ring with ZeitMit closed (Android)
+  'Don’t miss a request': 'Verpasse keine Anfrage',
+  'So your phone rings for video date requests even when ZeitMit is closed, allow these. It takes a minute.': 'Damit dein Handy bei Video-Date-Anfragen auch klingelt, wenn ZeitMit geschlossen ist, erlaube Folgendes. Das dauert nur eine Minute.',
+  'Requests, messages and video date calls.': 'Anfragen, Nachrichten und Video-Date-Anrufe.',
+  'Full-screen calls': 'Anrufe im Vollbild', 'Requests ring full screen, also on the lock screen.': 'Anfragen klingeln im Vollbild, auch auf dem Sperrbildschirm.',
+  'Show over other apps': 'Über anderen Apps anzeigen', 'Requests come up while you use another app.': 'Anfragen erscheinen, während du eine andere App nutzt.',
+  'No battery limits': 'Keine Akku-Beschränkung', 'So your phone doesn’t stop ZeitMit in the background.': 'Damit dein Handy ZeitMit im Hintergrund nicht beendet.',
+  'Allow notifications': 'Benachrichtigungen erlauben', 'Allow full-screen calls': 'Anrufe im Vollbild erlauben', 'Allow over other apps': 'Über anderen Apps erlauben',
+  'Allow in the background': 'Im Hintergrund erlauben', 'Allowed': 'Erlaubt',
+  'All set: requests ring even when ZeitMit is closed.': 'Alles bereit: Anfragen klingeln auch, wenn ZeitMit geschlossen ist.',
 };
 
 /** Dynamic messages: [English pattern, German replacement]. */

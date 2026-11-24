@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Image, View } from 'react-native';
 import { router, Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +19,9 @@ import { InstantRequest } from '../ui/InstantRequest';
 import { useFreeNowCheckIn } from '../lib/freeNow';
 import { useIncomingCalls } from '../lib/calls';
 import { followGo } from '../nav';
+import { nativeCalls } from '../../modules/zeitmit-calls';
+import { reachAsked, reachMissing, REACH_ASK_EVERY_MS } from '../lib/callAccess';
+import { useRing } from '../lib/ring';
 
 const TAB_PATHS = ['/', '/search', '/bookings', '/messages', '/account', '/notifications'];
 
@@ -95,24 +98,57 @@ export default function RootLayout() {
   }, [live]);
 
   // Push: register once signed in (if allowed); follow taps on notifications once the screens exist (a tap can arrive
-  // before the navigator is mounted when it opened the app). Not allowed yet: ZeitMit's own screen says why, once per
-  // phone, and the phone's dialog only comes if they choose to turn notifications on.
+  // before the navigator is mounted when it opened the app).
   useEffect(() => {
     if (session !== 'in' || !ready) return;
     void registerForPush();
-    const ask = setTimeout(() => void (async () => {
-      if ((await pushAccess()) !== 'ask' || (await pushAsked.load())) return;
-      await pushAsked.save();
-      router.push('/turn-on-notifications');
-    })(), 1200);
     const off = onNotificationTap((go) => {
       void useStore.getState().refresh();
       setTimeout(() => void followGo(go), 60);
     });
-    return () => { clearTimeout(ask); off(); };
+    return off;
   }, [session, ready]);
 
+  // Asking as the app opens (and comes back): companions who offer video dates on Android get ZeitMit's screen for
+  // everything a request needs to ring with the app closed (notifications included), at most every 12 hours while
+  // something is missing. Everyone else: the notifications screen, once per phone, while the phone can still ask. The
+  // phone's own dialogs only come when they choose to allow something. Never over a call or a request ringing.
   const path = usePathname();
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const compReady = useStore((s) => s.companionStatus !== 'approved' || s.comp.freeNow !== null);
+  useEffect(() => {
+    if (session !== 'in' || !ready || !compReady) return;
+    let busy = false;
+    const ask = async () => {
+      const s = useStore.getState();
+      const p = pathRef.current;
+      const ringing = !!useRing.getState().ring || s.comp.requests.some((r) => r.instant && (r.expiresAt ?? 0) > Date.now() / 1000);
+      if (busy || ringing || p.startsWith('/call') || p === '/allow-calls' || p === '/turn-on-notifications') return;
+      busy = true;
+      try {
+        if (nativeCalls.available && s.companionStatus === 'approved' && s.comp.acts.includes('call')) {
+          if (!(await reachMissing()) || Date.now() - (await reachAsked.load()) < REACH_ASK_EVERY_MS) return;
+          await reachAsked.save();
+          await pushAsked.save(); // it asks for notifications too
+          router.push('/allow-calls');
+          return;
+        }
+        if ((await pushAccess()) !== 'ask' || (await pushAsked.load())) return;
+        await pushAsked.save();
+        router.push('/turn-on-notifications');
+      } finally {
+        busy = false;
+      }
+    };
+    const first = setTimeout(() => void ask(), 1200);
+    let back: ReturnType<typeof setTimeout> | undefined;
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') { clearTimeout(back); back = setTimeout(() => void ask(), 800); }
+    });
+    return () => { clearTimeout(first); clearTimeout(back); sub.remove(); };
+  }, [session, ready, compReady]);
+
   const checkin = useStore((s) => !!s.checkin);
   const navBottom = useNavBottom();
   const { framed } = useAppFrame();
@@ -147,6 +183,7 @@ export default function RootLayout() {
           <Stack.Screen name="swipe" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="settings/[page]" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="turn-on-notifications" options={{ animation: 'fade', gestureEnabled: false }} />
+          <Stack.Screen name="allow-calls" options={{ animation: 'fade', gestureEnabled: false }} />
         </Stack.Protected>
         {/* First time on this phone: a few welcome screens, then login. */}
         <Stack.Protected guard={!signedIn && !welcomed}>

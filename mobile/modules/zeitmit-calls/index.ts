@@ -32,7 +32,26 @@ type Native = {
   addListener(event: 'onPip', fn: (e: { inPip: boolean }) => void): EventSubscription;
 };
 
-const native = Platform.OS === 'android' ? requireOptionalNativeModule<Native>('ZeitmitCalls') : null;
+/**
+ * Browser checks only (a web build made with EXPO_PUBLIC_FAKE_CALLS=1; real builds leave this out): a pretend Android
+ * phone whose answers live in localStorage ("zeitmit.fakeCalls"), so the screens that ask for them can be tried.
+ * Opening a setting allows it, as if the person had switched it on there.
+ */
+function fakeNative(): Native {
+  const KEY = 'zeitmit.fakeCalls';
+  const read = (): CallAccess => ({ overlay: false, fullScreen: false, battery: false, pip: true, brand: 'xiaomi', ...JSON.parse(globalThis.localStorage?.getItem(KEY) || '{}') });
+  const noop = () => undefined;
+  return {
+    configure: noop, setTexts: noop, startCall: () => false, stopCall: noop, isInPip: () => false, startFreeNow: noop, stopFreeNow: noop,
+    endIncoming: noop, lockScreen: noop, takeAction: () => null, access: read,
+    openSettings: (which: string) => { if (which !== 'app') globalThis.localStorage?.setItem(KEY, JSON.stringify({ ...read(), [which]: true })); },
+    delay: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+    addListener: () => ({ remove() {} }),
+  } as unknown as Native;
+}
+
+const native = Platform.OS === 'android' ? requireOptionalNativeModule<Native>('ZeitmitCalls')
+  : process.env.EXPO_PUBLIC_FAKE_CALLS === '1' ? fakeNative() : null;
 
 const safe = <T>(fn: () => T, fallback: T): T => {
   if (!native) return fallback;

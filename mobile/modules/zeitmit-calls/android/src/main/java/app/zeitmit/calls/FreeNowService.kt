@@ -138,7 +138,8 @@ class FreeNowService : Service() {
     val off = PendingIntent.getBroadcast(this, 0x3104, Intent(this, ActionReceiver::class.java).setAction(ActionReceiver.FREE_NOW_OFF), IncomingCalls.PI_FLAGS)
     val time = DateFormat.getTimeFormat(this).format(Date(until * 1000L))
     return NotificationCompat.Builder(this, Channels.FREE_NOW)
-      .setSmallIcon(R.drawable.zeitmit_call_small)
+      // ZeitMit's z!, not the video camera: nothing is on camera while you're Free now.
+      .setSmallIcon(R.drawable.zeitmit_small)
       .setContentTitle(Texts.get(this, "freeNowTitle"))
       .setContentText(Texts.get(this, "freeNowBody", "time" to time))
       .setOngoing(true)

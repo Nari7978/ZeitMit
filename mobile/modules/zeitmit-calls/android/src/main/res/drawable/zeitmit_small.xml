@@ -1,0 +1,7 @@
+<!-- ZeitMit's "z!" for the status bar (white on transparent, as Android draws small icons). Used where nothing is on
+     camera, e.g. Free now, so the status bar doesn't look like the camera is on. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+  <path android:fillColor="#FFFFFFFF" android:pathData="M3.5,6.2H13.6V8.6L7.5,15.6H13.6V18H3.2V15.6L9.3,8.6H3.5Z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M16.2,5.2H19.8L19.1,14.2H16.9Z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M16.3,16.9a1.7,1.7 0,1 0,3.4 0a1.7,1.7 0,1 0,-3.4 0Z" />
+</vector>

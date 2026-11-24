@@ -1,14 +1,15 @@
 // Free now for video dates, on the companion's Overview: a switch, for how long (1, 2 or 3 hours), and a notice when
 // it switched itself off after missed requests.
-import { useEffect, useState } from 'react';
-import { AppState, View } from 'react-native';
+import { useState } from 'react';
+import { View } from 'react-native';
 import { colors } from '../../theme';
 import { useStore } from '../../store';
 import { timeOf } from '../../lib/avail';
 import { Icon } from '../../ui/Icon';
 import { Box, Chip, Row, Toggle, Txt } from '../../ui/primitives';
 import { TextButton } from '../../ui/common';
-import { nativeCalls, type CallAccess } from '../../../modules/zeitmit-calls';
+import { nativeCalls } from '../../../modules/zeitmit-calls';
+import { useReach, type ReachKey } from '../../lib/callAccess';
 
 const hoursLabel = (h: number) => (h === 1 ? '1 hour' : `${h} hours`);
 
@@ -73,29 +74,20 @@ export function FreeNowCard() {
   );
 }
 
-/** Phone brands that stop apps in the background unless they're allowed to start by themselves ("Autostart"). */
-const STRICT_BRANDS: Record<string, string> = {
-  xiaomi: 'Xiaomi', redmi: 'Xiaomi', poco: 'Xiaomi', oppo: 'Oppo', realme: 'Realme', oneplus: 'OnePlus', vivo: 'Vivo',
-  iqoo: 'Vivo', huawei: 'Huawei', honor: 'Honor', meizu: 'Meizu', tecno: 'Tecno', infinix: 'Infinix',
-};
-
 /**
- * Android: what the phone needs to allow so requests ring even with the app closed (full screen on the lock screen,
- * over other apps, not stopped to save battery). Checked again whenever the app comes back from the settings.
+ * Android: what the phone needs to allow so requests ring even with the app closed (notifications, full screen on the
+ * lock screen, over other apps, not stopped to save battery). Checked again whenever the app comes back from the
+ * settings. The app also asks for these by itself as it opens (screens/AllowCalls.tsx).
  */
 function ReachChecklist() {
-  const [access, setAccess] = useState<CallAccess | null>(() => nativeCalls.access());
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') setAccess(nativeCalls.access()); });
-    return () => sub.remove();
-  }, []);
+  const { access, allowed, allow, brand } = useReach();
   if (!access) return null;
-  const brand = STRICT_BRANDS[access.brand] ?? null;
-  const items: { key: string; label: string; open: 'overlay' | 'fullScreen' | 'battery' | 'app' }[] = [
-    ...(!access.fullScreen ? [{ key: 'fullScreen', label: 'Ring full screen on the lock screen', open: 'fullScreen' as const }] : []),
-    ...(!access.overlay ? [{ key: 'overlay', label: 'Show requests over other apps', open: 'overlay' as const }] : []),
-    ...(!access.battery ? [{ key: 'battery', label: 'Don’t limit ZeitMit to save battery', open: 'battery' as const }] : []),
-  ];
+  const items: { key: ReachKey; label: string }[] = [
+    { key: 'notifications', label: 'Turn on notifications' },
+    { key: 'fullScreen', label: 'Ring full screen on the lock screen' },
+    { key: 'overlay', label: 'Show requests over other apps' },
+    { key: 'battery', label: 'Don’t limit ZeitMit to save battery' },
+  ].filter((it) => !allowed[it.key as ReachKey]) as { key: ReachKey; label: string }[];
   return (
     <View testID="reach-checklist" style={{ gap: 8, marginTop: 4, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.hairline }}>
       {items.length ? (
@@ -106,7 +98,7 @@ function ReachChecklist() {
             <Row key={it.key} style={{ gap: 10, alignItems: 'center' }}>
               <Icon name="circle-alert" size={16} color={colors.amberDeep} />
               <Txt size={13} style={{ flex: 1 }}>{it.label}</Txt>
-              <TextButton label="Allow" size={13} weight={700} onPress={() => nativeCalls.openSettings(it.open)} style={{ paddingVertical: 6 }} />
+              <TextButton label="Allow" size={13} weight={700} onPress={() => void allow(it.key)} style={{ paddingVertical: 6 }} />
             </Row>
           ))}
         </>
@@ -120,7 +112,7 @@ function ReachChecklist() {
         <Row style={{ gap: 10, alignItems: 'center' }}>
           <Icon name="info" size={16} color={colors.gray600} />
           <Txt size={12.5} lh={1.45} color={colors.gray600} style={{ flex: 1 }}>{`On ${brand} phones, also allow Autostart for ZeitMit.`}</Txt>
-          <TextButton label="Open settings" size={13} weight={700} onPress={() => nativeCalls.openSettings('app')} style={{ paddingVertical: 6 }} />
+          <TextButton label="Open settings" size={13} weight={700} onPress={() => void allow('app')} style={{ paddingVertical: 6 }} />
         </Row>
       ) : null}
     </View>
